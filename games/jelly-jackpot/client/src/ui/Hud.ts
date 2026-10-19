@@ -37,6 +37,7 @@ import {
 } from "../../../shared/constants";
 import type { BetSide, JellyStateView, PlayerView } from "../../../shared/protocol";
 import { PiecePreview } from "../scene/Pieces";
+import { cardName, cardText, locale, pieceName, pieceQuip, t, upper } from "../i18n";
 
 export interface HudHandlers {
   onBet(side: BetSide, amount: number): void;
@@ -73,8 +74,11 @@ function setText(e: HTMLElement, text: string): void {
 function toggle(e: Element, cls: string, on: boolean): void {
   if (e.classList.contains(cls) !== on) e.classList.toggle(cls, on);
 }
+function fmtNum(n: number): string {
+  return n.toLocaleString(locale());
+}
 function fmtMult(m: number): string {
-  return `×${Number.isInteger(m) ? m : m.toFixed(1)}`;
+  return `×${m.toLocaleString(locale(), { maximumFractionDigits: 1, minimumFractionDigits: Number.isInteger(m) ? 0 : 1 })}`;
 }
 function playerColor(p: PlayerView | undefined): string {
   return PLAYER_COLORS[p ? p.color % PLAYER_COLORS.length : 0];
@@ -226,24 +230,24 @@ export class Hud {
     // ---- top center: pips + turn strip + banner
     const top = el("div", "jjh-top", this.root);
     const roundBox = el("div", "jjh-round jjh-box", top);
-    this.roundLabel = el("div", "jjh-round__label", roundBox, "Round 1");
+    this.roundLabel = el("div", "jjh-round__label", roundBox, t("hud.round", { round: 1, total: 1 }));
     this.pips = el("div", "jjh-pips", roundBox);
     this.strip = el("div", "jjh-strip", top);
     this.bannerEl = el("div", "jjh-banner", top);
 
     // ---- top right: leaderboard
     this.lb = el("div", "jjh-lb jjh-box", this.root);
-    el("div", "jjh-lb__title", this.lb, "🪙 Coin Jar");
+    el("div", "jjh-lb__title", this.lb, t("hud.coinJar"));
 
     // ---- left: height meter
     this.meter = el("div", "jjh-meter jjh-box", this.root);
-    el("div", "jjh-meter__title", this.meter, "Tower");
-    this.heightNum = el("span", "jjh-meter__num", el("div", "jjh-meter__height", this.meter), "0 cm");
+    el("div", "jjh-meter__title", this.meter, t("hud.tower"));
+    this.heightNum = el("span", "jjh-meter__num", el("div", "jjh-meter__height", this.meter), t("hud.heightCm", { n: 0 }));
     this.ruler = el("div", "jjh-ruler", this.meter);
     this.ticks = el("div", "jjh-ruler__ticks", this.ruler);
     this.fill = el("div", "jjh-ruler__fill", this.ruler);
     this.recordFlag = el("div", "jjh-ruler__record", this.ruler, "🚩");
-    this.recordFlag.title = "Tallest tower this match";
+    this.recordFlag.title = t("hud.recordTitle");
     this.ant = el("div", "jjh-ant", this.ruler);
     this.ant.innerHTML = ANT_SVG;
     const cake = el("div", "jjh-meter__cake", this.meter);
@@ -263,7 +267,8 @@ export class Hud {
     this.bottom = el("div", "jjh-bottom", this.root);
     this.spinBtn = el("button", "jjh-spin jj-btn", this.bottom);
     this.spinBtn.type = "button";
-    this.spinBtn.innerHTML = `<span class="jjh-spin__key">SPACE</span> Press SPACE to open the case! 🎰`;
+    el("span", "jjh-spin__key", this.spinBtn, t("hud.spinKey"));
+    this.spinBtn.append(` ${t("hud.spinPrompt")}`);
     this.wireButton(this.spinBtn, () => this.handlers.onSpin());
 
     const row = el("div", "jjh-bottom__row", this.bottom);
@@ -299,7 +304,7 @@ export class Hud {
     this.nextCanvasBox = el("div", "jjh-next__canvas", this.next);
     this.nextEmoji = el("span", "jjh-next__emoji", this.nextCanvasBox);
     const nextInfo = el("div", "jjh-next__info", this.next);
-    el("span", "jjh-next__label", nextInfo, "Next up");
+    el("span", "jjh-next__label", nextInfo, t("hud.nextUp"));
     this.nextName = el("span", "jjh-next__name", nextInfo);
     this.nextQuip = el("span", "jjh-next__quip", nextInfo);
     this.inHand = el("div", "jjh-next__hand", nextInfo);
@@ -308,37 +313,39 @@ export class Hud {
 
     // ---- bottom right: bet panel
     this.betPanel = el("div", "jjh-bet jjh-box", this.root);
-    el("div", "jjh-bet__title", this.betPanel, "🎲 Side bet");
+    el("div", "jjh-bet__title", this.betPanel, t("hud.sideBet"));
     const chips = el("div", "jjh-bet__chips", this.betPanel);
     BET_AMOUNTS.forEach((amount, i) => {
       const b = el("button", "jjh-chip", chips);
       b.type = "button";
-      b.innerHTML = `<span class="jjh-chip__key">${i + 1}</span><span class="jjh-chip__amt">${amount === 0 ? "✖" : amount}</span>`;
-      b.title = amount === 0 ? "No bet (cancel)" : `Bet ${amount} coins`;
+      b.innerHTML = `<span class="jjh-chip__key">${i + 1}</span><span class="jjh-chip__amt">${amount === 0 ? "✖" : fmtNum(amount)}</span>`;
+      b.title = amount === 0 ? t("hud.noBetTitle") : t("hud.betTitle", { amount: fmtNum(amount) });
       this.wireButton(b, () => this.pickAmount(amount));
       this.betChips.push(b);
     });
     const sides = el("div", "jjh-bet__sides", this.betPanel);
     this.betStand = el("button", "jj-btn jj-btn--green jjh-side", sides);
     this.betStand.type = "button";
-    this.betStand.innerHTML = `STAND 🏰<small>F</small>`;
+    this.betStand.textContent = upper(t("hud.stand"));
+    el("small", "", this.betStand, "F");
     this.betFall = el("button", "jj-btn jj-btn--red jjh-side", sides);
     this.betFall.type = "button";
-    this.betFall.innerHTML = `FALL 💥<small>G</small>`;
+    this.betFall.textContent = upper(t("hud.fall"));
+    el("small", "", this.betFall, "G");
     this.wireButton(this.betStand, () => this.placeBet("stand"));
     this.wireButton(this.betFall, () => this.placeBet("fall"));
     this.betStatus = el("div", "jjh-bet__status", this.betPanel);
 
     // ---- emote hint + scoreboard
     this.emoteHint = el("div", "jjh-emote", this.root);
-    this.emoteHint.innerHTML = `<kbd>T</kbd> emote · <kbd>Tab</kbd> scores`;
+    this.emoteHint.innerHTML = t("hud.emoteHint", { t: "<kbd>T</kbd>", tab: "<kbd>Tab</kbd>" });
 
     this.board = el("div", "jjh-board jj-panel", this.root);
-    el("div", "jjh-board__title", this.board, "📋 The Scoreboard of Shame");
+    el("div", "jjh-board__title", this.board, t("hud.boardTitle"));
     const table = el("table", "jjh-board__table", this.board);
     const head = el("thead", "", table);
     const hr = el("tr", "", head);
-    for (const h of ["", "Chef", "🪙 Coins", "🏰 Survived", "💥 Topples", "⭐ Best ×", "🎲 Bets"]) el("th", "", hr, h);
+    for (const h of ["", "colChef", "colCoins", "colSurvived", "colTopples", "colBest", "colBets"]) el("th", "", hr, h ? t(`hud.${h}`) : "");
     this.boardBody = el("tbody", "", table);
 
     this.hideAllDynamic();
@@ -392,7 +399,7 @@ export class Hud {
       const diff = row.target - row.shown;
       const step = diff * k;
       row.shown = Math.abs(diff) < 0.6 ? row.target : row.shown + (Math.abs(step) < 0.4 ? Math.sign(diff) * 0.4 : step);
-      setText(row.coins, String(Math.round(row.shown)));
+      setText(row.coins, fmtNum(Math.round(row.shown)));
       toggle(row.root, "jjh-lb__row--counting", row.shown !== row.target);
     }
 
@@ -415,7 +422,7 @@ export class Hud {
     const max = this.rulerMax || 40;
     const fillPct = Math.min(100, (this.heightShown / max) * 100);
     this.fill.style.height = `${fillPct.toFixed(2)}%`;
-    setText(this.heightNum, `${Math.round(this.heightShown)} cm`);
+    setText(this.heightNum, t("hud.heightCm", { n: fmtNum(Math.round(this.heightShown)) }));
     if (this.antFalling > 0) {
       this.antFalling -= dt;
       if (this.antFalling <= 0) {
@@ -479,7 +486,7 @@ export class Hud {
     if (!delta) return;
     const row = this.lbRows.get(playerId);
     const host = row ? row.root : this.lb;
-    const pop = el("span", `jjh-delta ${delta > 0 ? "jjh-delta--up" : "jjh-delta--down"}`, host, `${delta > 0 ? "+" : "−"}${Math.abs(delta)}`);
+    const pop = el("span", `jjh-delta ${delta > 0 ? "jjh-delta--up" : "jjh-delta--down"}`, host, `${delta > 0 ? "+" : "−"}${fmtNum(Math.abs(delta))}`);
     pop.style.setProperty("--wob", `${(Math.random() * 16 - 8).toFixed(1)}deg`);
     window.setTimeout(() => pop.remove(), 1700);
     if (row) replay(row.root, delta > 0 ? "jjh-lb__row--yay" : "jjh-lb__row--ouch");
@@ -491,7 +498,7 @@ export class Hud {
     const total = Math.max(1, state.totalRounds);
     const round = Math.max(1, Math.min(total, state.round));
     const key = `${total}:${round}`;
-    setText(this.roundLabel, `Round ${round}/${total}`);
+    setText(this.roundLabel, t("hud.round", { round, total }));
     if (key === this.pipKey) return;
     if (this.pips.children.length !== total) {
       this.pips.replaceChildren();
@@ -521,8 +528,8 @@ export class Hud {
         item.style.setProperty("--pc", playerColor(p));
         item.title = p?.nickname ?? "?";
         el("span", "jjh-chef__hat", item);
-        el("span", "jjh-chef__face", item, (p?.nickname ?? "?").slice(0, 1).toUpperCase());
-        if (id === myId) el("span", "jjh-chef__you", item, "YOU");
+        el("span", "jjh-chef__face", item, upper((p?.nickname ?? "?").slice(0, 1)));
+        if (id === myId) el("span", "jjh-chef__you", item, upper(t("hud.you")));
         return item;
       });
       this.stripKey = key;
@@ -563,7 +570,7 @@ export class Hud {
           dot: el("span", "jjh-lb__dot", root),
           name: el("span", "jjh-lb__name", root),
           bet: el("span", "jjh-lb__bet", root, "🎲"),
-          coins: el("span", "jjh-lb__coins", root, String(p.coins)),
+          coins: el("span", "jjh-lb__coins", root, fmtNum(p.coins)),
           target: p.coins,
           shown: p.coins,
         };
@@ -581,7 +588,7 @@ export class Hud {
       toggle(row.root, "jjh-lb__row--off", !p.connected);
       toggle(row.root, "jjh-lb__row--active", p.id === state.activeId);
       toggle(row.bet, "jjh-on", p.hasBet && (state.phase === "spinning" || state.phase === "placing" || state.phase === "settling"));
-      row.root.title = p.connected ? p.nickname : `${p.nickname} (reconnecting…)`;
+      row.root.title = p.connected ? p.nickname : t("hud.reconnecting", { name: p.nickname });
     });
     for (const [id, row] of this.lbRows) {
       if (!seen.has(id)) {
@@ -610,8 +617,9 @@ export class Hud {
     this.cardChip.style.setProperty("--rc", RARITY_COLORS[rarity] ?? RARITY_COLORS.common);
     this.cardChip.dataset.rarity = rarity;
     setText(this.cardEmoji, def.emoji);
-    setText(this.cardName, def.name);
-    setText(this.cardText, def.text);
+    setText(this.cardName, cardName(id));
+    this.cardName.title = cardName(id);
+    setText(this.cardText, cardText(id));
     setText(this.cardMult, fmtMult(state.card.multiplier || def.multiplier));
     replay(this.cardChip, "jjh-card--pop");
   }
@@ -660,8 +668,8 @@ export class Hud {
       this.previewType = type;
       if (type) {
         const def = PIECES[type];
-        setText(this.nextName, `${def.emoji} ${def.name}`);
-        setText(this.nextQuip, def.quip);
+        setText(this.nextName, t("hud.pieceLabel", { emoji: def.emoji, name: pieceName(type) }));
+        setText(this.nextQuip, pieceQuip(type));
         setText(this.nextEmoji, def.emoji);
         replay(this.next, "jjh-next--pop");
       }
@@ -675,11 +683,12 @@ export class Hud {
       }
     }
     // the piece in hand, for whoever is placing (the 3D scene shows it, this just names it)
-    const hand = state.phase === "placing" && state.currentPiece in PIECES ? PIECES[state.currentPiece as PieceType] : null;
-    toggle(this.inHand, "jjh-on", !!hand);
-    if (hand) {
-      const extra = state.piecesLeft > 1 ? ` (+${state.piecesLeft - 1} more!)` : "";
-      setText(this.inHand, `${myTurn ? "In your hand" : "Dangling"}: ${hand.emoji} ${hand.name}${extra}`);
+    const handType = state.phase === "placing" && state.currentPiece in PIECES ? (state.currentPiece as PieceType) : null;
+    toggle(this.inHand, "jjh-on", !!handType);
+    if (handType) {
+      const extra = state.piecesLeft > 1 ? t("hud.inHandMore", { n: fmtNum(state.piecesLeft - 1) }) : "";
+      const piece = t("hud.pieceLabel", { emoji: PIECES[handType].emoji, name: pieceName(handType) });
+      setText(this.inHand, t(myTurn ? "hud.inHandMine" : "hud.inHandOther", { piece, extra }));
     }
   }
 
@@ -704,11 +713,11 @@ export class Hud {
     toggle(this.hint, "jjh-on", placing);
     if (!placing) return;
     const card = state.card.id;
-    let rot = "Q/E or scroll rotate • W/S tilt";
-    if (card === "tiedHands") rot = "🪢 hands tied: no rotating, it swings!";
-    const move = card === "mirrorHands" ? "🪞 Move mouse (backwards!)" : "Move mouse";
-    const left = state.piecesLeft > 1 ? ` • ${state.piecesLeft} pieces to go` : "";
-    setText(this.hint, `${move} • ${rot} • Click drop${left}`);
+    const rot = t(card === "tiedHands" ? "hud.hintTied" : "hud.hintRotate");
+    const move = t(card === "mirrorHands" ? "hud.hintMoveMirror" : "hud.hintMove");
+    const drop = t("hud.hintDrop");
+    if (state.piecesLeft > 1) setText(this.hint, t("hud.hintLineLeft", { move, rot, drop, left: t("hud.hintPiecesLeft", { n: fmtNum(state.piecesLeft) }) }));
+    else setText(this.hint, t("hud.hintLine", { move, rot, drop }));
   }
 
   private updateBet(state: JellyStateView, extra: HudExtra, me: PlayerView | undefined, myTurn: boolean): void {
@@ -738,11 +747,13 @@ export class Hud {
     toggle(this.betStand, "jjh-side--picked", bet?.side === "stand");
     toggle(this.betFall, "jjh-side--picked", bet?.side === "fall");
     toggle(this.betPanel, "jjh-bet--locked", !!bet);
-    const who = state.players.get(state.activeId)?.nickname ?? "them";
-    if (bet) setText(this.betStatus, `Bet locked: ${bet.amount} on ${bet.side === "stand" ? "STAND 🏰" : "FALL 💥"}`);
-    else if (me.coins <= 0) setText(this.betStatus, "Your coin jar is empty 🥲");
-    else if (amt <= 0) setText(this.betStatus, "Pick an amount (1–4)");
-    else setText(this.betStatus, `Will ${who}'s tower stand? Win ${amt * 2}!`);
+    const who = state.players.get(state.activeId)?.nickname ?? t("hud.betWhoFallback");
+    if (bet) {
+      const side = upper(t(bet.side === "stand" ? "hud.stand" : "hud.fall"));
+      setText(this.betStatus, t("hud.betLocked", { amount: fmtNum(bet.amount), side }));
+    } else if (me.coins <= 0) setText(this.betStatus, t("hud.betBroke"));
+    else if (amt <= 0) setText(this.betStatus, t("hud.betPick"));
+    else setText(this.betStatus, t("hud.betAsk", { who, win: fmtNum(amt * 2) }));
   }
 
   private updateMeter(state: JellyStateView, inTurn: boolean): void {
@@ -774,9 +785,9 @@ export class Hud {
     toggle(this.payout, "jjh-on", showPay);
     toggle(this.penalty, "jjh-on", showPay);
     if (showPay) {
-      setText(this.payout, `Survive: 🪙 ${state.payoutPreview}`);
+      setText(this.payout, t("hud.survive", { n: fmtNum(state.payoutPreview) }));
       const pen = state.card.id === "insurance" ? 0 : topplePenalty(state.card.multiplier || 1);
-      setText(this.penalty, pen ? `Topple: 💥 −${pen}` : "Topple: 📜 insured!");
+      setText(this.penalty, pen ? t("hud.topple", { n: fmtNum(pen) }) : t("hud.toppleInsured"));
     }
   }
 
@@ -791,12 +802,12 @@ export class Hud {
       (state.spinStage === "idle" || (state.spinStage === "rolling" && state.card.id === ""));
     let text: string;
     let ready = false;
-    if (extra.rig.used) text = "Rig used 🤫";
-    else if (!extra.rig.available) text = "No rig this round";
+    if (extra.rig.used) text = t("hud.rigUsed");
+    else if (!extra.rig.available) text = t("hud.rigNone");
     else if (rigWindow) {
-      text = "Rig ready (R)";
+      text = t("hud.rigReady");
       ready = true;
-    } else text = "Wait for someone's spin";
+    } else text = t("hud.rigWait");
     setText(this.sabText, text);
     toggle(this.sab, "jjh-sab--ready", ready);
     toggle(this.sab, "jjh-sab--used", extra.rig.used || !extra.rig.available);
@@ -819,12 +830,12 @@ export class Hud {
       const s = p.stats;
       const vals = [
         p.spectator ? "👀" : i === 0 ? "👑" : String(i + 1),
-        p.nickname + (p.id === myId ? " (you)" : "") + (p.connected ? "" : " 🔌"),
-        String(p.coins),
-        String(s.survived),
-        String(s.topples),
+        p.nickname + (p.id === myId ? t("hud.youSuffix") : "") + (p.connected ? "" : " 🔌"),
+        fmtNum(p.coins),
+        fmtNum(s.survived),
+        fmtNum(s.topples),
         s.bestMultiplierX10 > 0 ? fmtMult(s.bestMultiplierX10 / 10) : "—",
-        `${s.betProfit > 0 ? "+" : ""}${s.betProfit}`,
+        `${s.betProfit > 0 ? "+" : s.betProfit < 0 ? "−" : ""}${fmtNum(Math.abs(s.betProfit))}`,
       ];
       vals.forEach((v, c) => setText(row!.cells[c], v));
       row.cells[1].style.setProperty("--pc", playerColor(p));

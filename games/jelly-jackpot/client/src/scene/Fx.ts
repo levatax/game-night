@@ -13,6 +13,7 @@
 import * as THREE from "three";
 import type { Stage } from "./Stage";
 import { toon } from "./toon";
+import { t as tx } from "../i18n";
 import { PALETTE, STAND_PLATE_RADIUS, STAND_PLATE_Y, TABLE_RADIUS, CAKE_TOP_Y, CAKE_RADIUS } from "../../../shared/constants";
 import "./fx.css";
 
@@ -492,8 +493,9 @@ export class Fx {
       <div class="jjfx-blind-stage">
         <div class="jjfx-mask">${SLEEP_MASK_SVG}</div>
         <div class="jjfx-zzz"><span>Z</span><span>z</span><span>Z</span><span>z</span></div>
-        <div class="jjfx-blind-cap">shhh&hellip; drop it from memory!</div>
+        <div class="jjfx-blind-cap"></div>
       </div>`;
+    this.blindEl.querySelector(".jjfx-blind-cap")!.textContent = tx("scene.blindCaption");
   }
 
   private div(cls: string): HTMLDivElement {

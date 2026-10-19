@@ -21,6 +21,7 @@
 
 import { CARDS, CARD_BY_ID, RARITIES, RARITY_COLORS, RARITY_ODDS, type CardDef, type CardId, type Rarity } from "../../../shared/constants";
 import type { SpinResultMsg } from "../../../shared/protocol";
+import { cardName, cardText, rarityName, t } from "../i18n";
 import "./reel.css";
 
 export interface ReelCallbacks {
@@ -41,14 +42,10 @@ const READ_MS = 1500;
 const K_NORMAL = 3.4;
 const K_TEASE = 4.4;
 
-const QUIPS: Record<Rarity, string[]> = {
-  common: ["Meh. 🥱", "Could be worse!", "Boring. Safe. Beige.", "The chef shrugs.", "A fine, mild salsa."],
-  uncommon: ["Ooh, spicy! 🌶️", "Now we're cooking!", "Fancy!", "Things are getting weird…"],
-  rare: ["WHOA! 🤯", "Big brain card!", "The crowd goes mild!", "Purple = danger. Probably."],
-  legendary: ["JACKPOT!!! 🤑", "CHA-CHING! 💰", "The kitchen gods smile!", "GOLDEN! Somebody call mom!"],
-  cursed: ["Oh no. Oh no no no. 💀", "Cursed! 😱", "Who angered the oven?!", "That's… unfortunate."],
-};
-const TEASE_QUIPS = ["SO CLOSE! 😭", "Noooo, the gold one! 😩", "Missed it by a whisker! 🐭"];
+/** Quip lines for a rarity (or "tease"), "|"-separated in the strings file. */
+function quips(kind: Rarity | "tease"): string[] {
+  return t(`reel.quips_${kind}`).split("|");
+}
 
 const BY_RARITY: Record<Rarity, CardDef[]> = {
   common: [],
@@ -99,7 +96,7 @@ function buildCard(id: CardId, cls: string): HTMLDivElement {
   const card = el("div", `${cls} jjr-r-${def.rarity}`);
   card.style.setProperty("--rc", RARITY_COLORS[def.rarity]);
   el("div", "jjr-card-emoji", card).textContent = def.emoji;
-  el("div", "jjr-card-name", card).textContent = def.name;
+  el("div", "jjr-card-name", card).textContent = cardName(def.id);
   el("div", "jjr-card-mult", card).textContent = fmtMult(def.multiplier);
   if (def.rarity === "cursed") el("div", "jjr-card-skull", card).textContent = "💀";
   if (def.rarity === "legendary") el("div", "jjr-card-sparkle", card).textContent = "✨";
@@ -191,6 +188,7 @@ export class CaseReel {
     this.win = el("div", "jjr-window", this.housing);
     this.rays = el("div", "jjr-rays", this.win);
     this.strip = el("div", "jjr-strip", this.win);
+    this.strip.setAttribute("aria-hidden", "true"); // a blur of cards; the title, quip and chip carry the meaning
     el("div", "jjr-vignette", this.win);
     const marker = el("div", "jjr-marker", this.win);
     el("span", "jjr-arrow jjr-arrow--top", marker);
@@ -210,10 +208,12 @@ export class CaseReel {
     this.teaseAt = null;
     this.chip.classList.remove("is-on");
     this.title.textContent = "";
-    this.title.append("🎰 ");
+    // Bold the name inside the translated template ("🎰 {name} opens a case").
+    const [before, after = ""] = t("reel.title").split("{name}");
+    this.title.append(before);
     const b = el("b", "", this.title);
-    b.textContent = nickname || "Someone";
-    this.title.append(" opens a case");
+    b.textContent = nickname || t("reel.someone");
+    this.title.append(after);
     this.resetStrip();
     this.stage.className = "jjr-stage is-on is-spinning";
     this.housing.classList.remove("is-pulled");
@@ -507,7 +507,7 @@ export class CaseReel {
     this.housing.classList.toggle("is-tease", this.teaseAt !== null);
     this.pupils.forEach((p) => (p.style.transform = rarity === "cursed" ? "translate(0,-4px)" : "translate(0,5px)"));
 
-    const lines = this.teaseAt !== null ? TEASE_QUIPS : QUIPS[rarity];
+    const lines = quips(this.teaseAt !== null ? "tease" : rarity);
     this.quip.textContent = lines[Math.floor(Math.random() * lines.length)];
     this.quip.className = `jjr-quip is-on jjr-r-${rarity}`;
     this.quip.style.setProperty("--rc", RARITY_COLORS[rarity]);
@@ -535,9 +535,15 @@ export class CaseReel {
     el("span", "jjr-chip-emoji", this.chip).textContent = def.emoji;
     const body = el("span", "jjr-chip-body", this.chip);
     const top = el("span", "jjr-chip-top", body);
-    el("span", "jjr-chip-name", top).textContent = def.name;
-    el("span", "jjr-chip-mult", top).textContent = fmtMult(multiplier || def.multiplier);
-    el("span", "jjr-chip-text", body).textContent = def.text;
+    const name = cardName(def.id);
+    const text = cardText(def.id);
+    const mult = fmtMult(multiplier || def.multiplier);
+    const nameEl = el("span", "jjr-chip-name", top);
+    nameEl.textContent = name;
+    nameEl.title = name;
+    el("span", "jjr-chip-mult", top).textContent = mult;
+    el("span", "jjr-chip-text", body).textContent = text;
+    this.chip.setAttribute("aria-label", t("reel.chipAria", { name, rarity: rarityName(r), mult, text }));
     if (r === "cursed") el("span", "jjr-chip-skull", this.chip).textContent = "💀";
     void this.chip.offsetWidth;
     this.chip.classList.add("is-on");

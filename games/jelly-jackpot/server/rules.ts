@@ -184,12 +184,16 @@ export interface VoteOutcome {
   adjustments: CoinAdjustment[];
 }
 
-const CAUGHT_REASONS = [
-  "Sniffed out the Saboteur 🕵️",
-  "Smelled the burnt cake 👃",
-  "Detective Pâtissier 🔎",
-  "Pointed the spatula of justice 🍳",
-];
+/** English adjustment reasons, keyed like client/src/i18n/strings/server.ts. caught1..4 rotate among voters. */
+export const ADJUST_EN = {
+  caught1: "Sniffed out the Saboteur 🕵️",
+  caught2: "Smelled the burnt cake 👃",
+  caught3: "Detective Pâtissier 🔎",
+  caught4: "Pointed the spatula of justice 🍳",
+  saboteurCaught: "Caught red-handed! Bonus confiscated 🚔",
+  saboteurEscaped: "Got away with it! Muahaha 😈",
+} as const;
+const CAUGHT_KEYS = ["caught1", "caught2", "caught3", "caught4"] as const;
 
 /**
  * Resolve the accusation vote. votes: voterId → suspectId. If majorityId === saboteurId (strict
@@ -226,12 +230,13 @@ export function resolveVote(votes: Map<string, string>, saboteurId: string, hidd
     let k = 0;
     for (const [voterId, suspect] of votes) {
       if (suspect !== saboteurId || voterId === saboteurId) continue;
-      adjustments.push({ playerId: voterId, delta: VOTE_CORRECT_REWARD, reason: CAUGHT_REASONS[k++ % CAUGHT_REASONS.length]! });
+      const key = CAUGHT_KEYS[k++ % CAUGHT_KEYS.length]!;
+      adjustments.push({ playerId: voterId, delta: VOTE_CORRECT_REWARD, reason: ADJUST_EN[key], key });
     }
-    if (hiddenBonus > 0) adjustments.push({ playerId: saboteurId, delta: 0, reason: "Caught red-handed! Bonus confiscated 🚔" });
+    if (hiddenBonus > 0) adjustments.push({ playerId: saboteurId, delta: 0, reason: ADJUST_EN.saboteurCaught, key: "saboteurCaught" });
   } else {
     const delta = Math.max(0, hiddenBonus) + SABOTEUR_ESCAPE_BONUS;
-    adjustments.push({ playerId: saboteurId, delta, reason: "Got away with it! Muahaha 😈" });
+    adjustments.push({ playerId: saboteurId, delta, reason: ADJUST_EN.saboteurEscaped, key: "saboteurEscaped" });
   }
   return { majorityId, caught, adjustments };
 }

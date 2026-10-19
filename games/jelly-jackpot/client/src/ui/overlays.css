@@ -562,3 +562,31 @@
   .jjo-corner { right: 8px; gap: 8px; }
   .jjo-corner__btn { width: 40px; height: 40px; font-size: 19px; }
 }
+
+/* ------------------------------------------------------------ language row */
+.jjo-lang { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.jjo-lang__btn {
+  display: flex; align-items: center; justify-content: center; gap: 8px; padding: 8px 6px; cursor: pointer;
+  background: #fff; border: var(--border); border-radius: 12px; font: 700 15px var(--font); color: var(--ink);
+  box-shadow: 0 3px 0 var(--ink); transition: transform 0.12s;
+}
+.jjo-lang__btn:hover { transform: translateY(-2px) rotate(-2deg); }
+.jjo-lang__btn--on { background: var(--coin); transform: rotate(-2deg); cursor: default; }
+.jjo-lang__btn:focus-visible { outline: 3px solid var(--common); outline-offset: 2px; }
+.jjo-lang__flag { font-size: 22px; line-height: 1; }
+.jjo-lang__hint { margin: 6px 0 0; font: 500 12px var(--font); opacity: 0.6; text-align: center; }
+
+/* ------------------------------------------- longer translations (Turkish) */
+.jjo-row__label { overflow-wrap: anywhere; }
+.jjo-quality__btn { text-align: center; line-height: 1.15; }
+.jjo-wheel__label { max-width: 78px; text-align: center; line-height: 1.05; overflow-wrap: anywhere; }
+.jjo-stamp { white-space: nowrap; }
+.jjo-stamp:lang(tr) { font-size: 30px; letter-spacing: 1px; }
+.jjo-flip__hint:lang(tr) { letter-spacing: 1.5px; }
+.jjo-vcard__stamp { white-space: nowrap; }
+.jjo-tier__label:lang(tr) { font-size: 12px; }
+.jjo-title:lang(tr) { overflow-wrap: anywhere; }
+@media (max-width: 560px) {
+  .jjo-stamp:lang(tr) { font-size: 22px; }
+  .jjo-tier__label:lang(tr) { font-size: 9px; padding: 2px 5px; }
+}

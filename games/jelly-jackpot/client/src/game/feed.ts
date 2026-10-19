@@ -2,7 +2,8 @@
 // Every player-provided string (nicknames, server notices) goes through esc() before it touches HTML.
 
 import { CARD_BY_ID, PLAYER_COLORS, type CardId } from "../../../shared/constants";
-import type { BetResult, JellyStateView, ResultMsg, RevealMsg } from "../../../shared/protocol";
+import type { BetResult, JellyStateView, NoticeMsg, ResultMsg, RevealMsg } from "../../../shared/protocol";
+import { cardName, has, t, type Params } from "../i18n";
 
 const ESC: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 
@@ -11,7 +12,10 @@ export function esc(s: string): string {
   return String(s).replace(/[&<>"']/g, (c) => ESC[c] ?? c);
 }
 
-const pick = <T>(list: readonly T[]): T => list[Math.floor(Math.random() * list.length)]!;
+/** Random variant of a numbered key: pickKey("game.timber", 4) → t("game.timber_3"). */
+export function pickKey(base: string, count: number, params?: Params): string {
+  return t(`${base}_${1 + Math.floor(Math.random() * count)}`, params);
+}
 
 /** Formats a multiplier: 1.5 → "×1.5", 2 → "×2". */
 export function fmtMult(m: number): string {
@@ -25,21 +29,26 @@ export function fmtDelta(d: number): string {
 
 /** Plain nickname (unescaped) or a fallback. */
 export function nickOf(state: JellyStateView | null, id: string): string {
-  return state?.players.get(id)?.nickname || "Someone";
+  return state?.players.get(id)?.nickname || t("game.someone");
 }
 
 /** A player's name as bold HTML in their hat color (escaped). */
 export function who(state: JellyStateView | null, id: string, myId = ""): string {
   const p = state?.players.get(id);
   const color = p ? PLAYER_COLORS[p.color] ?? "#fff" : "#fff";
-  const name = id && id === myId ? "You" : esc(p?.nickname || "Someone");
+  const name = id && id === myId ? t("game.you") : esc(p?.nickname || t("game.someone"));
   return `<b style="color:${color}">${name}</b>`;
 }
 
 /** "Moon Gravity ×2" in bold. */
 export function cardHtml(card: CardId, mult: number): string {
-  const def = CARD_BY_ID[card];
-  return `<b>${esc(def ? def.name : card)} ${fmtMult(mult)}</b>`;
+  return `<b>${esc(cardName(card))} ${fmtMult(mult)}</b>`;
+}
+
+/** Neon sign text for a landed card. */
+export function signText(card: CardId | string, mult: number): string {
+  const def = CARD_BY_ID[card as CardId];
+  return t("game.signCard", { emoji: def?.emoji ?? "🎰", card: cardName(card), mult: fmtMult(mult) });
 }
 
 // ------------------------------------------------------------------------- line builders
@@ -47,38 +56,54 @@ export function cardHtml(card: CardId, mult: number): string {
 
 export type FeedLine = [icon: string, html: string];
 
-const OPEN_VERBS = ["opened", "cracked open", "yanked the lever on", "unboxed", "gambled on"];
+const isMe = (id: string, myId: string) => !!id && id === myId;
 
 export function openedLine(state: JellyStateView | null, id: string, card: CardId, mult: number, myId: string): FeedLine {
   const def = CARD_BY_ID[card];
-  return ["🎰", `${who(state, id, myId)} ${pick(OPEN_VERBS)} ${cardHtml(card, mult)} ${def?.emoji ?? ""}`];
+  const params = { name: who(state, id, myId), card: cardHtml(card, mult), emoji: def?.emoji ?? "" };
+  return ["🎰", pickKey(isMe(id, myId) ? "game.openMe" : "game.open", 5, params)];
 }
 
-const STAND_QUIPS = ["Structural genius!", "Gordon Ramsay weeps.", "Wobbly but proud.", "The jelly holds!", "Engineers hate this trick."];
-const FALL_QUIPS = ["Nooo the cake!", "Frosting everywhere.", "Gravity: 1, Chef: 0.", "That's going on the blooper reel.", "Somebody get a mop."];
-
 export function resultLine(state: JellyStateView | null, msg: ResultMsg, myId: string): FeedLine {
+  const me = isMe(msg.playerId, myId);
   const name = who(state, msg.playerId, myId);
+  const delta = fmtDelta(msg.delta);
   if (msg.outcome === "stand") {
-    return ["🏰", `${name}'s tower STANDS! <b>${fmtDelta(msg.delta)}</b> 🪙 (${msg.heightCm} cm) <i>${pick(STAND_QUIPS)}</i>`];
+    const quip = pickKey("game.standQuip", 5);
+    return ["🏰", t(me ? "game.standMe" : "game.stand", { name, delta, cm: msg.heightCm, quip })];
   }
-  if (msg.insured) return ["📜", `${name} TOPPLED it, but Insurance paid up! <b>±0</b>`];
-  return ["💥", `${name} TOPPLED it (<b>${fmtDelta(msg.delta)}</b>) <i>${pick(FALL_QUIPS)}</i>`];
+  if (msg.insured) return ["📜", t(me ? "game.insuredMe" : "game.insured", { name })];
+  const quip = pickKey("game.fallQuip", 5);
+  return ["💥", t(me ? "game.toppledMe" : "game.toppled", { name, delta, quip })];
 }
 
 /** "Bets: Sam 25 FALL ✅, Kai 10 STAND ❌" (null when nobody bet). */
 export function betsLine(state: JellyStateView | null, bets: BetResult[], myId: string): FeedLine | null {
   const real = bets.filter((b) => b.amount > 0);
   if (!real.length) return null;
-  const parts = real.map((b) => `${who(state, b.playerId, myId)} ${b.amount} ${b.side.toUpperCase()} ${b.won ? "✅" : "❌"}`);
-  return ["🎲", `Bets: ${parts.join(", ")}`];
+  const parts = real.map((b) =>
+    t("game.betPart", { name: who(state, b.playerId, myId), amount: b.amount, side: t(`game.side_${b.side}`), mark: b.won ? "✅" : "❌" }),
+  );
+  return ["🎲", t("game.bets", { list: parts.join(", ") })];
 }
 
 export function revealLine(state: JellyStateView | null, msg: RevealMsg, myId: string): FeedLine {
-  if (!msg.saboteurId) return ["🍀", "No Saboteur! It was just bad luck all along."];
-  return ["😈", `${who(state, msg.saboteurId, myId)} was the Saboteur! ${msg.caught ? "CAUGHT 🚔" : "ESCAPED 🏃💨"}`];
+  if (!msg.saboteurId) return ["🍀", t("game.noSaboteur")];
+  const me = isMe(msg.saboteurId, myId);
+  const key = `game.saboteur${me ? "Me" : ""}${msg.caught ? "Caught" : "Escaped"}`;
+  return ["😈", t(key, { name: who(state, msg.saboteurId, myId) })];
 }
 
-export function noticeLine(text: string): FeedLine {
-  return ["📢", esc(text)];
+/** Server text in my language when the key is known (string params escaped for HTML), else the English text. */
+export function serverText(key: string | undefined, params: Params | undefined, fallback: string, html: boolean): string {
+  if (key && has(`server.${key}`)) {
+    const p: Params = {};
+    for (const [k, v] of Object.entries(params ?? {})) p[k] = typeof v === "string" && html ? esc(v) : v;
+    return t(`server.${key}`, p);
+  }
+  return html ? esc(fallback) : fallback;
+}
+
+export function noticeLine(msg: NoticeMsg): FeedLine {
+  return ["📢", serverText(msg.key, msg.params, msg.text, true)];
 }

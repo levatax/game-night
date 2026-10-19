@@ -313,7 +313,18 @@
   filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.35));
 }
 .jjr-card-name {
-  font: 700 calc(var(--jjr-card-w) * 0.11) / 1.05 var(--font);
+  /* Longer (e.g. Turkish) names wrap to at most 2 lines on whole words; long single words may hyphenate. */
+  font: 700 calc(var(--jjr-card-w) * 0.105) / 1.05 var(--font);
+  max-width: 100%;
+  box-sizing: border-box;
+  text-wrap: balance;
+  overflow-wrap: break-word;
+  hyphens: auto;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
   color: #fff;
   -webkit-text-stroke: 1px var(--ink);
   paint-order: stroke fill;
@@ -498,7 +509,10 @@
   padding: 6px 16px;
   opacity: 0;
   transform: scale(0.3) rotate(-6deg);
-  white-space: nowrap;
+  max-width: min(92vw, 560px);
+  box-sizing: border-box;
+  text-align: center;
+  text-wrap: balance;
 }
 .jjr-quip.is-on {
   animation: jjr-quip-in 0.45s cubic-bezier(0.3, 1.9, 0.5, 1) 0.15s forwards;

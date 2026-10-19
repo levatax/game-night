@@ -3,6 +3,7 @@
 // Heavy Snack (a "3 KG" weight tag on a string). Chonk is plain scale, handled by the owner.
 
 import * as THREE from "three";
+import { t as tx } from "../../i18n";
 import { toonRamp } from "../toon";
 import { G, M, blob, cachedMat, canvasTex, detail, mesh, softMat, sparkleMat, sprite, type PieceRig } from "./kit";
 
@@ -41,10 +42,13 @@ function weightTagMat(): THREE.SpriteMaterial {
       ctx.fillStyle = "#FFC23F";
       ctx.fill();
       ctx.fillStyle = "#2D2A32";
-      ctx.font = "bold 30px Arial Black, Arial, sans-serif";
+      const text = tx("scene.weightTag");
+      let px = 30;
+      ctx.font = `bold ${px}px "Arial Black", Arial, sans-serif`;
+      while (px > 12 && ctx.measureText(text).width > 88) ctx.font = `bold ${(px -= 2)}px "Arial Black", Arial, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText("3 KG", 64, 47);
+      ctx.fillText(text, 64, 47);
     });
     return new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
   });

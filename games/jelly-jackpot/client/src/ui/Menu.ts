@@ -25,6 +25,7 @@ import {
   autoRounds,
 } from "../../../shared/constants";
 import type { JellyStateView, PlayerView, Role, SettingsMsg } from "../../../shared/protocol";
+import { LANGS, lang, setLanguage, t, upper } from "../i18n";
 
 export interface MenuHandlers {
   onCreate(nickname: string): void;
@@ -38,37 +39,15 @@ export interface MenuHandlers {
   onUiSound(kind: "click" | "hover" | "pop"): void;
 }
 
-// ------------------------------------------------------------------ silly copy
-const COLOR_NAMES = ["Ketchup", "Blueberry", "Pickle", "Mustard", "Grape Jelly", "Bubblegum"];
-const SILLY_NAMES = [
-  "Chef Wobbles", "Sir Sprinkles", "Captain Custard", "Lady Lasagna", "Baron Von Bagel", "Noodle Nancy",
-  "Pudding Pete", "Muffin Man", "Gravy Dave", "Toast Malone", "Sloppy Joe", "Princess Parfait",
-];
-const TAGLINES = [
-  "Stack it. Spin it. Blame the Saboteur.",
-  "100% jelly. 0% structural integrity.",
-  "Health inspectors hate this one weird cake.",
-  "Now with extra wobble!",
-  "Gravity is just a suggestion. (It is not.)",
-];
-const EMPTY_SEATS = [
-  "Empty stool…",
-  "Chef still washing hands",
-  "Seat reserved for a pie",
-  "Someone's microwaving…",
-  "Probably stuck in traffic",
-  "Waiting for a chef",
-];
-const BAKER_QUIPS = [
-  "Stack honestly. Sniff out the cheater.",
-  "Your hands are clean. Mostly. Some frosting.",
-  "Trust no one who smiles at the reel.",
-];
-const SABOTEUR_QUIPS = [
-  "Act natural. Whistle a little.",
-  "Muahaha… quietly. People are watching.",
-  "Look innocent. Practice your shocked face.",
-];
+// ------------------------------------------------------------------ silly copy (strings/menu.ts)
+/** Numbered key pool: lines("tagline", 5) → ["menu.tagline1", …] translated. */
+const lines = (prefix: string, n: number): string[] => Array.from({ length: n }, (_, i) => t(`menu.${prefix}${i + 1}`));
+const COLOR_NAMES = lines("color", 6);
+const SILLY_NAMES = lines("silly", 12);
+const TAGLINES = lines("tagline", 5);
+const EMPTY_SEATS = lines("emptySeat", 6);
+const BAKER_QUIPS = lines("bakerQuip", 3);
+const SABOTEUR_QUIPS = lines("sabQuip", 3);
 
 const pick = <T>(arr: readonly T[]): T => arr[Math.floor(Math.random() * arr.length)]!;
 
@@ -183,8 +162,8 @@ export class Menu {
     root.appendChild(this.el);
 
     // ================================================================== HOME
-    this.home = h("section", "jjm-screen jjm-home", { "aria-label": "Jelly Jackpot home" });
-    const logo = h("h1", "jjm-logo", { "aria-label": "Jelly Jackpot" });
+    this.home = h("section", "jjm-screen jjm-home", { "aria-label": t("menu.homeAria") });
+    const logo = h("h1", "jjm-logo", { "aria-label": t("menu.logoAria") });
     let idx = 0;
     for (const word of ["JELLY", "JACKPOT"]) {
       const w = h("span", "jjm-logo-word", { "aria-hidden": "true" });
@@ -214,7 +193,7 @@ export class Menu {
     this.tagline = h("p", "jjm-tagline", undefined, pick(TAGLINES));
 
     const card = h("form", "jj-panel jjm-card jjm-home-card", { novalidate: "" });
-    const nickLabel = h("label", "jjm-label", { for: "jjm-nick" }, "Your chef name");
+    const nickLabel = h("label", "jjm-label", { for: "jjm-nick" }, t("menu.nickLabel"));
     this.nickInput = h("input", "jjm-input", {
       id: "jjm-nick",
       type: "text",
@@ -224,7 +203,7 @@ export class Menu {
       placeholder: pick(SILLY_NAMES),
     });
     this.nickInput.value = readStorage(NICKNAME_STORAGE_KEY).slice(0, NICKNAME_MAX);
-    const diceBtn = h("button", "jjm-dice", { type: "button", "aria-label": "Random silly name", title: "Random silly name" }, "🎲");
+    const diceBtn = h("button", "jjm-dice", { type: "button", "aria-label": t("menu.diceAria"), title: t("menu.diceAria") }, "🎲");
     const nickRow = h("div", "jjm-row jjm-nick-row");
     nickRow.append(this.nickInput, diceBtn);
     diceBtn.addEventListener("click", () => {
@@ -233,11 +212,11 @@ export class Menu {
       this.handlers.onUiSound("pop");
     });
 
-    this.createBtn = h("button", "jj-btn jj-btn--pink jjm-big", { type: "submit" }, "🎂 Create Room");
+    this.createBtn = h("button", "jj-btn jj-btn--pink jjm-big", { type: "submit" }, t("menu.createRoom"));
 
-    const or = h("div", "jjm-or", { "aria-hidden": "true" }, "or crash a friend's party");
+    const or = h("div", "jjm-or", { "aria-hidden": "true" }, t("menu.or"));
 
-    const codeLabel = h("label", "jjm-label", { for: "jjm-code" }, "Room code");
+    const codeLabel = h("label", "jjm-label", { for: "jjm-code" }, t("menu.codeLabel"));
     this.codeInput = h("input", "jjm-input jjm-code-input", {
       id: "jjm-code",
       type: "text",
@@ -245,7 +224,7 @@ export class Menu {
       autocomplete: "off",
       autocapitalize: "characters",
       spellcheck: "false",
-      placeholder: "ABCD",
+      placeholder: t("menu.codePlaceholder"),
       inputmode: "text",
     });
     this.codeInput.addEventListener("input", () => {
@@ -253,16 +232,26 @@ export class Menu {
       if (clean !== this.codeInput.value) this.codeInput.value = clean;
       this.clearError();
     });
-    this.joinBtn = h("button", "jj-btn jjm-big", { type: "button" }, "🚪 Join Room");
+    this.joinBtn = h("button", "jj-btn jjm-big", { type: "button" }, t("menu.joinRoom"));
     const joinRow = h("div", "jjm-row jjm-join-row");
     joinRow.append(this.codeInput, this.joinBtn);
 
     this.errorEl = h("p", "jjm-error", { role: "alert", "aria-live": "assertive" });
     this.busyEl = h("p", "jjm-busy", { "aria-live": "polite" });
     const spinner = h("span", "jjm-spinner", { "aria-hidden": "true" }, "🍮");
-    this.busyEl.append(spinner, h("span", undefined, undefined, "Preheating the oven…"));
+    this.busyEl.append(spinner, h("span", undefined, undefined, t("menu.busy")));
 
-    card.append(nickLabel, nickRow, this.createBtn, or, codeLabel, joinRow, this.errorEl, this.busyEl);
+    // Language switcher (saves + reloads; the room rejoins via the reconnect token).
+    const langRow = h("div", "jjm-langs", { role: "group", "aria-label": t("menu.langAria") });
+    for (const l of LANGS) {
+      const on = l.id === lang();
+      const b = h("button", `jjm-lang${on ? " jjm-lang--on" : ""}`, { type: "button", lang: l.id, "aria-pressed": String(on), title: l.label });
+      b.append(h("span", "jjm-lang-flag", { "aria-hidden": "true" }, l.flag), h("span", "jjm-lang-name", undefined, l.label));
+      b.addEventListener("click", () => setLanguage(l.id));
+      langRow.appendChild(b);
+    }
+
+    card.append(langRow, nickLabel, nickRow, this.createBtn, or, codeLabel, joinRow, this.errorEl, this.busyEl);
     // Enter in the code field joins, Enter anywhere else creates.
     card.addEventListener("submit", (e) => {
       e.preventDefault();
@@ -272,28 +261,28 @@ export class Menu {
     this.joinBtn.addEventListener("click", () => this.doJoin());
     this.nickInput.addEventListener("input", () => this.clearError());
 
-    const back = h("a", "jjm-back", { href: "/" }, "← Game Night");
+    const back = h("a", "jjm-back", { href: "/" }, t("menu.backLink"));
     this.home.append(logo, this.tagline, card, back);
 
     // ================================================================== LOBBY
-    this.lobby = h("section", "jjm-screen jjm-lobby", { "aria-label": "Lobby" });
+    this.lobby = h("section", "jjm-screen jjm-lobby", { "aria-label": t("menu.lobbyAria") });
     const lcard = h("div", "jj-panel jjm-card jjm-lobby-card");
 
     const top = h("div", "jjm-lobby-top");
     const stickerWrap = h("div", "jjm-sticker-wrap");
-    stickerWrap.appendChild(h("span", "jjm-sticker-label", undefined, "Kitchen code"));
+    stickerWrap.appendChild(h("span", "jjm-sticker-label", undefined, t("menu.kitchenCode")));
     this.codeSticker = h("div", "jjm-sticker", { "aria-live": "polite" });
     stickerWrap.appendChild(this.codeSticker);
-    this.copyBtn = h("button", "jj-btn jj-btn--green jjm-copy", { type: "button" }, "📋 Copy link");
+    this.copyBtn = h("button", "jj-btn jj-btn--green jjm-copy", { type: "button" }, t("menu.copyLink"));
     this.copyBtn.addEventListener("click", () => void this.copyLink());
     top.append(stickerWrap, this.copyBtn);
 
     const chefsHead = h("div", "jjm-section-head");
-    chefsHead.appendChild(h("h2", "jjm-h2", undefined, "Chefs in the kitchen"));
+    chefsHead.appendChild(h("h2", "jjm-h2", undefined, t("menu.chefsHeading")));
     this.countEl = h("span", "jjm-count");
     chefsHead.appendChild(this.countEl);
 
-    const grid = h("ul", "jjm-chefs", { "aria-label": "Players" });
+    const grid = h("ul", "jjm-chefs", { "aria-label": t("menu.playersAria") });
     for (let i = 0; i < MAX_PLAYERS; i++) {
       const li = h("li", "jjm-chef jjm-chef--empty");
       li.style.setProperty("--tilt", `${(i % 2 ? 1 : -1) * (1 + (i % 3))}deg`);
@@ -313,12 +302,12 @@ export class Menu {
     }
 
     // Hat color picker.
-    const colorHead = h("h2", "jjm-h2", { id: "jjm-color-h" }, "Pick your hat");
+    const colorHead = h("h2", "jjm-h2", { id: "jjm-color-h" }, t("menu.pickHat"));
     const colors = h("div", "jjm-colors", { role: "radiogroup", "aria-labelledby": "jjm-color-h" });
     PLAYER_COLORS.forEach((hex, i) => {
       const b = h("button", "jjm-swatch", { type: "button", role: "radio", "aria-checked": "false" });
       b.style.setProperty("--sw", hex);
-      b.setAttribute("aria-label", COLOR_NAMES[i] ?? `Color ${i + 1}`);
+      b.setAttribute("aria-label", COLOR_NAMES[i] ?? t("menu.colorFallback", { n: i + 1 }));
       b.title = COLOR_NAMES[i] ?? "";
       b.innerHTML = HAT_SVG;
       b.addEventListener("click", () => {
@@ -349,12 +338,12 @@ export class Menu {
     });
 
     // Host settings.
-    const setHead = h("h2", "jjm-h2", undefined, "House rules");
+    const setHead = h("h2", "jjm-h2", undefined, t("menu.houseRules"));
     const settings = h("div", "jjm-settings");
     this.roundsSel = h("select", "jjm-select", { id: "jjm-rounds" });
-    for (const r of ROUND_OPTIONS) this.roundsSel.appendChild(h("option", undefined, { value: String(r) }, r === 0 ? "Auto" : String(r)));
+    for (const r of ROUND_OPTIONS) this.roundsSel.appendChild(h("option", undefined, { value: String(r) }, r === 0 ? t("menu.roundsAuto") : String(r)));
     this.timerSel = h("select", "jjm-select", { id: "jjm-timer" });
-    for (const t of TURN_TIMER_OPTIONS) this.timerSel.appendChild(h("option", undefined, { value: String(t) }, `${t} s`));
+    for (const s of TURN_TIMER_OPTIONS) this.timerSel.appendChild(h("option", undefined, { value: String(s) }, t("menu.timerOption", { s })));
     this.sabBox = h("input", "jjm-switch", { id: "jjm-sab", type: "checkbox", role: "switch" });
     this.betsBox = h("input", "jjm-switch", { id: "jjm-bets", type: "checkbox", role: "switch" });
     const field = (id: string, label: string, ctl: HTMLElement): HTMLElement => {
@@ -363,13 +352,13 @@ export class Menu {
       return f;
     };
     this.sabNote = h("span", "jjm-note");
-    const sabField = field("jjm-sab", "Saboteur 😈", this.sabBox);
+    const sabField = field("jjm-sab", t("menu.setSaboteur"), this.sabBox);
     sabField.appendChild(this.sabNote);
     settings.append(
-      field("jjm-rounds", "Rounds 🔁", this.roundsSel),
-      field("jjm-timer", "Turn timer ⏱️", this.timerSel),
+      field("jjm-rounds", t("menu.setRounds"), this.roundsSel),
+      field("jjm-timer", t("menu.setTimer"), this.timerSel),
       sabField,
-      field("jjm-bets", "Side bets 🪙", this.betsBox),
+      field("jjm-bets", t("menu.setBets"), this.betsBox),
     );
     this.roundsSel.addEventListener("change", () => this.sendSetting({ rounds: Number(this.roundsSel.value) }));
     this.timerSel.addEventListener("change", () => this.sendSetting({ turnTimer: Number(this.timerSel.value) }));
@@ -379,7 +368,7 @@ export class Menu {
 
     // Actions.
     const actions = h("div", "jjm-actions");
-    this.leaveBtn = h("button", "jj-btn jj-btn--red", { type: "button" }, "🏃 Leave");
+    this.leaveBtn = h("button", "jj-btn jj-btn--red", { type: "button" }, t("menu.leave"));
     this.leaveBtn.addEventListener("click", () => this.handlers.onLeave());
     this.readyBtn = h("button", "jj-btn jj-btn--green jjm-ready", { type: "button", "aria-pressed": "false" });
     this.readyBtn.addEventListener("click", () => {
@@ -388,7 +377,7 @@ export class Menu {
       this.handlers.onUiSound("pop");
       this.handlers.onReady(this.myReady);
     });
-    this.startBtn = h("button", "jj-btn jj-btn--pink jjm-big jjm-start", { type: "button", "aria-describedby": "jjm-start-why" }, "🎰 Start the chaos!");
+    this.startBtn = h("button", "jj-btn jj-btn--pink jjm-big jjm-start", { type: "button", "aria-describedby": "jjm-start-why" }, t("menu.start"));
     this.startBtn.addEventListener("click", () => this.handlers.onStart());
     this.startReason = h("p", "jjm-start-why", { id: "jjm-start-why", "aria-live": "polite" });
     actions.append(this.leaveBtn, this.readyBtn, this.startBtn);
@@ -397,7 +386,7 @@ export class Menu {
     this.lobby.appendChild(lcard);
 
     // ================================================================== ROLE
-    this.roleWrap = h("section", "jjm-screen jjm-role", { "aria-label": "Your secret role", "aria-live": "polite" });
+    this.roleWrap = h("section", "jjm-screen jjm-role", { "aria-label": t("menu.roleAria"), "aria-live": "polite" });
 
     this.el.append(this.home, this.lobby, this.roleWrap);
 
@@ -449,7 +438,7 @@ export class Menu {
 
   showError(message: string): void {
     this.setBusy(false);
-    this.errorEl.textContent = `🥴 ${message}`;
+    this.errorEl.textContent = t("menu.errorPrefix", { message });
     this.errorEl.classList.remove("jjm-shake");
     void this.errorEl.offsetWidth;
     this.errorEl.classList.add("jjm-shake");
@@ -479,9 +468,9 @@ export class Menu {
         const s = h("span", "jjm-sticker-ch", undefined, ch);
         this.codeSticker.appendChild(s);
       }
-      this.codeSticker.setAttribute("aria-label", `Room code ${state.code.split("").join(" ")}`);
+      this.codeSticker.setAttribute("aria-label", t("menu.roomCodeAria", { code: state.code.split("").join(" ") }));
     }
-    setText(this.countEl, `${count}/${MAX_PLAYERS}`);
+    setText(this.countEl, t("menu.count", { count, max: MAX_PLAYERS }));
 
     // Chef cards (by seat order, updated in place).
     this.seats.forEach((seat, i) => {
@@ -528,13 +517,19 @@ export class Menu {
       if (seat.badges.dataset.k !== badgeKey) {
         seat.badges.dataset.k = badgeKey;
         seat.badges.replaceChildren();
-        if (p.id === state.hostId) seat.badges.appendChild(h("span", "jjm-badge jjm-badge--host", { title: "Host" }, "👑 host"));
-        if (p.id === myId) seat.badges.appendChild(h("span", "jjm-badge jjm-badge--you", undefined, "(you)"));
+        if (p.id === state.hostId) seat.badges.appendChild(h("span", "jjm-badge jjm-badge--host", { title: t("menu.hostTitle") }, t("menu.hostBadge")));
+        if (p.id === myId) seat.badges.appendChild(h("span", "jjm-badge jjm-badge--you", undefined, t("menu.youBadge")));
       }
-      setText(seat.status, !p.connected ? "💤 snoozing" : p.ready ? "READY ✓" : "thinking…");
+      setText(seat.status, !p.connected ? t("menu.statusAway") : p.ready ? t("menu.statusReady") : t("menu.statusThinking"));
       seat.card.setAttribute(
         "aria-label",
-        `${p.nickname}${p.id === state.hostId ? ", host" : ""}${p.id === myId ? ", you" : ""}, ${COLOR_NAMES[p.color] ?? ""} hat, ${p.connected ? (p.ready ? "ready" : "not ready") : "disconnected"}`,
+        t("menu.seatAria", {
+          name: p.nickname,
+          host: p.id === state.hostId ? t("menu.seatAriaHost") : "",
+          you: p.id === myId ? t("menu.seatAriaYou") : "",
+          color: COLOR_NAMES[p.color] ?? "",
+          status: p.connected ? (p.ready ? t("menu.seatAriaReady") : t("menu.seatAriaNotReady")) : t("menu.seatAriaAway"),
+        }),
       );
     });
 
@@ -550,7 +545,7 @@ export class Menu {
       sw.setAttribute("aria-checked", String(mine));
       sw.tabIndex = mine || (me === undefined && i === 0) ? 0 : -1;
       toggle(sw, "jjm-swatch--taken", isTaken);
-      const label = `${COLOR_NAMES[i] ?? ""}${isTaken ? " (taken)" : ""}`;
+      const label = isTaken ? t("menu.swatchTaken", { color: COLOR_NAMES[i] ?? "" }) : (COLOR_NAMES[i] ?? "");
       if (sw.getAttribute("aria-label") !== label) sw.setAttribute("aria-label", label);
     });
 
@@ -560,7 +555,7 @@ export class Menu {
 
     // Settings (host edits, guests read-only). Skip a control while it has focus so we don't fight the user.
     const s = state.settings;
-    const autoLabel = `Auto (${autoRounds(Math.max(count, MIN_PLAYERS))})`;
+    const autoLabel = t("menu.roundsAutoN", { n: autoRounds(Math.max(count, MIN_PLAYERS)) });
     const autoOpt = this.roundsSel.options[0];
     if (autoOpt && autoOpt.textContent !== autoLabel) autoOpt.textContent = autoLabel;
     this.syncSelect(this.roundsSel, String(s.rounds));
@@ -573,27 +568,27 @@ export class Menu {
     toggle(this.lobby, "jjm-is-host", isHost);
     setText(
       this.sabNote,
-      s.saboteur && count < SABOTEUR_MIN_PLAYERS ? `needs ${SABOTEUR_MIN_PLAYERS}+ chefs` : "",
+      s.saboteur && count < SABOTEUR_MIN_PLAYERS ? t("menu.sabNeeds", { n: SABOTEUR_MIN_PLAYERS }) : "",
     );
     const host = state.players.get(state.hostId);
-    setText(this.settingsNote, isHost ? "You're the head chef: you set the rules." : `Only ${host ? host.nickname : "the host"} can change these.`);
+    setText(this.settingsNote, isHost ? t("menu.noteHost") : t("menu.noteGuest", { host: host ? host.nickname : t("menu.theHost") }));
 
     // Start button + reason.
     let reason = "";
     if (count < MIN_PLAYERS) {
       const need = MIN_PLAYERS - count;
-      reason = `Need ${need} more chef${need === 1 ? "" : "s"}. Share the link! 📣`;
+      reason = need === 1 ? t("menu.needOne") : t("menu.needMany", { n: need });
     } else {
       // Mirrors the server's start rule: the host's Start counts as their ready, and chefs who are
       // disconnected at start just become spectators, so only connected guests need to be ready.
       const slow = players.filter((p) => p.connected && !p.ready && p.id !== state.hostId);
-      if (slow.length === 1) reason = `Waiting on ${slow[0]!.nickname} to stop daydreaming…`;
-      else if (slow.length > 1) reason = `Waiting on ${slow.length} chefs to press Ready…`;
+      if (slow.length === 1) reason = t("menu.waitingOne", { name: slow[0]!.nickname });
+      else if (slow.length > 1) reason = t("menu.waitingMany", { n: slow.length });
     }
     this.startBtn.hidden = !isHost;
     this.startBtn.disabled = reason !== "";
-    if (!isHost) reason = reason || `All set! Waiting for ${host ? host.nickname : "the host"} to start…`;
-    else if (!reason) reason = "Everyone's ready. Ring the bell! 🔔";
+    if (!isHost) reason = reason || t("menu.waitingHost", { host: host ? host.nickname : t("menu.theHost") });
+    else if (!reason) reason = t("menu.allReady");
     setText(this.startReason, reason);
   }
 
@@ -606,20 +601,21 @@ export class Menu {
     const scene = h("div", "jjm-flip");
     const inner = h("div", "jjm-flip-inner");
     const back = h("div", "jjm-face jjm-face--back", { "aria-hidden": "true" });
-    back.append(h("span", "jjm-face-q", undefined, "?"), h("span", "jjm-face-hint", undefined, "Top secret. No peeking!"));
+    back.append(h("span", "jjm-face-q", undefined, "?"), h("span", "jjm-face-hint", undefined, t("menu.roleBackHint")));
     const front = h("div", `jjm-face jjm-face--front ${sab ? "jjm-face--sab" : "jjm-face--baker"}`);
-    front.appendChild(h("span", "jjm-face-kicker", undefined, "You are"));
+    front.appendChild(h("span", "jjm-face-kicker", undefined, t("menu.roleKicker")));
     front.appendChild(h("span", "jjm-face-emoji", { "aria-hidden": "true" }, sab ? "😈" : "🧑‍🍳"));
     const title = h("span", "jjm-face-title");
-    title.append(sab ? "the " : "a ", h("strong", undefined, undefined, sab ? "SABOTEUR" : "BAKER"));
+    const rk = sab ? "roleSab" : "roleBaker";
+    title.append(t(`menu.${rk}Pre`), h("strong", undefined, undefined, upper(t(`menu.${rk}`))), t(`menu.${rk}Post`));
     front.appendChild(title);
     let body: string;
     if (sab) {
-      body = "Press R during someone else's spin to rig it. Once per round.";
+      body = t("menu.roleSabBody");
     } else if (solo) {
-      body = "No Saboteur this time: the cursed cards are extra common instead!";
+      body = t("menu.roleSoloBody");
     } else {
-      body = "Build tall, bet smart, and catch the Saboteur.";
+      body = t("menu.roleBakerBody");
     }
     front.appendChild(h("span", "jjm-face-body", undefined, body));
     if (sab) front.appendChild(h("kbd", "jjm-key", { "aria-hidden": "true" }, "R"));
@@ -627,7 +623,7 @@ export class Menu {
     inner.append(back, front);
     scene.appendChild(inner);
     this.roleWrap.replaceChildren(scene);
-    this.roleWrap.setAttribute("aria-label", sab ? "You are the Saboteur" : "You are a Baker");
+    this.roleWrap.setAttribute("aria-label", sab ? t("menu.roleSabAria") : t("menu.roleBakerAria"));
 
     this.roleTimer = window.setTimeout(() => {
       scene.classList.add("jjm-flipped");
@@ -657,6 +653,7 @@ export class Menu {
 
   private sanitizeCode(raw: string): string {
     let out = "";
+    // Codes are ASCII: plain toUpperCase on purpose (a Turkish locale would turn "i" into "İ").
     for (const ch of raw.toUpperCase()) if (CODE_ALPHABET.includes(ch)) out += ch;
     return out.slice(0, CODE_LENGTH);
   }
@@ -684,7 +681,7 @@ export class Menu {
     if (this.busy) return;
     const code = this.sanitizeCode(this.codeInput.value);
     if (code.length !== CODE_LENGTH) {
-      this.showError(`Room codes are ${CODE_LENGTH} letters. Like "PIES".`);
+      this.showError(t("menu.errCodeLength", { n: CODE_LENGTH }));
       this.codeInput.focus();
       return;
     }
@@ -700,7 +697,7 @@ export class Menu {
 
   private renderReady(): void {
     this.readyBtn.setAttribute("aria-pressed", String(this.myReady));
-    setText(this.readyBtn, this.myReady ? "✅ Ready! (undo)" : "🍰 I'm Ready!");
+    setText(this.readyBtn, this.myReady ? t("menu.readyOn") : t("menu.readyOff"));
     toggle(this.readyBtn, "jjm-ready--on", this.myReady);
   }
 
@@ -735,10 +732,10 @@ export class Menu {
     }
     this.handlers.onUiSound("pop");
     window.clearTimeout(this.copyTimer);
-    this.copyBtn.textContent = ok ? "✨ Copied!" : `🔗 ${url}`;
+    this.copyBtn.textContent = ok ? t("menu.copied") : t("menu.copyFallback", { url });
     toggle(this.copyBtn, "jjm-copied", ok);
     this.copyTimer = window.setTimeout(() => {
-      this.copyBtn.textContent = "📋 Copy link";
+      this.copyBtn.textContent = t("menu.copyLink");
       this.copyBtn.classList.remove("jjm-copied");
     }, ok ? 1600 : 6000);
   }

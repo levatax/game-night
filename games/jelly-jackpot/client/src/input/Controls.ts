@@ -26,6 +26,7 @@ import * as THREE from "three";
 import { BET_AMOUNTS, HOVER_RADIUS, type PieceType } from "../../../shared/constants";
 import type { Pose } from "../../../shared/protocol";
 import { settings } from "../app/settings";
+import { t } from "../i18n";
 import type { Stage } from "../scene/Stage";
 import { Emitter } from "../util/Emitter";
 import "./controls.css";
@@ -607,10 +608,10 @@ export class Controls {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "jj-drop";
-    btn.setAttribute("aria-label", "Drop the piece");
+    btn.setAttribute("aria-label", t("game.dropAria"));
     btn.innerHTML =
       '<span class="jj-drop__eyes"><span class="jj-drop__eye"></span><span class="jj-drop__eye"></span></span>' +
-      '<span class="jj-drop__label">DROP!</span>';
+      `<span class="jj-drop__label">${t("game.drop")}</span>`;
     const onDown = (ev: PointerEvent) => {
       ev.preventDefault();
       ev.stopPropagation();

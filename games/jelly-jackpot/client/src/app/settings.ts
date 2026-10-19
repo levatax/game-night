@@ -5,6 +5,7 @@ import { SETTINGS_STORAGE_KEY } from "../../../shared/constants";
 import { Emitter } from "../util/Emitter";
 
 export type Quality = "low" | "medium" | "high";
+export type Lang = "en" | "tr";
 
 export interface Settings {
   /** Orbit sensitivity multiplier 0.2..3. */
@@ -18,6 +19,8 @@ export interface Settings {
   quality: Quality;
   /** Tones down Cursed / Legendary flashes, screen shake and strobing lights. */
   reducedFlashing: boolean;
+  /** UI language. Defaults to Turkish when the browser prefers it. */
+  language: Lang;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -29,7 +32,16 @@ export const DEFAULT_SETTINGS: Settings = {
   muted: false,
   quality: "high",
   reducedFlashing: false,
+  language: browserLang(),
 };
+
+function browserLang(): Lang {
+  try {
+    return (navigator.languages?.[0] ?? navigator.language ?? "").toLowerCase().startsWith("tr") ? "tr" : "en";
+  } catch {
+    return "en";
+  }
+}
 
 const clamp = (v: unknown, lo: number, hi: number, d: number) =>
   typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d;
@@ -45,6 +57,7 @@ function sanitize(raw: Partial<Settings>): Settings {
     muted: typeof raw.muted === "boolean" ? raw.muted : d.muted,
     quality: raw.quality === "low" || raw.quality === "medium" || raw.quality === "high" ? raw.quality : d.quality,
     reducedFlashing: typeof raw.reducedFlashing === "boolean" ? raw.reducedFlashing : d.reducedFlashing,
+    language: raw.language === "en" || raw.language === "tr" ? raw.language : d.language,
   };
 }
 

@@ -1,8 +1,8 @@
 // End-of-match screens + settings + emote wheel + connection banner (DOM). Owner: client-overlays.
 // PUBLIC API IS THE CONTRACT. Styles in ./overlays.css (create it, import it here). Tokens from ./theme.css.
 //
-// - Vote (§13.5): "WHO RIGGED THE CASES?" grid of chef cards (color hat, name, coins); click a suspect (not
-//   yourself: disabled), 20 s countdown bar from state.timeLeft/timeTotal, "voted ✓" ticks from player.voted.
+// - Vote (§13.5): t("overlays.voteTitle") grid of chef cards (color hat, name, coins); click a suspect (not
+//   yourself: disabled), 20 s countdown bar from state.timeLeft/timeTotal, t("overlays.votedTick") ticks from player.voted.
 //   showVotes(): votes are revealed one by one (arrows/strings from voter to suspect, 400 ms apart, a
 //   ba-dum sound callback per vote).
 // - Reveal (§13.6): drumroll pause then the Saboteur's card flips: "😈 IT WAS <NAME>!" (or "Nobody! It was
@@ -34,6 +34,7 @@ import type { CardId, EmoteId } from "../../../shared/constants";
 import type { JellyStateView, PlayerView, RevealMsg, VotesMsg } from "../../../shared/protocol";
 import { settings } from "../app/settings";
 import type { Quality, Settings } from "../app/settings";
+import { LANGS, cardName, has, lang, setLanguage, t, upper } from "../i18n";
 
 export interface OverlayHandlers {
   onVote(suspectId: string): void;
@@ -44,44 +45,25 @@ export interface OverlayHandlers {
 }
 
 // ------------------------------------------------------------------ silly copy
-const VOTE_SUBTITLES = [
-  "Somebody's been fiddling with the cases. Point a floury finger.",
-  "One of you is a dirty cake criminal. Who smells like sabotage?",
-  "The bowling balls didn't roll in by themselves. J'accuse!",
-  "Trust no one. Especially the one humming innocently.",
-];
-const DRUMROLL_LINES = ["🥁 And the Saboteur was…", "🥁 The culprit is…", "🥁 Unmasking the cake crook…"];
-const CAUGHT_QUIPS = [
-  "Caught with frosting on their hands!",
-  "Straight to cake jail. Do not pass GO.",
-  "The kitchen has spoken. Shame. Shame. Shame.",
-];
-const ESCAPED_QUIPS = [
-  "Got clean away, giggling into a napkin.",
-  "Nobody suspected the quiet one. Classic.",
-  "Escaped out the cat flap with a pocket full of coins.",
-];
-const NOBODY_QUIPS = [
-  "Those cursed cards were 100% organic, free-range bad luck.",
-  "No villain. Just gravity, and your terrible stacking.",
-];
-const WAITING_QUIPS = [
-  "Waiting for host… (they're licking the spoon)",
-  "Waiting for host… (they're crying into the frosting)",
-  "Waiting for host… (they're picking cake out of their hair)",
-];
-const TIER_LABELS = ["🏆 TOP TIER", "🥈 MIDDLE LAYER", "🥉 BOTTOM SPONGE"];
-const EMOTE_META: Record<EmoteId, { emoji: string; label: string }> = {
-  cheer: { emoji: "🎉", label: "Cheer" },
-  gasp: { emoji: "😱", label: "Gasp" },
-  point: { emoji: "👉", label: "Point" },
-  laugh: { emoji: "🤣", label: "Laugh" },
+// Random-pick pools: t("overlays.<prefix><1..n>").
+const POOLS = { voteSub: 4, drum: 3, caught: 3, escaped: 3, nobody: 2, waiting: 3 } as const;
+const pickT = (prefix: keyof typeof POOLS): string => t(`overlays.${prefix}${1 + Math.floor(Math.random() * POOLS[prefix])}`);
+const TIER_KEYS = ["tier1", "tier2", "tier3"];
+const EMOTE_META: Record<EmoteId, { emoji: string; key: string }> = {
+  cheer: { emoji: "🎉", key: "emoteCheer" },
+  gasp: { emoji: "😱", key: "emoteGasp" },
+  point: { emoji: "👉", key: "emotePoint" },
+  laugh: { emoji: "🤣", key: "emoteLaugh" },
 };
-const QUALITY_META: { id: Quality; emoji: string; label: string }[] = [
-  { id: "low", emoji: "🥔", label: "Potato" },
-  { id: "medium", emoji: "🍞", label: "Toaster" },
-  { id: "high", emoji: "🎩", label: "Fancy" },
+const QUALITY_META: { id: Quality; emoji: string; key: string }[] = [
+  { id: "low", emoji: "🥔", key: "qualityLow" },
+  { id: "medium", emoji: "🍞", key: "qualityMedium" },
+  { id: "high", emoji: "🎩", key: "qualityHigh" },
 ];
+
+/** Server-sent text: translated via its key when we have one, else the English fallback. */
+const serverText = (key: string | undefined, fallback: string): string =>
+  key && has(`server.${key}`) ? t(`server.${key}`) : fallback;
 
 // --------------------------------------------------------------------- helpers
 const pick = <T>(arr: readonly T[]): T => arr[Math.floor(Math.random() * arr.length)]!;
@@ -105,7 +87,7 @@ function matchPlayers(state: JellyStateView): PlayerView[] {
 }
 
 const nameOf = (state: JellyStateView, id: string): string =>
-  state.players.get(id)?.nickname || "a mystery chef";
+  state.players.get(id)?.nickname || t("overlays.mysteryChef");
 
 const signed = (n: number): string => (n > 0 ? `+${n}` : `${n}`);
 
@@ -203,7 +185,7 @@ export class Overlays {
     this.bannerEl.hidden = true;
     this.bannerEl.setAttribute("role", "status");
     this.bannerText = h("span", "jjo-banner__text");
-    this.bannerBtn = h("button", "jj-btn jj-btn--pink jjo-banner__btn", "Back to menu");
+    this.bannerBtn = h("button", "jj-btn jj-btn--pink jjo-banner__btn", t("overlays.backToMenu"));
     this.bannerBtn.addEventListener("click", () => {
       this.handlers.onUiSound("click");
       this.handlers.onLeave();
@@ -270,7 +252,7 @@ export class Overlays {
 
     const panel = h("div", "jjo-vote jj-panel");
     const title = h("h1", "jjo-title jjo-title--wobble", "WHO RIGGED THE CASES?");
-    const sub = h("p", "jjo-sub", pick(VOTE_SUBTITLES));
+    const sub = h("p", "jjo-sub", pickT("voteSub"));
     const timer = h("div", "jjo-timer");
     this.voteBar = h("div", "jjo-timer__fill");
     this.voteTime = h("span", "jjo-timer__label");
@@ -296,8 +278,8 @@ export class Overlays {
       const count = h("span", "jjo-vcard__count");
       const coins = h("span", "jjo-vcard__coins");
       const name = h("span", "jjo-vcard__name", p.nickname);
-      card.append(chefAvatar(colorOf(p)), name, coins, tick, count, h("span", "jjo-vcard__stamp", "SUSPECT!"));
-      if (isMe) card.append(h("span", "jjo-vcard__me", "that's you, silly"));
+      card.append(chefAvatar(colorOf(p)), name, coins, tick, count, h("span", "jjo-vcard__stamp", t("overlays.suspectStamp")));
+      if (isMe) card.append(h("span", "jjo-vcard__me", t("overlays.thatsYou")));
       card.addEventListener("pointerenter", () => {
         if (!card.disabled) this.handlers.onUiSound("hover");
       });
@@ -306,7 +288,7 @@ export class Overlays {
       this.voteCards.set(p.id, { el: card, coins, tick, count, hits: 0 });
     }
     this.voteBoard.append(grid, this.voteSvg);
-    this.voteStatus = h("div", "jjo-vote__status", iCanVote ? "Click a chef to accuse them. You can change your mind!" : "You're watching this one. Grab popcorn. 🍿");
+    this.voteStatus = h("div", "jjo-vote__status", t(iCanVote ? "overlays.voteHint" : "overlays.voteSpectator"));
 
     panel.append(title, sub, timer, this.voteBoard, this.voteStatus);
     const wrap = h("div", "jjo-end__scroll");
@@ -322,7 +304,7 @@ export class Overlays {
     this.voteCards.forEach((c, cid) => c.el.classList.toggle("jjo-vcard--picked", cid === id));
     this.handlers.onUiSound("pop");
     this.handlers.onVote(id);
-    if (this.voteStatus) this.voteStatus.textContent = `You pointed a sticky finger at ${card.el.querySelector(".jjo-vcard__name")?.textContent ?? "someone"} 🫵`;
+    if (this.voteStatus) this.voteStatus.textContent = t("overlays.votePicked", { name: card.el.querySelector(".jjo-vcard__name")?.textContent ?? t("overlays.someone") });
   }
 
   /** Re-render the vote screen from state (voted ticks, timer). */
@@ -344,7 +326,7 @@ export class Overlays {
       const frac = Math.max(0, Math.min(1, state.timeLeft / total));
       this.voteBar.style.width = `${frac * 100}%`;
       const secs = Math.ceil(state.timeLeft);
-      this.voteTime.textContent = `⏱ ${secs}s`;
+      this.voteTime.textContent = t("overlays.voteSeconds", { secs });
       this.voteBar.parentElement?.classList.toggle("jjo-timer--panic", secs <= 5 && secs > 0);
     }
   }
@@ -359,10 +341,10 @@ export class Overlays {
     });
     if (this.voteBar && this.voteTime) {
       this.voteBar.style.width = "0%";
-      this.voteTime.textContent = "Pencils down!";
+      this.voteTime.textContent = t("overlays.pencilsDown");
       this.voteBar.parentElement?.classList.remove("jjo-timer--panic");
     }
-    if (this.voteStatus) this.voteStatus.textContent = msg.votes.length ? "Counting the tomatoes… 🍅" : "Nobody voted. Wow. Very brave.";
+    if (this.voteStatus) this.voteStatus.textContent = t(msg.votes.length ? "overlays.counting" : "overlays.nobodyVoted");
 
     msg.votes.forEach((v, i) => this.later(250 + i * step, () => this.throwVote(v.voterId, v.suspectId, state)));
     this.later(250 + msg.votes.length * step + 300, () => {
@@ -370,9 +352,9 @@ export class Overlays {
       this.lastMajority = { id: msg.majorityId, tie };
       if (!this.voteStatus) return;
       if (tie) {
-        this.voteStatus.textContent = msg.votes.length ? "A TIE?! Everyone's equally suspicious. 🤷" : "No votes, no verdict. 🦗";
+        this.voteStatus.textContent = t(msg.votes.length ? "overlays.voteTie" : "overlays.noVerdict");
       } else {
-        this.voteStatus.textContent = `The kitchen blames ${nameOf(state, msg.majorityId)}!`;
+        this.voteStatus.textContent = t("overlays.kitchenBlames", { name: nameOf(state, msg.majorityId) });
         const card = this.voteCards.get(msg.majorityId);
         card?.el.classList.add("jjo-vcard--accused");
       }
@@ -441,7 +423,7 @@ export class Overlays {
 
   private renderReveal(msg: RevealMsg, state: JellyStateView): void {
     const panel = h("div", "jjo-reveal jj-panel");
-    const drum = h("h1", "jjo-title jjo-reveal__drum", pick(DRUMROLL_LINES));
+    const drum = h("h1", "jjo-title jjo-reveal__drum", pickT("drum"));
     const hasSab = msg.saboteurId !== "";
     const sab = hasSab ? state.players.get(msg.saboteurId) : undefined;
 
@@ -449,16 +431,16 @@ export class Overlays {
     const flip = h("div", "jjo-flip");
     const inner = h("div", "jjo-flip__inner");
     const front = h("div", "jjo-flip__face jjo-flip__front");
-    front.append(h("span", "jjo-flip__q", "?"), h("span", "jjo-flip__hint", "TOP SECRET RECIPE"));
+    front.append(h("span", "jjo-flip__q", "?"), h("span", "jjo-flip__hint", t("overlays.topSecret")));
     const back = h("div", `jjo-flip__face jjo-flip__back${hasSab ? " jjo-flip__back--evil" : " jjo-flip__back--lucky"}`);
     if (hasSab) {
       const avatar = chefAvatar(colorOf(sab), "l");
       avatar.classList.add("jjo-chef--unmask");
-      back.append(avatar, h("div", "jjo-flip__name", `😈 IT WAS ${(sab?.nickname || "A GHOST").toUpperCase()}!`));
+      back.append(avatar, h("div", "jjo-flip__name", t("overlays.itWas", { name: upper(sab?.nickname || t("overlays.ghost")) })));
     } else {
-      back.append(h("div", "jjo-flip__clover", "🍀"), h("div", "jjo-flip__name", "Nobody! It was just bad luck 🍀"));
+      back.append(h("div", "jjo-flip__clover", "🍀"), h("div", "jjo-flip__name", t("overlays.nobodyLuck")));
     }
-    const stamp = h("div", `jjo-stamp ${msg.caught ? "jjo-stamp--caught" : "jjo-stamp--escaped"}`, msg.caught ? "CAUGHT!" : "ESCAPED!");
+    const stamp = h("div", `jjo-stamp ${msg.caught ? "jjo-stamp--caught" : "jjo-stamp--escaped"}`, t(msg.caught ? "overlays.caughtStamp" : "overlays.escapedStamp"));
     stamp.hidden = true;
     inner.append(front, back);
     flip.append(inner, stamp);
@@ -488,7 +470,7 @@ export class Overlays {
         stamp.hidden = false;
         this.handlers.onUiSound("pop");
       }
-      quip.textContent = hasSab ? pick(msg.caught ? CAUGHT_QUIPS : ESCAPED_QUIPS) : pick(NOBODY_QUIPS);
+      quip.textContent = pickT(hasSab ? (msg.caught ? "caught" : "escaped") : "nobody");
       quip.hidden = false;
     });
     this.later(2900, () => {
@@ -503,41 +485,47 @@ export class Overlays {
 
     if (this.lastMajority) {
       const verdict = this.lastMajority.tie
-        ? "The vote: a big fat tie. 🤷"
-        : `The vote: the kitchen blamed ${nameOf(state, this.lastMajority.id)}${this.lastMajority.id === msg.saboteurId ? " ✅" : " ❌"}`;
+        ? t("overlays.verdictTie")
+        : t("overlays.verdictBlamed", { name: nameOf(state, this.lastMajority.id), mark: this.lastMajority.id === msg.saboteurId ? "✅" : "❌" });
       box.append(h("p", "jjo-verdict", verdict));
     }
 
     if (hasSab) {
       const rigSec = h("section", "jjo-sec");
-      rigSec.append(h("h2", "jjo-sec__title", "🎰 The rig replay"));
+      rigSec.append(h("h2", "jjo-sec__title", t("overlays.rigTitle")));
       const list = h("ul", "jjo-rigs");
       if (msg.rigs.length === 0) {
-        list.append(h("li", "jjo-rig jjo-rig--none", "Never rigged a single case. Sneaky… or just lazy? 🛋️"));
+        list.append(h("li", "jjo-rig jjo-rig--none", t("overlays.rigNone")));
       }
       msg.rigs.forEach((r, i) => {
         const card = CARD_BY_ID[r.card as CardId];
         const fell = r.outcome === "fall";
         const li = h("li", `jjo-rig ${fell ? "jjo-rig--fell" : "jjo-rig--stood"}`);
         li.style.animationDelay = `${i * 0.18}s`;
-        li.textContent = `Rigged: ${nameOf(state, r.victimId)}'s turn, round ${r.round} → ${card?.name ?? r.card} ${card?.emoji ?? "❓"} (${fell ? "FELL" : "STOOD"})`;
+        li.textContent = t("overlays.rigLine", {
+          victim: nameOf(state, r.victimId),
+          round: r.round,
+          card: cardName(r.card),
+          emoji: card?.emoji ?? "❓",
+          outcome: t(fell ? "overlays.rigFell" : "overlays.rigStood"),
+        });
         list.append(li);
       });
       rigSec.append(list);
 
       const mathSec = h("section", "jjo-sec");
-      mathSec.append(h("h2", "jjo-sec__title", "🧮 The hidden-bonus math"));
+      mathSec.append(h("h2", "jjo-sec__title", t("overlays.mathTitle")));
       const topples = Math.round(msg.hiddenBonus / SABOTEUR_TOPPLE_BONUS);
       const math = h("div", "jjo-math");
-      math.append(h("div", "jjo-math__row", `${topples} topple${topples === 1 ? "" : "s"} on other turns × ${SABOTEUR_TOPPLE_BONUS} = ${msg.hiddenBonus} secret coins`));
+      math.append(h("div", "jjo-math__row", t(topples === 1 ? "overlays.mathTopplesOne" : "overlays.mathTopplesMany", { n: topples, bonus: SABOTEUR_TOPPLE_BONUS, total: msg.hiddenBonus })));
       if (msg.caught) {
         math.append(
-          h("div", "jjo-math__row jjo-math__row--bad", `Caught! ${sabName} forfeits the ${msg.hiddenBonus} 🚫`),
-          h("div", "jjo-math__row jjo-math__row--good", `Every correct voter gets +${VOTE_CORRECT_REWARD} 🕵️`),
+          h("div", "jjo-math__row jjo-math__row--bad", t("overlays.mathCaught", { name: sabName, total: msg.hiddenBonus })),
+          h("div", "jjo-math__row jjo-math__row--good", t("overlays.mathReward", { reward: VOTE_CORRECT_REWARD })),
         );
       } else {
         math.append(
-          h("div", "jjo-math__row jjo-math__row--good", `Escaped! ${msg.hiddenBonus} + ${SABOTEUR_ESCAPE_BONUS} escape bonus = ${msg.hiddenBonus + SABOTEUR_ESCAPE_BONUS} 💰`),
+          h("div", "jjo-math__row jjo-math__row--good", t("overlays.mathEscaped", { total: msg.hiddenBonus, bonus: SABOTEUR_ESCAPE_BONUS, sum: msg.hiddenBonus + SABOTEUR_ESCAPE_BONUS })),
         );
       }
       mathSec.append(math);
@@ -545,16 +533,16 @@ export class Overlays {
     }
 
     const adjSec = h("section", "jjo-sec");
-    adjSec.append(h("h2", "jjo-sec__title", "🪙 Coin adjustments"));
+    adjSec.append(h("h2", "jjo-sec__title", t("overlays.adjTitle")));
     const adj = h("ul", "jjo-adj");
-    if (msg.adjustments.length === 0) adj.append(h("li", "jjo-adj__row jjo-adj__row--none", "Nothing changes. The coins stay exactly as greasy as before."));
+    if (msg.adjustments.length === 0) adj.append(h("li", "jjo-adj__row jjo-adj__row--none", t("overlays.adjNone")));
     msg.adjustments.forEach((a, i) => {
       const li = h("li", `jjo-adj__row ${a.delta >= 0 ? "jjo-adj__row--up" : "jjo-adj__row--down"}`);
       li.style.animationDelay = `${i * 0.15}s`;
       const p = state.players.get(a.playerId);
       const dot = h("span", "jjo-dot");
       dot.style.background = colorOf(p);
-      li.append(dot, h("span", "jjo-adj__name", nameOf(state, a.playerId)), h("span", "jjo-adj__reason", a.reason), h("span", "jjo-adj__delta", signed(a.delta)));
+      li.append(dot, h("span", "jjo-adj__name", nameOf(state, a.playerId)), h("span", "jjo-adj__reason", serverText(a.key, a.reason)), h("span", "jjo-adj__delta", signed(a.delta)));
       adj.append(li);
     });
     adjSec.append(adj);
@@ -578,8 +566,8 @@ export class Overlays {
     const panel = h("div", "jjo-podium jj-panel");
     const winner = ranked[0];
     panel.append(
-      h("h1", "jjo-title jjo-title--wobble", winner ? `${winner.nickname} TAKES THE CAKE!` : "THE CAKE IS A LIE"),
-      h("p", "jjo-sub", "Final standings, fresh out of the oven."),
+      h("h1", "jjo-title jjo-title--wobble", winner ? t("overlays.takesCake", { name: winner.nickname }) : t("overlays.cakeLie")),
+      h("p", "jjo-sub", t("overlays.podiumSub")),
     );
 
     // the 3-tier cake: visual order 2nd, 1st, 3rd
@@ -598,7 +586,7 @@ export class Overlays {
         tier.append(spot);
       }
       const layer = h("div", "jjo-tier__cake");
-      layer.append(h("span", "jjo-tier__drip"), h("span", "jjo-tier__label", TIER_LABELS[idx]!));
+      layer.append(h("span", "jjo-tier__drip"), h("span", "jjo-tier__label", t(`overlays.${TIER_KEYS[idx]}`)));
       if (idx === 0) layer.append(h("span", "jjo-tier__cherry", "🍒"));
       tier.append(layer);
       cake.append(tier);
@@ -615,14 +603,14 @@ export class Overlays {
       spot.style.setProperty("--pc", colorOf(last));
       spot.append(chefAvatar(colorOf(last), "s"), h("span", "jjo-spot__name", last.nickname), h("span", "jjo-spot__coins", `🪙 ${last.coins}`));
       this.addPie(spot);
-      shame.append(h("span", "jjo-shame__label", "🪑 The Stool of Shame"), spot);
+      shame.append(h("span", "jjo-shame__label", t("overlays.shameStool")), spot);
       panel.append(shame);
     }
 
     // stats table
     const table = h("table", "jjo-stats");
     const head = h("tr");
-    ["#", "Chef", "🪙", "Survived", "Topples", "Best ×", "Bet profit"].forEach((t) => head.append(h("th", undefined, t)));
+    ["colRank", "colChef", "colCoins", "colSurvived", "colTopples", "colBest", "colProfit"].forEach((k) => head.append(h("th", undefined, t(`overlays.${k}`))));
     const thead = h("thead");
     thead.append(head);
     const tbody = h("tbody");
@@ -656,7 +644,7 @@ export class Overlays {
 
   private addPie(spot: HTMLElement): void {
     spot.classList.add("jjo-spot--pied");
-    spot.append(h("span", "jjo-pie", "🥧"), h("span", "jjo-pie__splat"), h("span", "jjo-pie__tag", "LAST PLACE"));
+    spot.append(h("span", "jjo-pie", "🥧"), h("span", "jjo-pie__splat"), h("span", "jjo-pie__tag", t("overlays.lastPlace")));
   }
 
   private fillPodiumFooter(state: JellyStateView, myId: string): void {
@@ -664,7 +652,7 @@ export class Overlays {
     this.podiumHost = state.hostId;
     this.podiumFooter.replaceChildren();
     if (state.hostId === myId) {
-      const re = h("button", "jj-btn jj-btn--green jjo-big", "🔁 Rematch!");
+      const re = h("button", "jj-btn jj-btn--green jjo-big", t("overlays.rematch"));
       re.type = "button";
       re.addEventListener("click", () => {
         this.handlers.onUiSound("click");
@@ -672,9 +660,9 @@ export class Overlays {
       });
       this.podiumFooter.append(re);
     } else {
-      this.podiumFooter.append(h("span", "jjo-waiting", pick(WAITING_QUIPS)));
+      this.podiumFooter.append(h("span", "jjo-waiting", pickT("waiting")));
     }
-    const back = h("a", "jj-btn jj-btn--pink jjo-big", "🏠 Back to Game Night");
+    const back = h("a", "jj-btn jj-btn--pink jjo-big", t("overlays.backToHub"));
     back.href = "/";
     back.addEventListener("click", () => this.handlers.onUiSound("click"));
     this.podiumFooter.append(back);
@@ -707,14 +695,14 @@ export class Overlays {
     this.bindings.push((s) => {
       mute.textContent = s.muted ? "🔇" : "🔊";
       mute.classList.toggle("jjo-corner__btn--off", s.muted);
-      mute.title = s.muted ? "Unmute (M)" : "Mute (M)";
+      mute.title = t(s.muted ? "overlays.unmute" : "overlays.mute");
       mute.setAttribute("aria-label", mute.title);
       mute.setAttribute("aria-pressed", String(s.muted));
     });
     const gear = h("button", "jjo-corner__btn", "⚙️");
     gear.type = "button";
-    gear.title = "Settings: sound, camera, graphics (Esc)";
-    gear.setAttribute("aria-label", "Open settings");
+    gear.title = t("overlays.settingsTitle");
+    gear.setAttribute("aria-label", t("overlays.openSettings"));
     gear.addEventListener("click", () => {
       this.handlers.onUiSound("click");
       this.toggleSettings();
@@ -737,16 +725,16 @@ export class Overlays {
     backdrop.addEventListener("click", () => this.toggleSettings(false));
     const panel = h("div", "jjo-settings__panel jj-panel");
     panel.setAttribute("role", "dialog");
-    panel.setAttribute("aria-label", "Settings");
+    panel.setAttribute("aria-label", t("overlays.settingsAria"));
     const top = h("div", "jjo-settings__top");
     const close = h("button", "jjo-x", "✕");
     close.type = "button";
-    close.setAttribute("aria-label", "Close settings");
+    close.setAttribute("aria-label", t("overlays.closeSettings"));
     close.addEventListener("click", () => {
       this.handlers.onUiSound("click");
       this.toggleSettings(false);
     });
-    top.append(h("h2", "jjo-settings__title", "⚙️ Kitchen Settings"), close);
+    top.append(h("h2", "jjo-settings__title", t("overlays.kitchenSettings")), close);
     panel.append(top);
 
     const slider = (label: string, emoji: string, key: "masterVolume" | "musicVolume" | "sfxVolume" | "cameraSensitivity", min: number, max: number, step: number, fmt: (v: number) => string) => {
@@ -773,7 +761,7 @@ export class Overlays {
       panel.append(row);
     };
     const pct = (v: number) => `${Math.round(v * 100)}%`;
-    panel.append(h("h3", "jjo-settings__group", "Noises"));
+    panel.append(h("h3", "jjo-settings__group", t("overlays.groupNoises")));
     {
       const row = h("label", "jjo-row jjo-row--toggle");
       const input = h("input", "jjo-check");
@@ -783,14 +771,14 @@ export class Overlays {
         this.handlers.onUiSound("click");
       });
       this.bindings.push((st) => (input.checked = !st.muted));
-      row.append(h("span", "jjo-row__label", "🔔 Sound on (M)"), input, h("span", "jjo-switch"));
+      row.append(h("span", "jjo-row__label", t("overlays.soundOn")), input, h("span", "jjo-switch"));
       panel.append(row);
     }
-    slider("Master", "🔊", "masterVolume", 0, 1, 0.01, pct);
-    slider("Music", "🎷", "musicVolume", 0, 1, 0.01, pct);
-    slider("SFX", "📯", "sfxVolume", 0, 1, 0.01, pct);
-    panel.append(h("h3", "jjo-settings__group", "Camera"));
-    slider("Sensitivity", "🎥", "cameraSensitivity", 0.2, 3, 0.1, (v) => `×${v.toFixed(1)}`);
+    slider(t("overlays.master"), "🔊", "masterVolume", 0, 1, 0.01, pct);
+    slider(t("overlays.music"), "🎷", "musicVolume", 0, 1, 0.01, pct);
+    slider(t("overlays.sfx"), "📯", "sfxVolume", 0, 1, 0.01, pct);
+    panel.append(h("h3", "jjo-settings__group", t("overlays.groupCamera")));
+    slider(t("overlays.sensitivity"), "🎥", "cameraSensitivity", 0.2, 3, 0.1, (v) => `×${v.toFixed(1)}`);
 
     const toggle = (label: string, emoji: string, key: "invertOrbit" | "reducedFlashing") => {
       const row = h("label", "jjo-row jjo-row--toggle");
@@ -804,14 +792,14 @@ export class Overlays {
       row.append(h("span", "jjo-row__label", `${emoji} ${label}`), input, h("span", "jjo-switch"));
       panel.append(row);
     };
-    toggle("Invert orbit", "🙃", "invertOrbit");
+    toggle(t("overlays.invertOrbit"), "🙃", "invertOrbit");
 
-    panel.append(h("h3", "jjo-settings__group", "Graphics"));
+    panel.append(h("h3", "jjo-settings__group", t("overlays.groupGraphics")));
     const qrow = h("div", "jjo-quality");
     for (const q of QUALITY_META) {
       const b = h("button", "jjo-quality__btn");
       b.type = "button";
-      b.append(h("span", "jjo-quality__emoji", q.emoji), h("span", undefined, q.label));
+      b.append(h("span", "jjo-quality__emoji", q.emoji), h("span", undefined, t(`overlays.${q.key}`)));
       b.addEventListener("click", () => {
         this.handlers.onUiSound("click");
         settings.set({ quality: q.id });
@@ -820,16 +808,33 @@ export class Overlays {
       qrow.append(b);
     }
     panel.append(qrow);
-    toggle("Reduced flashing", "😎", "reducedFlashing");
+    toggle(t("overlays.reducedFlashing"), "😎", "reducedFlashing");
+
+    // language: saving reloads the page (the room is rejoined via the reconnect token)
+    panel.append(h("h3", "jjo-settings__group", t("overlays.groupLanguage")));
+    const lrow = h("div", "jjo-lang");
+    for (const l of LANGS) {
+      const b = h("button", `jjo-lang__btn${l.id === lang() ? " jjo-lang__btn--on" : ""}`);
+      b.type = "button";
+      b.setAttribute("aria-pressed", String(l.id === lang()));
+      b.append(h("span", "jjo-lang__flag", l.flag), h("span", undefined, l.label));
+      b.addEventListener("click", () => {
+        if (l.id === lang()) return;
+        this.handlers.onUiSound("click");
+        setLanguage(l.id);
+      });
+      lrow.append(b);
+    }
+    panel.append(lrow, h("p", "jjo-lang__hint", t("overlays.languageHint")));
 
     const foot = h("div", "jjo-settings__foot");
-    const back = h("button", "jj-btn jj-btn--green", "Back to the kitchen");
+    const back = h("button", "jj-btn jj-btn--green", t("overlays.backToKitchen"));
     back.type = "button";
     back.addEventListener("click", () => {
       this.handlers.onUiSound("click");
       this.toggleSettings(false);
     });
-    const leave = h("button", "jj-btn jj-btn--red", "🚪 Leave room");
+    const leave = h("button", "jj-btn jj-btn--red", t("overlays.leaveRoom"));
     leave.type = "button";
     leave.addEventListener("click", () => {
       this.handlers.onUiSound("click");
@@ -837,7 +842,7 @@ export class Overlays {
       this.handlers.onLeave();
     });
     foot.append(back, leave);
-    panel.append(foot, h("p", "jjo-settings__tip", "Tip: press Esc to close. Press it again to open. Revolutionary."));
+    panel.append(foot, h("p", "jjo-settings__tip", t("overlays.tip")));
 
     this.settingsEl.append(backdrop, panel);
     const s = settings.get();
@@ -867,7 +872,7 @@ export class Overlays {
       const meta = EMOTE_META[id];
       const b = h("button", `jjo-wheel__btn jjo-wheel__btn--${i}`);
       b.type = "button";
-      b.append(h("span", "jjo-wheel__emoji", meta.emoji), h("span", "jjo-wheel__label", meta.label), h("kbd", "jjo-wheel__key", `${i + 1}`));
+      b.append(h("span", "jjo-wheel__emoji", meta.emoji), h("span", "jjo-wheel__label", t(`overlays.${meta.key}`)), h("kbd", "jjo-wheel__key", `${i + 1}`));
       b.addEventListener("pointerenter", () => this.handlers.onUiSound("hover"));
       b.addEventListener("click", () => this.emote(id));
       ring.append(b);
@@ -897,7 +902,7 @@ export class Overlays {
     this.bannerEl.hidden = false;
     this.bannerEl.classList.toggle("jjo-banner--dead", status === "disconnected");
     this.bannerText.textContent =
-      status === "reconnecting" ? "Reconnecting… (someone tripped over the cable)" : "Disconnected — back to menu. The cake has left the building. 🫠";
+      t(status === "reconnecting" ? "overlays.reconnecting" : "overlays.disconnected");
     this.bannerBtn.hidden = status !== "disconnected";
   }
 }

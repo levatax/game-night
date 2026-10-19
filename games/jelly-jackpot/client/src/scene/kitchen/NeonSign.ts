@@ -5,11 +5,12 @@
 
 import * as THREE from "three";
 import { PALETTE } from "../../../../shared/constants";
+import { t as tx, upper } from "../../i18n";
 import { addOutlines, googlyEyes, jiggleEyes, toon } from "../toon";
 import { ROOM_HALF } from "./Room";
 import { FLOOR_Y } from "./Table";
 
-const IDLE_TEXT = "JELLY JACKPOT";
+const SIGN_FONT = `"Fredoka", "Baloo 2", system-ui, sans-serif`;
 const IDLE_COLOR = "#FF8BD1";
 const GOLD = "#FFD700";
 const BOARD_W = 1.9;
@@ -175,13 +176,13 @@ export class NeonSign {
     const W = this.canvas.width;
     const H = this.canvas.height;
     g.clearRect(0, 0, W, H);
-    const label = (this.text ?? IDLE_TEXT).toUpperCase();
+    const label = upper(this.text ?? tx("scene.signIdle"));
     const color = this.jackpot ? GOLD : this.color;
     let size = 150;
-    g.font = `700 ${size}px Fredoka, system-ui, sans-serif`;
+    g.font = `700 ${size}px ${SIGN_FONT}`;
     while (g.measureText(label).width > W - 60 && size > 40) {
       size -= 6;
-      g.font = `700 ${size}px Fredoka, system-ui, sans-serif`;
+      g.font = `700 ${size}px ${SIGN_FONT}`;
     }
     g.textBaseline = "middle";
     const total = g.measureText(label).width;

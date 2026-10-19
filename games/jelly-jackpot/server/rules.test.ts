@@ -239,7 +239,7 @@ describe("resolveVote", () => {
     const out = resolveVote(new Map([["a", "b"], ["b", "a"], ["s", "b"]]), "s", 30);
     expect(out.majorityId).toBe("b");
     expect(out.caught).toBe(false);
-    expect(out.adjustments).toEqual([{ playerId: "s", delta: 30 + SABOTEUR_ESCAPE_BONUS, reason: expect.any(String) }]);
+    expect(out.adjustments).toEqual([{ playerId: "s", delta: 30 + SABOTEUR_ESCAPE_BONUS, reason: expect.any(String), key: "saboteurEscaped" }]);
   });
 
   it("treats a tie as not caught, even if the Saboteur is in the tie", () => {

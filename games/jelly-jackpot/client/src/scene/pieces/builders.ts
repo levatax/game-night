@@ -6,6 +6,7 @@
 import * as THREE from "three";
 import type { PieceType } from "../../../../shared/constants";
 import { PIECES } from "../../../../shared/constants";
+import { t as tx } from "../../i18n";
 import { toonRamp } from "../toon";
 import {
   G, INK, M, PINK, WHITE, blob, cachedMat, canvasTex, cheeks, detail, eye, eyes, faceted, facePlate, geo, mesh,
@@ -535,11 +536,14 @@ function soap(r: PieceRig): void {
   const label = canvasTex("soapLabel", 128, 64, (ctx) => {
     ctx.fillStyle = "rgba(255,255,255,0.0)";
     ctx.fillRect(0, 0, 128, 64);
-    ctx.font = "bold 34px Arial Black, Arial, sans-serif";
+    const text = tx("scene.soapLabel");
+    let px = 34;
+    ctx.font = `bold ${px}px "Arial Black", Arial, sans-serif`;
+    while (px > 14 && ctx.measureText(text).width > 120) ctx.font = `bold ${(px -= 2)}px "Arial Black", Arial, sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillStyle = "rgba(60,140,180,0.85)";
-    ctx.fillText("SOAP", 64, 34);
+    ctx.fillText(text, 64, 34);
   });
   const lm = cachedMat("soapLabel", () => new THREE.MeshBasicMaterial({ map: label, transparent: true, depthWrite: false }));
   const plane = detail(geo("soapLabelPlane", () => new THREE.PlaneGeometry(0.08, 0.04)), lm, r.body, 0, 0.0225, 0);

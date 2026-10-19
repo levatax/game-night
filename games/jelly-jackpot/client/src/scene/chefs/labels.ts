@@ -3,6 +3,7 @@
 
 import * as THREE from "three";
 import { PALETTE } from "../../../../shared/constants";
+import { t as tx } from "../../i18n";
 
 const FONT = `"Fredoka", "Baloo 2", "Comic Sans MS", "Chalkboard SE", system-ui, sans-serif`;
 
@@ -151,13 +152,11 @@ export class Nameplate extends CanvasSprite {
 
     // Tags on the right: YOU / zzz.
     ctx.textAlign = "right";
-    ctx.font = `900 30px ${FONT}`;
-    if (!info.connected) {
-      ctx.fillStyle = "#BFBACF";
-      ctx.fillText("zzz", x + w - 28, cy);
-    } else if (info.isMe) {
-      ctx.fillStyle = PALETTE.coin;
-      ctx.fillText("YOU", x + w - 28, cy);
+    const tag = !info.connected ? tx("scene.plateAway") : info.isMe ? tx("scene.plateYou") : "";
+    if (tag) {
+      fitFont(ctx, tag, 30, 120, 900);
+      ctx.fillStyle = info.connected ? PALETTE.coin : "#BFBACF";
+      ctx.fillText(tag, x + w - 28, cy);
     }
 
     // Little pointer under the plate.

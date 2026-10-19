@@ -261,6 +261,8 @@ export interface RigStatusMsg {
   /** Set when replying to a RIG: whether it was accepted, and why not. */
   accepted?: boolean;
   reason?: string;
+  /** Translation key for `reason` (client i18n "server" section). */
+  reasonKey?: string;
 }
 /** Broadcast when the reel starts. Clients start a fast blur scroll with no known target. */
 export interface SpinStartMsg {
@@ -345,7 +347,10 @@ export interface RigRecord {
 export interface CoinAdjustment {
   playerId: string;
   delta: number;
+  /** English text (fallback). */
   reason: string;
+  /** Translation key (client i18n "server" section). */
+  key?: string;
 }
 export interface RevealMsg {
   /** "" when there was no Saboteur this match. */
@@ -361,7 +366,11 @@ export interface EmotedMsg {
   emote: EmoteId;
 }
 export interface NoticeMsg {
+  /** English text (fallback). */
   text: string;
+  /** Translation key (client i18n "server" section) + its params, so clients can show it in their language. */
+  key?: string;
+  params?: Record<string, string | number>;
 }
 
 export const JOIN_ERROR = {

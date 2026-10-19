@@ -5,6 +5,7 @@
 import * as THREE from "three";
 import { PLAYER_COLORS } from "../../../../shared/constants";
 import type { PlayerView } from "../../../../shared/protocol";
+import { t as tx } from "../../i18n";
 import { jiggleEyes, toon } from "../toon";
 import type { ChefReaction } from "../Chefs";
 import { Bubble, Nameplate, glowTexture, type PlateInfo } from "./labels";
@@ -34,13 +35,18 @@ const BUBBLE_Y = 1.32;
 const BUBBLE_SIDE = 0.56;
 
 const LINES: Partial<Record<ChefReaction, string[]>> = {
-  cheer: ["YESSS!", "WOOO!", "NAILED IT!", "YIPPEE!", "BOOYAH!"],
-  gasp: ["OOH!", "EEP!", "GASP!", "OH NO!", "YIKES!"],
-  cry: ["NOOO!", "MY COINS!", "WAAAH!", "SOB!", "WHYYY"],
-  point: ["LOOK!", "THAT ONE!", "OI!", "SUS!"],
-  pie: ["MMPH!", "BLORP", "*splat*", "MMFF!"],
+  cheer: lines("cheerLines"),
+  gasp: lines("gaspLines"),
+  cry: lines("cryLines"),
+  point: lines("pointLines"),
+  pie: lines("pieLines"),
 };
-const LAUGHS = ["HA HA!", "HA HA HA!", "HO HO!", "HEE HEE!"];
+const LAUGHS = lines("laughLines");
+
+/** A "|"-separated pool from strings/scene.ts. */
+function lines(key: string): string[] {
+  return tx(`scene.${key}`).split("|");
+}
 
 const DOWN = new THREE.Vector3(0, -1, 0);
 const UP_AXIS = new THREE.Vector3(0, 1, 0);
@@ -296,7 +302,7 @@ export class Chef {
   remove(): void {
     if (this.removeT < 0) {
       this.removeT = 0;
-      this.say("BYE!", 0.6, "#FFFFFF");
+      this.say(tx("scene.bye"), 0.6, "#FFFFFF");
     }
   }
 
@@ -545,7 +551,7 @@ export class Chef {
       }
       case "devil": {
         const k = t > 0.45 ? env : 0;
-        if (t > 0.45 && t - dt <= 0.45) this.say("MWAHAHA!", 2.6, "#FF4B4B");
+        if (t > 0.45 && t - dt <= 0.45) this.say(tx("scene.devilLaugh"), 2.6, "#FF4B4B");
         roll += Math.sin(t * 20) * 0.1 * k;
         jump += Math.abs(Math.sin(t * 10)) * 0.05 * k;
         lean -= 0.12 * k;
@@ -610,7 +616,7 @@ export class Chef {
       this.zzzT -= dt;
       if (this.zzzT <= 0) {
         this.zzzT = 3.2;
-        this.say("Zzz…", 2.4, "#9FA8FF");
+        this.say(tx("scene.snore"), 2.4, "#9FA8FF");
       }
     }
 

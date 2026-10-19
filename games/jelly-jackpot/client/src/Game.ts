@@ -12,6 +12,7 @@ import type { BetSide, JellyStateView, Phase, Role } from "../../shared/protocol
 import { settings, type Settings } from "./app/settings";
 import { AudioEngine } from "./audio/AudioEngine";
 import type { MusicMode } from "./audio/Music";
+import { t } from "./i18n";
 import { Controls } from "./input/Controls";
 import { Net, NetError } from "./net/Net";
 import { Chefs } from "./scene/Chefs";
@@ -237,11 +238,12 @@ export class Game {
     n.on("rigStatus", (m) => {
       this.rig = { available: m.available, used: m.used };
       if (m.accepted === true) {
-        c().fx.popText("RIGGED 😈", "bad");
+        c().fx.popText(t("game.rigged"), "bad");
         c().audio.sfx("cackle", { volume: 0.6 });
-        this.feedLine("🤫", "You rigged this spin. Act natural.");
+        this.feedLine("🤫", t("game.riggedFeed"));
       } else if (m.accepted === false) {
-        c().hud.banner(`😈 ${m.reason || "Can't rig right now"}`, "bad");
+        const reason = feed.serverText(m.reasonKey, undefined, m.reason || t("game.rigCant"), false);
+        c().hud.banner(t("game.rigFailed", { reason }), "bad");
         c().audio.sfx("buzzer");
       }
       this.refreshHud();
@@ -293,7 +295,7 @@ export class Game {
     });
     n.on("emoted", (m) => react.emoted(c(), st(), m));
     n.on("notice", (m) => {
-      const [icon, html] = feed.noticeLine(m.text);
+      const [icon, html] = feed.noticeLine(m);
       this.feedLine(icon, html);
     });
     n.on("reconnecting", () => c().overlays.connection("reconnecting"));
@@ -341,8 +343,8 @@ export class Game {
         if (state) {
           this.checkTurn(state);
           const mine = state.activeId === this.net.myId;
-          c.hud.banner(mine ? "YOUR TURN! Press SPACE 🎰" : `${feed.nickOf(state, state.activeId)}'s turn!`, mine ? "gold" : "neutral");
-          if (state.players.get(this.net.myId)?.spectator) this.feedLine("👀", "You're watching this match. You're in the next one!");
+          c.hud.banner(mine ? t("game.yourTurn") : t("game.theirTurn", { name: feed.nickOf(state, state.activeId) }), mine ? "gold" : "neutral");
+          if (state.players.get(this.net.myId)?.spectator) this.feedLine("👀", t("game.spectating"));
         }
         break;
       case "placing":
@@ -353,8 +355,8 @@ export class Game {
         if (state) {
           this.checkTurn(state);
           const mine = state.activeId === this.net.myId;
-          if (mine) c.hud.banner("PLACE IT! 🫳 Click to drop", "gold");
-          else if (state.settings.sideBets && !state.players.get(this.net.myId)?.spectator) c.hud.banner("Place your bets! 🎲", "neutral");
+          if (mine) c.hud.banner(t("game.placeIt"), "gold");
+          else if (state.settings.sideBets && !state.players.get(this.net.myId)?.spectator) c.hud.banner(t("game.placeBets"), "neutral");
           c.chefs.react(state.activeId, "standUp");
           state.players.forEach((p) => {
             if (p.id !== state.activeId && !p.spectator) c.chefs.react(p.id, "lean");
@@ -364,7 +366,7 @@ export class Game {
       case "settling":
         c.hud.show();
         this.betsLocked = true;
-        c.hud.banner("Settling… 🥁", "neutral");
+        c.hud.banner(t("game.settling"), "neutral");
         if (state) c.chefs.react(state.activeId, "sitDown");
         break;
       case "result":
@@ -384,7 +386,7 @@ export class Game {
         c.menu.hide();
         c.reel.hide();
         c.hud.hide();
-        c.stage.setSign("🏆 CHAMPION 🏆", "#FFD700");
+        c.stage.setSign(t("game.signChampion"), "#FFD700");
         if (state) {
           c.overlays.showPodium(state, this.net.myId);
           c.fx.confetti(localToWorld(c.stage, 0, 0.8, 0), 1.5);
@@ -425,8 +427,7 @@ export class Game {
     if (IN_GAME.has(state.phase) && state.card.id && !c.reel.spinning && this.reelKey !== this.turnKey) {
       this.reelKey = this.turnKey;
       c.reel.showLanded({ card: state.card.id as CardId, rarity: state.card.rarity as never, multiplier: state.card.multiplier });
-      const def = CARD_BY_ID[state.card.id as CardId];
-      if (def) c.stage.setSign(`${def.emoji} ${def.name} ${feed.fmtMult(state.card.multiplier)}`);
+      if (CARD_BY_ID[state.card.id as CardId]) c.stage.setSign(feed.signText(state.card.id, state.card.multiplier));
     }
 
     if (state.phase === "placing") {
@@ -509,7 +510,7 @@ export class Game {
     a.on("drop", (pose) => {
       if (this.placement.drop(pose, this.net.state)) {
         c.audio.sfx("whoosh");
-        if (this.net.state?.card.id === "bowlingBall") c.fx.popText("STRIKE?!", "small");
+        if (this.net.state?.card.id === "bowlingBall") c.fx.popText(t("game.strike"), "small");
       }
     });
   }
@@ -525,11 +526,11 @@ export class Game {
     const s = this.net.state;
     if (!this.inRoom || !s || !IN_GAME.has(s.phase)) return;
     if (this.role !== "saboteur") {
-      this.ctx.fx.popText("You're a Baker. No funny business! 🧁", "small");
+      this.ctx.fx.popText(t("game.rigNotSaboteur"), "small");
       return;
     }
     if (s.phase !== "spinning" || s.spinStage === "landed" || s.activeId === this.net.myId) {
-      this.ctx.hud.banner("😈 Rig during someone else's spin!", "bad");
+      this.ctx.hud.banner(t("game.rigWrongTime"), "bad");
       this.ctx.audio.sfx("buzzer", { volume: 0.5 });
       return;
     }
@@ -546,7 +547,7 @@ export class Game {
       return;
     }
     if (amount > me.coins) {
-      this.ctx.hud.banner("Not enough coins! 🪹", "bad");
+      this.ctx.hud.banner(t("game.noCoins"), "bad");
       this.ctx.audio.sfx("buzzer", { volume: 0.5 });
       return;
     }
@@ -570,7 +571,7 @@ export class Game {
       menu.setBusy(false);
       if (this.net.code) this.setUrlRoom(this.net.code);
     } catch (err) {
-      menu.showError(err instanceof NetError ? err.message : "Something burned in the oven. Try again!");
+      menu.showError(joinErrorText(err));
     }
   }
 
@@ -673,4 +674,22 @@ function toBetAmount(v: number): number {
   if ((BET_AMOUNTS as readonly number[]).includes(v)) return v;
   const i = Math.max(0, Math.min(BET_AMOUNTS.length - 1, Math.round(v)));
   return BET_AMOUNTS[i]!;
+}
+
+/** NetError messages are English (net/Net.ts): map the known ones to my language, keep anything else as-is. */
+const NET_ERROR_KEYS: Record<string, string> = {
+  "That kitchen is full. Six chefs is already too many cooks!": "game.errFull",
+  "No kitchen with that code. Did you type it with oven mitts on?": "game.errNotFound",
+  "The head chef rejected that nickname. Try another one!": "game.errBadName",
+  "Can't reach the kitchen. The oven might be unplugged.": "game.errServerDown",
+  "Type a room code first. The kitchen needs an address!": "game.errNoCode",
+  "Cancelled.": "game.errCancelled",
+};
+function joinErrorText(err: unknown): string {
+  if (!(err instanceof NetError)) return t("game.errGeneric");
+  const key = NET_ERROR_KEYS[err.message];
+  if (key) return t(key);
+  if (err.code === "full") return t("game.errFull");
+  if (err.code === "serverDown") return t("game.errServerDown");
+  return err.message;
 }

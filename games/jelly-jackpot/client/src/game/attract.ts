@@ -19,8 +19,9 @@ import type { Chefs } from "../scene/Chefs";
 import type { Fx } from "../scene/Fx";
 import { makePieceMesh } from "../scene/Pieces";
 import type { Stage } from "../scene/Stage";
+import { t } from "../i18n";
 
-const FAKE_CHEFS = ["Chef Wobbles", "Sir Sprinkles", "Mama Meatball", "Lil' Noodle"];
+const FAKE_CHEFS = () => [t("game.fake_1"), t("game.fake_2"), t("game.fake_3"), t("game.fake_4")];
 const BASE_PIECES: PieceType[] = ["toaster", "cheese", "pancakes", "pan"];
 const DROP_EVERY_SEC = 1.15;
 const GRAVITY = 7.5;
@@ -110,7 +111,7 @@ export class Attract {
     this.group.name = "attract";
     this.stack.position.set(0, CAKE_TOP_Y, 0);
     this.group.add(this.stack);
-    this.fakes = FAKE_CHEFS.map((nickname, i) => ({
+    this.fakes = FAKE_CHEFS().map((nickname, i) => ({
       id: `attract-${i}`,
       nickname,
       color: (i * 2 + 1) % 6,

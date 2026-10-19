@@ -117,7 +117,7 @@ import {
   type VoteOutcome,
 } from "./rules.js";
 import { centerPose, clampPose, offsetPose, readPose } from "./room/pose.js";
-import { cleanNickname, say, uniqueNickname } from "./room/text.js";
+import { cleanNickname, RIG_REASON_EN, type RigReasonKey, say, uniqueNickname } from "./room/text.js";
 import { FAST_TIMINGS, NORMAL_TIMINGS, type Timings } from "./room/timings.js";
 import { JellyState, PieceState, PlayerState, StatsState } from "./schema.js";
 
@@ -356,15 +356,14 @@ export class JellyRoom extends Room<JellyState> {
   private onStart(client: Client): void {
     const s = this.state;
     if (client.sessionId !== s.hostId || s.phase !== "lobby") return;
-    if (!this.sim) return void client.send(MSG.NOTICE, { text: say.notReady() } satisfies NoticeMsg);
+    if (!this.sim) return void client.send(MSG.NOTICE, say.notReady() satisfies NoticeMsg);
     const chefs = this.ordered().filter((p) => p.connected && !p.spectator);
     if (chefs.length < MIN_PLAYERS) {
-      return void client.send(MSG.NOTICE, { text: say.cantStart(`need at least ${MIN_PLAYERS} chefs (a tower needs an audience).`) } satisfies NoticeMsg);
+      return void client.send(MSG.NOTICE, say.cantStartFew(MIN_PLAYERS) satisfies NoticeMsg);
     }
     const lazy = chefs.filter((p) => !p.ready && p.id !== s.hostId);
     if (lazy.length) {
-      const names = lazy.map((p) => p.nickname).join(", ");
-      return void client.send(MSG.NOTICE, { text: say.cantStart(`${names} ${lazy.length === 1 ? "is" : "are"} still tying their apron.`) } satisfies NoticeMsg);
+      return void client.send(MSG.NOTICE, say.cantStartLazy(lazy.map((p) => p.nickname)) satisfies NoticeMsg);
     }
     this.startMatch(chefs.map((p) => p.id));
   }
@@ -546,12 +545,16 @@ export class JellyRoom extends Room<JellyState> {
   private onRig(client: Client): void {
     const s = this.state;
     const id = client.sessionId;
-    const reply = (accepted: boolean, reason?: string) =>
-      client.send(MSG.RIG_STATUS, { ...this.rigStatus(), accepted, ...(reason ? { reason } : {}) } satisfies RigStatusMsg);
-    if (!this.saboteurId || id !== this.saboteurId) return reply(false, "You're a Baker! Bakers bake, they don't rig. 🧁");
-    if (this.rigUsedRound === s.round) return reply(false, "Already rigged this round. Greedy little devil. 😈");
-    if (s.phase !== "spinning" || this.resultSent) return reply(false, "Only while someone's case is spinning!");
-    if (s.activeId === id) return reply(false, "Rigging your own case? Bold. Also not allowed.");
+    const reply = (accepted: boolean, reasonKey?: RigReasonKey) =>
+      client.send(MSG.RIG_STATUS, {
+        ...this.rigStatus(),
+        accepted,
+        ...(reasonKey ? { reason: RIG_REASON_EN[reasonKey], reasonKey } : {}),
+      } satisfies RigStatusMsg);
+    if (!this.saboteurId || id !== this.saboteurId) return reply(false, "rigNotSaboteur");
+    if (this.rigUsedRound === s.round) return reply(false, "rigAlreadyUsed");
+    if (s.phase !== "spinning" || this.resultSent) return reply(false, "rigNotSpinning");
+    if (s.activeId === id) return reply(false, "rigOwnCase");
     this.rigUsedRound = s.round;
     this.rigThisTurn = true;
     this.rigRecord = { round: s.round, victimId: s.activeId, card: "bowlingBall", outcome: "stand" };
@@ -1173,8 +1176,8 @@ export class JellyRoom extends Room<JellyState> {
     return this.clients.find((c) => c.sessionId === id);
   }
 
-  private notice(text: string, except?: Client): void {
-    this.broadcast(MSG.NOTICE, { text } satisfies NoticeMsg, except ? { except } : undefined);
+  private notice(msg: NoticeMsg, except?: Client): void {
+    this.broadcast(MSG.NOTICE, msg, except ? { except } : undefined);
   }
 
   // ===================================================================== dispose

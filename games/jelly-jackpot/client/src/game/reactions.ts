@@ -16,14 +16,12 @@ import type {
 } from "../../../shared/protocol";
 import type { Voice } from "../audio/AudioEngine";
 import { localToWorld, screenOf, type Ctx, type Later } from "./context";
-import { fmtDelta, fmtMult } from "./feed";
+import { cardName, cardText, t } from "../i18n";
+import { fmtDelta, fmtMult, pickKey, signText } from "./feed";
 
 const EMOTE_VOICE: Record<EmoteId, Voice> = { cheer: "yes", gasp: "gasp", point: "hmm", laugh: "haha" };
 const EMOTE_EMOJI: Record<EmoteId, string> = { cheer: "🎉", gasp: "😱", point: "👉", laugh: "🤣" };
 
-const TIMBER = ["TIMBER!", "TIMBERRR!", "KA-SPLAT!", "OH NO!"];
-const DING = ["DING!", "TA-DA!", "IT STANDS!", "DING DING!"];
-const pick = <T>(list: readonly T[]): T => list[Math.floor(Math.random() * list.length)]!;
 
 const tmp = new THREE.Vector3();
 
@@ -44,7 +42,7 @@ export function caseLanded(ctx: Ctx, state: JellyStateView | null, msg: SpinResu
   const rarity = msg.rarity as Rarity;
   const color = RARITY_COLORS[rarity] ?? "#FFFFFF";
   const { fx, audio, stage, chefs, hud } = ctx;
-  stage.setSign(`${def?.emoji ?? "🎰"} ${def?.name ?? msg.card} ${fmtMult(msg.multiplier)}`, color);
+  stage.setSign(signText(msg.card, msg.multiplier), color);
   fx.edgeGlow(color, rarity === "legendary" || rarity === "cursed" ? 2 : 1.1);
   audio.sfx("cardFlip");
 
@@ -53,14 +51,14 @@ export function caseLanded(ctx: Ctx, state: JellyStateView | null, msg: SpinResu
     audio.sfx("kaching");
     stage.jackpotLights(3);
     fx.coinShower(2.5);
-    fx.popText("JACKPOT!", "big");
+    fx.popText(t("game.jackpot"), "big");
     chefs.reactAll("cheer");
   } else if (rarity === "cursed") {
     audio.stinger("cursed");
     audio.sfx("recordScratch");
     fx.flash(color, 0.35);
     stage.shake(0.35, 0.4);
-    fx.popText("CURSED!", "bad");
+    fx.popText(t("game.cursed"), "bad");
     chefs.reactAll("gasp", msg.playerId);
     chefs.react(msg.playerId, "gasp");
     audio.voice("noo", seedOf(state, msg.playerId));
@@ -71,7 +69,10 @@ export function caseLanded(ctx: Ctx, state: JellyStateView | null, msg: SpinResu
 
   const mine = msg.playerId === myId;
   const tone = rarity === "legendary" ? "gold" : rarity === "cursed" ? "bad" : rarity === "common" ? "neutral" : "good";
-  if (def) hud.banner(mine ? `${def.emoji} ${def.name}! ${def.text}` : `${def.emoji} ${def.name} ${fmtMult(msg.multiplier)}`, tone);
+  if (def) {
+    const p = { emoji: def.emoji, card: cardName(msg.card), text: cardText(msg.card), mult: fmtMult(msg.multiplier) };
+    hud.banner(t(mine ? "game.cardMine" : "game.cardOther", p), tone);
+  }
 }
 
 // ------------------------------------------------------------------------- settling
@@ -92,7 +93,7 @@ export function hiccup(ctx: Ctx, state: JellyStateView | null, msg: HiccupMsg): 
   ctx.audio.sfx("hic");
   const h = state?.hover;
   const at = h && h.active ? screenOf(ctx.stage, localToWorld(ctx.stage, h.x, h.y + 0.12, h.z)) : undefined;
-  ctx.fx.popText(pick(["*hic*", "*HIC*", "*hic!*"]), "small", at);
+  ctx.fx.popText(pickKey("game.hic", 3), "small", at);
   ctx.chefs.react(msg.playerId, "gasp");
 }
 
@@ -100,7 +101,7 @@ export function topple(ctx: Ctx, state: JellyStateView | null, msg: ToppleMsg, l
   const { fx, audio, stage, chefs } = ctx;
   const where = localToWorld(stage, msg.x, Math.max(0.02, msg.y), msg.z);
   fx.freeze(0.3);
-  fx.popText(pick(TIMBER), "big");
+  fx.popText(pickKey("game.timber", 4), "big");
   audio.sfx("timber");
   audio.sfx("slideWhistle");
   audio.sfx("ooh");
@@ -133,7 +134,7 @@ export function result(ctx: Ctx, state: JellyStateView | null, msg: ResultMsg, l
   const head = chefs.headPosition(msg.playerId);
   if (msg.outcome === "stand") {
     const from = towerTop(ctx, state);
-    fx.popText(pick(DING), "big");
+    fx.popText(pickKey("game.ding", 4), "big");
     audio.sfx("ding");
     audio.stinger("stand");
     audio.sfx("partyPopper");
@@ -147,15 +148,15 @@ export function result(ctx: Ctx, state: JellyStateView | null, msg: ResultMsg, l
       fx.coins(from, head, count, () => audio.sfx("coin"));
       later.run(900, () => {
         audio.sfx("kaching");
-        fx.popText(`${fmtDelta(msg.delta)} 🪙`, "coin", screenOf(stage, head));
+        fx.popText(t("game.coinPop", { delta: fmtDelta(msg.delta) }), "coin", screenOf(stage, head));
       });
     }
   } else {
     if (msg.insured) {
-      fx.popText("INSURED! 📜", "coin", screenOf(stage, head));
+      fx.popText(t("game.insuredPop"), "coin", screenOf(stage, head));
       audio.sfx("kaching");
     } else if (msg.delta !== 0) {
-      later.run(700, () => fx.popText(`${fmtDelta(msg.delta)} 🪙`, "bad", screenOf(stage, chefs.headPosition(msg.playerId))));
+      later.run(700, () => fx.popText(t("game.coinPop", { delta: fmtDelta(msg.delta) }), "bad", screenOf(stage, chefs.headPosition(msg.playerId))));
       audio.sfx("lose");
     }
   }
@@ -175,7 +176,7 @@ export function bets(ctx: Ctx, state: JellyStateView | null, msg: BetsMsg, myId:
     }, delay);
     if (b.playerId === myId) {
       const at = screenOf(stage, chefs.headPosition(myId));
-      fx.popText(b.won ? `BET WON ${fmtDelta(b.delta)} 🪙` : `BET LOST ${fmtDelta(b.delta)}`, b.won ? "coin" : "bad", at);
+      fx.popText(t(b.won ? "game.betWon" : "game.betLost", { delta: fmtDelta(b.delta) }), b.won ? "coin" : "bad", at);
       audio.sfx(b.won ? "kaching" : "buzzer");
     }
   }
