@@ -78,3 +78,20 @@ It's one Node process with no database, so any small VM or container works (Fly.
 Railway…). Run `npm run build` at deploy time and `npm start` as the process. Browsers only
 allow pointer lock (needed for mouse aim) on secure origins, so put it behind HTTPS; `localhost`
 counts as secure for local play.
+
+### Docker (Easypanel, etc.)
+
+The `Dockerfile` builds every game client and runs the hub as a single service on port 3000
+(override with `PORT`). It has a health check on `/healthz`.
+
+```bash
+docker build -t game-night .
+```
+
+```bash
+docker run -p 3000:3000 game-night
+```
+
+On Easypanel: create an **App** service, point it at this repo with the **Dockerfile** build
+method, set the domain's proxy port to `3000`, and turn on HTTPS. Keep it at **one replica**:
+rooms live in memory, so players in the same room must reach the same process.
