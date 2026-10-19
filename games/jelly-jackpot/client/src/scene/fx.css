@@ -1,0 +1,367 @@
+/* Jelly Jackpot screen fx: pop text, edge glow, flashes, freeze bars, blindfold. Owner: client-fx. */
+
+.jjfx-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  font-family: "Fredoka", "Baloo 2", system-ui, sans-serif;
+  z-index: 5;
+  --fx-ink: var(--ink, #2d2a32);
+}
+.jjfx-layer * {
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------------------------------- pop text */
+
+.jjfx-pop {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+  z-index: 4;
+}
+.jjfx-pop-inner {
+  position: relative;
+  transform-origin: 50% 70%;
+}
+.jjfx-word {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  -webkit-text-stroke: 0.1em var(--fx-ink);
+  paint-order: stroke fill;
+  text-shadow: 0 0.09em 0 var(--fx-ink), 0.04em 0.12em 0 rgba(0, 0, 0, 0.25);
+}
+.jjfx-ch {
+  display: inline-block;
+  transform-origin: 50% 100%;
+}
+.jjfx-sp {
+  width: 0.3em;
+}
+
+/* BIG: candy-colored letters that drop in and boing, behind them a spinning comic starburst. */
+.jjfx-pop--big .jjfx-word {
+  font-size: clamp(56px, 11vw, 132px);
+}
+.jjfx-pop--big .jjfx-pop-inner {
+  animation: jjfx-big 1.7s cubic-bezier(0.3, 0.7, 0.4, 1) both;
+}
+.jjfx-pop--big .jjfx-ch {
+  animation:
+    jjfx-drop 0.55s cubic-bezier(0.3, 1.6, 0.5, 1) both,
+    jjfx-wiggle 0.42s ease-in-out 0.6s infinite alternate;
+  animation-delay: calc(var(--i) * 50ms), calc(0.55s + var(--i) * 50ms);
+}
+.jjfx-pop--big .jjfx-ch:nth-child(5n + 1) { color: #ffcf33; }
+.jjfx-pop--big .jjfx-ch:nth-child(5n + 2) { color: #ff8bd1; }
+.jjfx-pop--big .jjfx-ch:nth-child(5n + 3) { color: #7be07b; }
+.jjfx-pop--big .jjfx-ch:nth-child(5n + 4) { color: #3fa7ff; }
+.jjfx-pop--big .jjfx-ch:nth-child(5n + 5) { color: #ff9f43; }
+.jjfx-burst {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 150%;
+  aspect-ratio: 1;
+  max-width: 640px;
+  transform: translate(-50%, -50%);
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-100 -100 200 200'%3E%3Cpolygon points='0,-96 14,-40 58,-78 36,-26 94,-30 44,0 92,34 34,26 54,80 12,40 0,96 -14,40 -56,78 -34,24 -94,30 -44,0 -92,-32 -36,-26 -58,-78 -14,-40' fill='%23fff6e5' stroke='%232d2a32' stroke-width='6' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  opacity: 0.9;
+  z-index: -1;
+  animation: jjfx-burst 1.7s ease-out both;
+}
+
+/* COIN: gold "+42" with a little drawn coin, hops then floats up. */
+.jjfx-pop--coin .jjfx-word {
+  font-size: clamp(30px, 5vw, 52px);
+  color: #ffcf33;
+  gap: 0.02em;
+}
+.jjfx-pop--coin .jjfx-pop-inner {
+  animation: jjfx-rise 1.25s cubic-bezier(0.2, 0.8, 0.3, 1) both;
+}
+.jjfx-coin-icon {
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  margin-right: 0.15em;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff3a0 0 18%, #ffcf33 20% 62%, #e0a400 64%);
+  border: 0.08em solid var(--fx-ink);
+  box-shadow: 0 0.08em 0 var(--fx-ink), inset 0 0 0 0.1em #ffe27a;
+  animation: jjfx-coinspin 0.5s linear infinite;
+}
+
+/* BAD: red "-20" slams in, shakes, then droops away like a sad noodle. */
+.jjfx-pop--bad .jjfx-word {
+  font-size: clamp(30px, 5vw, 54px);
+  color: #ff5a5f;
+}
+.jjfx-pop--bad .jjfx-pop-inner {
+  animation: jjfx-bad 1.4s ease-in both;
+}
+.jjfx-pop--bad .jjfx-ch {
+  animation: jjfx-droop 1.4s ease-in both;
+  animation-delay: calc(var(--i) * 40ms);
+}
+
+/* SMALL: "*hic*" — pale and wobbly, hiccups upward. */
+.jjfx-pop--small .jjfx-word {
+  font-size: clamp(22px, 3.4vw, 36px);
+  color: #fff6e5;
+  font-weight: 600;
+}
+.jjfx-pop--small .jjfx-pop-inner {
+  animation: jjfx-hic 1.15s ease-out both;
+}
+.jjfx-pop--small .jjfx-ch {
+  animation: jjfx-wave 0.5s ease-in-out infinite alternate;
+  animation-delay: calc(var(--i) * -90ms);
+}
+
+@keyframes jjfx-big {
+  0% { transform: scale(0.2) rotate(-25deg); opacity: 0; }
+  14% { opacity: 1; }
+  30% { transform: scale(1.18) rotate(var(--tilt)); }
+  42% { transform: scale(0.93, 1.06) rotate(var(--tilt)); }
+  54% { transform: scale(1.04, 0.97) rotate(var(--tilt)); }
+  64%, 84% { transform: scale(1) rotate(var(--tilt)); opacity: 1; }
+  100% { transform: scale(1.5, 0.05) rotate(var(--tilt)); opacity: 0; }
+}
+@keyframes jjfx-drop {
+  0% { transform: translateY(-140%) scale(0.4, 1.4); opacity: 0; }
+  50% { transform: translateY(6%) scale(1.3, 0.7); opacity: 1; }
+  75% { transform: translateY(-10%) scale(0.92, 1.1); }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+@keyframes jjfx-wiggle {
+  from { transform: rotate(-5deg) translateY(0); }
+  to { transform: rotate(5deg) translateY(-6%); }
+}
+@keyframes jjfx-burst {
+  0% { transform: translate(-50%, -50%) scale(0) rotate(0deg); }
+  30% { transform: translate(-50%, -50%) scale(1.1) rotate(25deg); }
+  80% { transform: translate(-50%, -50%) scale(1) rotate(60deg); opacity: 0.9; }
+  100% { transform: translate(-50%, -50%) scale(0.2) rotate(90deg); opacity: 0; }
+}
+@keyframes jjfx-rise {
+  0% { transform: translateY(10px) scale(0.2); opacity: 0; }
+  18% { transform: translateY(-6px) scale(1.25, 0.85); opacity: 1; }
+  30% { transform: translateY(-12px) scale(0.95, 1.08); }
+  42% { transform: translateY(-16px) scale(1); }
+  75% { opacity: 1; }
+  100% { transform: translate(var(--drift), -96px) scale(0.85); opacity: 0; }
+}
+@keyframes jjfx-coinspin {
+  0% { transform: scaleX(1); }
+  50% { transform: scaleX(0.15); }
+  100% { transform: scaleX(1); }
+}
+@keyframes jjfx-bad {
+  0% { transform: scale(2) rotate(0deg); opacity: 0; }
+  12% { transform: scale(0.9) rotate(var(--tilt)); opacity: 1; }
+  18% { transform: scale(1.05) translateX(-8px) rotate(var(--tilt)); }
+  24% { transform: translateX(8px) rotate(var(--tilt)); }
+  30% { transform: translateX(-6px) rotate(var(--tilt)); }
+  36% { transform: translateX(4px) rotate(var(--tilt)); }
+  42%, 65% { transform: translateX(0) rotate(var(--tilt)); opacity: 1; }
+  100% { transform: translateY(40px) rotate(var(--tilt)); opacity: 0; }
+}
+@keyframes jjfx-droop {
+  0%, 60% { transform: translateY(0) rotate(0); }
+  100% { transform: translateY(30px) rotate(25deg) scaleY(1.3); }
+}
+@keyframes jjfx-hic {
+  0% { transform: scale(0); opacity: 0; }
+  14% { transform: translateY(-14px) scale(1.2, 0.85); opacity: 1; }
+  26% { transform: translateY(-4px) scale(0.9, 1.1); }
+  40% { transform: translateY(-26px) scale(1.1, 0.9); }
+  52% { transform: translateY(-20px) scale(1); }
+  80% { opacity: 1; }
+  100% { transform: translate(var(--drift), -64px) rotate(var(--tilt)); opacity: 0; }
+}
+@keyframes jjfx-wave {
+  from { transform: translateY(-8%) rotate(-6deg); }
+  to { transform: translateY(8%) rotate(6deg); }
+}
+
+/* ------------------------------------------------------------------------- edge glow + flashes */
+
+.jjfx-edge {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  z-index: 2;
+  --glow: #ffd700;
+}
+.jjfx-edge-ring {
+  position: absolute;
+  inset: 0;
+  box-shadow:
+    inset 0 0 0 8px var(--glow),
+    inset 0 0 0 12px rgba(45, 42, 50, 0.6),
+    inset 0 0 90px 30px var(--glow);
+}
+.jjfx-edge-ring.jjfx-pulse {
+  animation: jjfx-edge-pulse 0.45s ease-in-out infinite alternate;
+}
+@keyframes jjfx-edge-pulse {
+  from { opacity: 0.65; }
+  to { opacity: 1; }
+}
+
+.jjfx-flash {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  z-index: 3;
+  --flash: #eb4b4b;
+  background: radial-gradient(ellipse at center, color-mix(in srgb, var(--flash) 45%, transparent) 0%, var(--flash) 85%);
+}
+
+/* Freeze frame: camera-snap flash + dramatic movie letterbox bars during the slow-mo. */
+.jjfx-snap {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  z-index: 3;
+  background: #fff6e5;
+}
+.jjfx-bars {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+}
+.jjfx-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 9vh;
+  background: #111018;
+  transition: transform 0.35s cubic-bezier(0.3, 1.4, 0.5, 1);
+}
+.jjfx-bar--top {
+  top: 0;
+  transform: translateY(-105%);
+  border-bottom: 4px solid var(--fx-ink);
+}
+.jjfx-bar--bottom {
+  bottom: 0;
+  transform: translateY(105%);
+  border-top: 4px solid var(--fx-ink);
+}
+.jjfx-bars.jjfx-on .jjfx-bar {
+  transform: translateY(0);
+  transition-duration: 0.18s;
+}
+
+/* -------------------------------------------------------------------------------- blindfold */
+
+.jjfx-blind {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  opacity: 0;
+  visibility: hidden;
+  background: radial-gradient(ellipse at 50% 45%, #1c1a2e 0%, #0b0a12 75%);
+  transition: opacity 0.45s ease, visibility 0s linear 0.45s;
+}
+.jjfx-blind.jjfx-on {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 0.35s ease, visibility 0s;
+}
+.jjfx-blind-stage {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  transform: translate(-50%, -50%);
+  width: min(72vw, 540px);
+}
+.jjfx-mask svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  filter: drop-shadow(0 8px 0 rgba(0, 0, 0, 0.45));
+}
+.jjfx-blind.jjfx-on .jjfx-mask {
+  animation:
+    jjfx-mask-drop 0.6s cubic-bezier(0.3, 1.5, 0.5, 1) both,
+    jjfx-snooze 2.4s ease-in-out 0.6s infinite;
+}
+.jjfx-zzz {
+  position: absolute;
+  right: 2%;
+  top: -6%;
+  width: 30%;
+  height: 120%;
+}
+.jjfx-zzz span {
+  position: absolute;
+  bottom: 50%;
+  left: 20%;
+  font-weight: 700;
+  font-size: clamp(28px, 5vw, 56px);
+  color: #b07cff;
+  -webkit-text-stroke: 0.09em #fff6e5;
+  paint-order: stroke fill;
+  opacity: 0;
+  animation: jjfx-zfloat 2.4s ease-in-out infinite;
+}
+.jjfx-zzz span:nth-child(2) { animation-delay: 0.6s; font-size: clamp(20px, 3.6vw, 40px); }
+.jjfx-zzz span:nth-child(3) { animation-delay: 1.2s; }
+.jjfx-zzz span:nth-child(4) { animation-delay: 1.8s; font-size: clamp(18px, 3vw, 34px); }
+.jjfx-blind-cap {
+  margin-top: 18px;
+  text-align: center;
+  font-size: clamp(18px, 2.8vw, 28px);
+  font-weight: 600;
+  color: #fff6e5;
+  opacity: 0.85;
+  -webkit-text-stroke: 0.08em var(--fx-ink);
+  paint-order: stroke fill;
+}
+@keyframes jjfx-mask-drop {
+  0% { transform: translateY(-120vh) rotate(-12deg); }
+  70% { transform: translateY(10px) rotate(3deg) scale(1.05, 0.9); }
+  100% { transform: translateY(0) rotate(0) scale(1); }
+}
+@keyframes jjfx-snooze {
+  0%, 100% { transform: translateY(0) rotate(-2deg) scale(1); }
+  50% { transform: translateY(6px) rotate(2deg) scale(1.03, 0.98); }
+}
+@keyframes jjfx-zfloat {
+  0% { transform: translate(0, 0) scale(0.4) rotate(-10deg); opacity: 0; }
+  20% { opacity: 1; }
+  50% { transform: translate(30px, -60px) scale(1) rotate(10deg); }
+  80% { opacity: 1; }
+  100% { transform: translate(-10px, -130px) scale(1.2) rotate(-8deg); opacity: 0; }
+}
+
+/* ---------------------------------------------------------------------------- reduced flashing */
+
+.jjfx-reduced .jjfx-edge-ring {
+  animation: none;
+}
+.jjfx-reduced .jjfx-burst {
+  animation-duration: 1.7s;
+  animation-timing-function: linear;
+}
+.jjfx-reduced .jjfx-ch {
+  animation-iteration-count: 1, 1 !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jjfx-pop--big .jjfx-ch,
+  .jjfx-pop--small .jjfx-ch,
+  .jjfx-coin-icon,
+  .jjfx-zzz span {
+    animation-iteration-count: 1;
+  }
+}

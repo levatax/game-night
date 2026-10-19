@@ -1,0 +1,644 @@
+/* Home, lobby and role-reveal screens. Owner: client-menu. Tokens + .jj-panel / .jj-btn from theme.css. */
+
+.jjm {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  box-sizing: border-box;
+  pointer-events: none;
+  overflow-y: auto;
+  z-index: 20;
+}
+.jjm[hidden],
+.jjm [hidden] { display: none !important; }
+.jjm *, .jjm *::before, .jjm *::after { box-sizing: border-box; }
+
+.jjm-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  max-width: 560px;
+  margin: auto;
+}
+.jjm-enter { animation: jjm-enter 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+@keyframes jjm-enter {
+  from { opacity: 0; transform: translateY(30px) scale(0.85, 1.15); }
+  60% { transform: translateY(-4px) scale(1.04, 0.96); }
+  to { opacity: 1; transform: none; }
+}
+
+.jjm-card { width: 100%; padding: 20px; }
+.jjm-label { display: block; font-weight: 700; font-size: 15px; margin: 0 0 6px; }
+.jjm-row { display: flex; gap: 10px; align-items: stretch; }
+.jjm-big { font-size: 22px; padding: 12px 20px; }
+.jjm-h2 { font-size: 18px; margin: 16px 0 8px; }
+
+.jjm-input,
+.jjm-select {
+  font: 600 18px var(--font);
+  color: var(--ink);
+  background: #fff;
+  border: var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  min-width: 0;
+  pointer-events: auto;
+  user-select: text;
+  box-shadow: inset 0 3px 0 rgba(45, 42, 50, 0.12);
+}
+.jjm-input:disabled { opacity: 0.6; }
+.jjm-input::placeholder { color: #a79f9a; }
+
+/* Chunky focus ring for keyboard users. */
+.jjm button:focus-visible,
+.jjm input:focus-visible,
+.jjm select:focus-visible,
+.jjm a:focus-visible {
+  outline: 4px dashed var(--common);
+  outline-offset: 3px;
+}
+
+/* Every button boings when pressed (added by Menu.ts). */
+.jjm-squish { animation: jjm-squish 0.35s ease-out; }
+@keyframes jjm-squish {
+  0% { transform: scale(0.9, 0.82); }
+  40% { transform: scale(1.1, 0.92); }
+  70% { transform: scale(0.97, 1.05); }
+  100% { transform: none; }
+}
+
+/* ===================================================================== HOME */
+.jjm-logo {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0 18px;
+  font: 700 clamp(46px, 13vw, 84px) / 1 var(--font);
+  letter-spacing: 1px;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.jjm-logo-word { display: inline-flex; }
+.jjm-letter {
+  position: relative;
+  display: inline-block;
+  color: var(--c);
+  -webkit-text-stroke: 4px var(--ink);
+  paint-order: stroke fill;
+  text-shadow: 0 6px 0 var(--ink);
+  transform-origin: 50% 100%;
+  animation: jjm-jiggle 2.4s ease-in-out infinite;
+  animation-delay: calc(var(--i) * 0.09s);
+}
+.jjm-letter:nth-child(odd) { --tilt: -3deg; }
+.jjm-letter:nth-child(even) { --tilt: 3deg; }
+@keyframes jjm-jiggle {
+  0%, 55%, 100% { transform: rotate(var(--tilt)) scale(1, 1); }
+  62% { transform: rotate(var(--tilt)) scale(1.18, 0.8); }
+  70% { transform: rotate(var(--tilt)) scale(0.88, 1.16) translateY(-8px); }
+  78% { transform: rotate(var(--tilt)) scale(1.07, 0.94); }
+  86% { transform: rotate(var(--tilt)) scale(0.97, 1.03); }
+}
+.jjm-poked .jjm-letter { animation: jjm-poke 0.7s ease-out both, jjm-jiggle 2.4s ease-in-out 0.7s infinite; animation-delay: calc(var(--i) * 0.03s), calc(0.7s + var(--i) * 0.09s); }
+@keyframes jjm-poke {
+  0% { transform: scale(1.3, 0.6); }
+  30% { transform: scale(0.75, 1.35) translateY(-18px) rotate(calc(var(--tilt) * -3)); }
+  55% { transform: scale(1.15, 0.85); }
+  80% { transform: scale(0.95, 1.06); }
+  100% { transform: rotate(var(--tilt)); }
+}
+
+/* A googly-eyed cherry sitting on the J. */
+.jjm-cherry {
+  position: absolute;
+  left: 50%;
+  top: -0.36em;
+  width: 0.46em;
+  height: 0.42em;
+  margin-left: -0.1em;
+  border-radius: 50% 50% 46% 46%;
+  background: radial-gradient(circle at 32% 30%, #ff9a9d 0 14%, var(--bad) 16%);
+  border: 3px solid var(--ink);
+  -webkit-text-stroke: 0;
+  animation: jjm-cherry 1.2s ease-in-out infinite;
+  transform-origin: 50% 100%;
+}
+.jjm-cherry-stem {
+  position: absolute;
+  left: 50%;
+  bottom: 85%;
+  width: 0.22em;
+  height: 0.24em;
+  border-left: 4px solid #4d8a3a;
+  border-top: 4px solid #4d8a3a;
+  border-radius: 100% 0 0 0;
+}
+@keyframes jjm-cherry {
+  0%, 100% { transform: rotate(-8deg) translateY(0); }
+  50% { transform: rotate(10deg) translateY(-4px) scale(1.06, 0.94); }
+}
+.jjm-cherry .jjm-eyes { top: 26%; }
+.jjm-cherry .jjm-eye { width: 0.15em; height: 0.15em; border-width: 2px; }
+
+/* Googly eyes, reused on the cherry and every chef blob. */
+.jjm-eyes {
+  position: absolute;
+  left: 50%;
+  top: 22%;
+  display: flex;
+  gap: 2px;
+  transform: translateX(-50%);
+}
+.jjm-eye {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--ink);
+}
+.jjm-pupil {
+  position: absolute;
+  width: 48%;
+  height: 48%;
+  left: 26%;
+  top: 26%;
+  border-radius: 50%;
+  background: var(--ink);
+  animation: jjm-googly 1.7s ease-in-out infinite;
+}
+.jjm-eye:nth-child(2) .jjm-pupil { animation-duration: 1.3s; animation-direction: reverse; }
+@keyframes jjm-googly {
+  0%, 100% { transform: translate(0, 30%); }
+  25% { transform: translate(40%, -20%); }
+  50% { transform: translate(-30%, 35%); }
+  75% { transform: translate(-40%, -30%); }
+}
+
+.jjm-tagline {
+  margin: -4px 0 0;
+  font: 600 17px var(--font);
+  color: var(--cream);
+  text-align: center;
+  text-shadow: 0 2px 0 var(--wall-deep);
+  transform: rotate(-1.5deg);
+}
+.jjm-home-card { display: flex; flex-direction: column; gap: 4px; max-width: 420px; transform: rotate(0.6deg); }
+.jjm-home-card .jjm-big { margin-top: 10px; width: 100%; }
+.jjm-nick-row .jjm-input { flex: 1; }
+.jjm-dice {
+  flex: none;
+  width: 52px;
+  font-size: 24px;
+  background: var(--sponge);
+  border: var(--border);
+  border-radius: 12px;
+  box-shadow: 0 4px 0 var(--ink);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: transform 0.15s;
+}
+.jjm-dice:hover { transform: rotate(-20deg) scale(1.08); }
+.jjm-dice:active { transform: rotate(160deg) scale(0.9); }
+.jjm-or {
+  position: relative;
+  margin: 14px 0 6px;
+  text-align: center;
+  font-weight: 600;
+  font-size: 14px;
+  color: #8b8189;
+}
+.jjm-or::before,
+.jjm-or::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 14%;
+  border-top: 3px dotted #c8bdb5;
+}
+.jjm-or::before { left: 0; }
+.jjm-or::after { right: 0; }
+.jjm-join-row .jjm-code-input {
+  flex: 1;
+  width: 0;
+  text-transform: uppercase;
+  text-align: center;
+  font-size: 24px;
+  letter-spacing: 8px;
+}
+.jjm-join-row .jjm-big { margin-top: 0; width: auto; flex: none; }
+.jjm-error {
+  min-height: 1.2em;
+  margin: 10px 0 0;
+  font-weight: 700;
+  color: var(--bad);
+  text-align: center;
+}
+.jjm-error:empty { min-height: 0; margin: 0; }
+.jjm-shake { animation: jjm-shake 0.45s ease; }
+@keyframes jjm-shake {
+  0%, 100% { transform: none; }
+  20% { transform: translateX(-8px) rotate(-2deg); }
+  40% { transform: translateX(7px) rotate(2deg); }
+  60% { transform: translateX(-5px); }
+  80% { transform: translateX(3px); }
+}
+.jjm-busy { display: none; margin: 10px 0 0; align-items: center; justify-content: center; gap: 8px; font-weight: 600; }
+.jjm-is-busy .jjm-busy { display: flex; }
+.jjm-spinner { display: inline-block; font-size: 24px; animation: jjm-wobble-spin 0.9s ease-in-out infinite; }
+@keyframes jjm-wobble-spin {
+  0% { transform: rotate(0) scale(1, 1); }
+  25% { transform: rotate(90deg) scale(1.2, 0.8); }
+  50% { transform: rotate(180deg) scale(0.85, 1.15); }
+  75% { transform: rotate(270deg) scale(1.15, 0.85); }
+  100% { transform: rotate(360deg) scale(1, 1); }
+}
+.jjm-back {
+  pointer-events: auto;
+  color: var(--cream);
+  font-weight: 700;
+  text-decoration: none;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(28, 26, 46, 0.55);
+  transition: transform 0.15s;
+}
+.jjm-back:hover { transform: translateX(-4px) rotate(-2deg); text-decoration: underline; }
+
+/* ===================================================================== LOBBY */
+.jjm-lobby { max-width: 760px; }
+.jjm-lobby-top { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+.jjm-sticker-wrap { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.jjm-sticker-label { font-weight: 700; font-size: 13px; text-transform: uppercase; letter-spacing: 2px; color: #8b8189; }
+/* Room code: a slightly crooked, peeling sticker. */
+.jjm-sticker {
+  position: relative;
+  display: flex;
+  gap: 4px;
+  padding: 8px 18px 10px;
+  background: var(--coin);
+  border: var(--border);
+  border-radius: 14px;
+  box-shadow: 0 6px 0 var(--ink), inset 0 0 0 4px #fff3b0;
+  transform: rotate(-3deg);
+  font: 700 clamp(44px, 12vw, 68px) / 1 var(--font);
+  letter-spacing: 4px;
+  user-select: text;
+  pointer-events: auto;
+}
+.jjm-sticker::after {
+  content: "";
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  width: 26px;
+  height: 26px;
+  background: linear-gradient(135deg, #fff3b0 50%, transparent 50%);
+  border-left: 4px solid var(--ink);
+  border-top: 4px solid var(--ink);
+  border-radius: 6px 0 12px 0;
+}
+.jjm-sticker-ch { display: inline-block; animation: jjm-jiggle 3s ease-in-out infinite; --tilt: 0deg; }
+.jjm-sticker-ch:nth-child(1) { animation-delay: 0s; }
+.jjm-sticker-ch:nth-child(2) { animation-delay: 0.12s; }
+.jjm-sticker-ch:nth-child(3) { animation-delay: 0.24s; }
+.jjm-sticker-ch:nth-child(4) { animation-delay: 0.36s; }
+.jjm-copy { white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.jjm-copied { background: var(--frosting); animation: jjm-squish 0.4s ease-out; }
+
+.jjm-section-head { display: flex; align-items: baseline; justify-content: space-between; }
+.jjm-count {
+  font-weight: 700;
+  background: var(--ink);
+  color: var(--cream);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 14px;
+}
+
+.jjm-chefs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+.jjm-chef {
+  --pc: #c8bdb5;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 8px 12px;
+  min-height: 150px;
+  background: #fff;
+  border: var(--border);
+  border-radius: 16px;
+  box-shadow: 0 5px 0 var(--ink);
+  transform: rotate(var(--tilt, 0deg));
+  text-align: center;
+}
+.jjm-chef--me { background: #fff1c9; }
+.jjm-chef--ready { box-shadow: 0 5px 0 var(--ink), 0 0 0 4px var(--good) inset; }
+.jjm-chef--away { opacity: 0.55; filter: grayscale(0.5); }
+.jjm-chef--empty {
+  background: transparent;
+  border-style: dashed;
+  border-color: #c8bdb5;
+  box-shadow: none;
+  color: #9a9095;
+  justify-content: center;
+}
+.jjm-chef--empty .jjm-avatar { opacity: 0.25; filter: grayscale(1); }
+.jjm-chef--empty .jjm-pupil { animation-play-state: paused; }
+.jjm-pop-in { animation: jjm-pop 0.5s cubic-bezier(0.34, 1.7, 0.64, 1); }
+@keyframes jjm-pop {
+  from { transform: scale(0.3) rotate(-20deg); }
+  to { transform: rotate(var(--tilt, 0deg)); }
+}
+.jjm-hop { animation: jjm-hop 0.5s ease-out; }
+@keyframes jjm-hop {
+  0%, 100% { transform: rotate(var(--tilt, 0deg)); }
+  30% { transform: translateY(-14px) scale(0.92, 1.1) rotate(var(--tilt, 0deg)); }
+  60% { transform: translateY(0) scale(1.08, 0.9) rotate(var(--tilt, 0deg)); }
+}
+
+/* Jelly chef avatar: colored hat on a wobbling googly-eyed blob. */
+.jjm-avatar { position: relative; width: 64px; height: 74px; }
+.jjm-hat {
+  position: absolute;
+  left: 8px;
+  top: 0;
+  width: 48px;
+  z-index: 1;
+  color: #c8bdb5;
+  transform-origin: 50% 100%;
+  animation: jjm-hat 2.2s ease-in-out infinite;
+}
+.jjm-hat svg, .jjm-swatch svg { display: block; width: 100%; height: auto; }
+@keyframes jjm-hat {
+  0%, 100% { transform: rotate(-6deg); }
+  50% { transform: rotate(6deg) translateY(-2px); }
+}
+.jjm-blob {
+  position: absolute;
+  left: 4px;
+  bottom: 0;
+  width: 56px;
+  height: 40px;
+  background: var(--frosting);
+  border: 3px solid var(--ink);
+  border-radius: 50% 50% 40% 40% / 60% 60% 40% 40%;
+  animation: jjm-blob 1.8s ease-in-out infinite;
+  transform-origin: 50% 100%;
+}
+.jjm-chef:nth-child(2n) .jjm-blob { animation-delay: -0.6s; }
+.jjm-chef:nth-child(3n) .jjm-blob { animation-delay: -1.1s; }
+.jjm-blob .jjm-eye { width: 15px; height: 15px; }
+.jjm-mouth {
+  position: absolute;
+  left: 50%;
+  bottom: 6px;
+  width: 14px;
+  height: 7px;
+  margin-left: -7px;
+  border: 3px solid var(--ink);
+  border-top: 0;
+  border-radius: 0 0 14px 14px;
+}
+.jjm-chef--ready .jjm-mouth { width: 20px; height: 10px; margin-left: -10px; background: #b33a52; }
+@keyframes jjm-blob {
+  0%, 100% { transform: scale(1, 1); }
+  50% { transform: scale(1.08, 0.9); }
+}
+.jjm-chef-name {
+  max-width: 100%;
+  font-weight: 700;
+  font-size: 17px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jjm-chef--empty .jjm-chef-name { font-weight: 500; font-size: 14px; white-space: normal; }
+.jjm-badges { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; min-height: 0; }
+.jjm-badge { font-size: 12px; font-weight: 700; padding: 1px 7px; border-radius: 999px; border: 2px solid var(--ink); }
+.jjm-badge--host { background: var(--coin); }
+.jjm-badge--you { background: var(--sponge); }
+.jjm-chef-status { font-weight: 700; font-size: 13px; color: #8b8189; }
+.jjm-chef--ready .jjm-chef-status {
+  color: var(--ink);
+  background: var(--good);
+  border: 2px solid var(--ink);
+  border-radius: 8px;
+  padding: 0 8px;
+  transform: rotate(-4deg);
+}
+
+/* Hat color picker. */
+.jjm-colors { display: flex; gap: 10px; flex-wrap: wrap; }
+.jjm-swatch {
+  width: 58px;
+  height: 58px;
+  padding: 6px;
+  color: var(--sw);
+  background: #fff;
+  border: var(--border);
+  border-radius: 14px;
+  box-shadow: 0 4px 0 var(--ink);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: transform 0.1s;
+}
+.jjm-swatch:hover:not(:disabled) { transform: translateY(-3px) rotate(-6deg); }
+.jjm-swatch[aria-checked="true"] {
+  background: var(--sponge);
+  transform: translateY(-4px) scale(1.08);
+  box-shadow: 0 6px 0 var(--ink), 0 0 0 4px var(--sw);
+}
+.jjm-swatch--taken { opacity: 0.35; cursor: not-allowed; position: relative; }
+.jjm-swatch--taken::after {
+  content: "🚫";
+  position: absolute;
+  right: -6px;
+  top: -8px;
+  font-size: 18px;
+}
+.jjm-boing { animation: jjm-squish 0.4s ease-out; }
+
+/* Settings. */
+.jjm-settings { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px 14px; }
+.jjm-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding: 8px 12px;
+  background: #fff;
+  border: 3px solid var(--ink);
+  border-radius: 12px;
+}
+.jjm-field .jjm-label { margin: 0; }
+.jjm-select { font-size: 16px; padding: 6px 8px; cursor: pointer; }
+.jjm-select:disabled { cursor: default; opacity: 0.75; background: #f3ece2; }
+.jjm-note { width: 100%; font-size: 12px; font-weight: 600; color: #b56a00; }
+.jjm-note:empty { display: none; }
+.jjm-settings-note { margin: 8px 0 0; color: #8b8189; }
+
+/* Squishy jelly toggle switch. */
+.jjm-switch {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  width: 58px;
+  height: 32px;
+  margin: 0;
+  flex: none;
+  background: #d9cfc6;
+  border: 3px solid var(--ink);
+  border-radius: 999px;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background 0.2s;
+}
+.jjm-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 22px;
+  height: 22px;
+  background: #fff;
+  border: 3px solid var(--ink);
+  border-radius: 50%;
+  transition: left 0.25s cubic-bezier(0.34, 1.8, 0.64, 1), width 0.12s;
+}
+.jjm-switch:active::after { width: 30px; }
+.jjm-switch:checked { background: var(--good); }
+.jjm-switch:checked::after { left: 28px; }
+.jjm-switch:checked:active::after { left: 20px; }
+.jjm-switch:disabled { cursor: default; opacity: 0.7; }
+
+/* Actions. */
+.jjm-actions { display: flex; gap: 10px; margin-top: 18px; align-items: center; flex-wrap: wrap; }
+.jjm-ready { flex: 1; min-width: 150px; font-size: 20px; background: var(--sponge); }
+.jjm-ready--on { background: var(--good); animation: jjm-squish 0.35s ease-out; }
+.jjm-start { flex: 1.4; min-width: 200px; }
+.jjm-start:not(:disabled) { animation: jjm-throb 1.1s ease-in-out infinite; }
+@keyframes jjm-throb {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05, 0.95) rotate(-1deg); }
+}
+.jjm-start-why { margin: 10px 0 0; text-align: center; font-weight: 600; font-size: 15px; color: #6d6470; }
+
+/* ===================================================================== ROLE */
+.jjm-role { max-width: 380px; }
+.jjm-flip { width: min(340px, calc(100vw - 32px)); aspect-ratio: 3 / 4; perspective: 1100px; }
+.jjm-flip-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  transition: transform 0.9s cubic-bezier(0.34, 1.45, 0.64, 1);
+  animation: jjm-hover-card 2.6s ease-in-out infinite;
+}
+.jjm-flipped .jjm-flip-inner { transform: rotateY(180deg) rotateZ(-2deg); }
+@keyframes jjm-hover-card {
+  0%, 100% { translate: 0 0; }
+  50% { translate: 0 -8px; }
+}
+.jjm-face {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 22px;
+  text-align: center;
+  border: 5px solid var(--ink);
+  border-radius: 24px;
+  box-shadow: 0 10px 0 var(--ink);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  pointer-events: auto;
+}
+.jjm-face--back {
+  background:
+    radial-gradient(circle, rgba(255, 255, 255, 0.35) 0 6px, transparent 7px) 0 0 / 34px 34px,
+    var(--frosting);
+}
+.jjm-face-q {
+  font: 700 120px / 1 var(--font);
+  color: var(--coin);
+  -webkit-text-stroke: 5px var(--ink);
+  paint-order: stroke fill;
+  animation: jjm-jiggle 1.4s ease-in-out infinite;
+  --tilt: -4deg;
+}
+.jjm-face-hint { font-weight: 700; background: var(--cream); border: 3px solid var(--ink); border-radius: 10px; padding: 4px 10px; }
+.jjm-face--front { transform: rotateY(180deg); }
+.jjm-face--baker { background: var(--cream); }
+.jjm-face--sab {
+  color: #fff;
+  background:
+    repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.08) 0 14px, transparent 14px 28px),
+    var(--cursed);
+}
+.jjm-face-kicker { font-weight: 700; font-size: 18px; text-transform: uppercase; letter-spacing: 3px; opacity: 0.8; }
+.jjm-face-emoji { font-size: 84px; line-height: 1; animation: jjm-blob 1.2s ease-in-out infinite; }
+.jjm-flipped .jjm-face-emoji { animation: jjm-pop 0.6s 0.5s cubic-bezier(0.34, 1.7, 0.64, 1) both, jjm-blob 1.2s 1.1s ease-in-out infinite; }
+.jjm-face-title { font-size: 24px; font-weight: 600; }
+.jjm-face-title strong {
+  display: block;
+  font-size: clamp(36px, 11vw, 46px);
+  line-height: 1.05;
+  color: var(--coin);
+  -webkit-text-stroke: 4px var(--ink);
+  paint-order: stroke fill;
+  text-shadow: 0 4px 0 var(--ink);
+}
+.jjm-face--baker .jjm-face-title strong { color: var(--frosting); }
+.jjm-face-body { font-weight: 600; font-size: 17px; line-height: 1.3; }
+.jjm-face-quip { font-size: 14px; font-style: italic; opacity: 0.85; }
+.jjm-key {
+  font: 700 28px var(--font);
+  color: var(--ink);
+  background: var(--cream);
+  border: 4px solid var(--ink);
+  border-radius: 10px;
+  box-shadow: 0 4px 0 var(--ink);
+  padding: 0 14px;
+  animation: jjm-throb 0.9s ease-in-out infinite;
+}
+
+.jjm-offscreen { position: fixed; left: -9999px; top: 0; opacity: 0; }
+
+/* ===================================================================== PHONES */
+@media (max-width: 560px) {
+  .jjm-card { padding: 14px; }
+  .jjm-chefs { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .jjm-settings { grid-template-columns: 1fr; }
+  .jjm-lobby-top { justify-content: center; }
+  .jjm-sticker-wrap { align-items: center; }
+  .jjm-join-row { flex-wrap: wrap; }
+  .jjm-join-row .jjm-code-input { width: 100%; flex: 1 1 100%; }
+  .jjm-join-row .jjm-big { width: 100%; }
+  .jjm-swatch { width: 48px; height: 48px; }
+  .jjm-actions > * { flex: 1 1 100%; }
+}
+@media (max-height: 640px) {
+  .jjm { align-items: flex-start; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .jjm-flip-inner { transition-duration: 0.01ms; }
+}

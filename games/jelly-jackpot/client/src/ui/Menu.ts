@@ -1,0 +1,745 @@
+// Home, lobby and role-reveal screens (DOM). Owner: client-menu. PUBLIC API IS THE CONTRACT.
+// Styles in ./menu.css. Uses the tokens + .jj-panel / .jj-btn from ./theme.css.
+//
+// Home (game2.md §13.1): jiggling "JELLY JACKPOT" logo (a googly-eyed cherry sits on the J), nickname field
+// (localStorage[NICKNAME_STORAGE_KEY]), Create Room / Join Room (+ 4-letter code), "← Game Night" link.
+// Lobby (§13.2): sticker room code + Copy link, 6 chef cards, hat color picker, Ready toggle, host settings
+// (read-only for guests), host Start with a reason while disabled, Leave.
+// Role reveal (§13.3): a private card that flips over to Baker (cream) or Saboteur (red).
+//
+// All user text (nicknames) goes in through textContent only. The lobby is built once and updated in place,
+// so focus and open <select>s survive the 20 Hz state patches.
+
+import "./menu.css";
+import {
+  CODE_ALPHABET,
+  CODE_LENGTH,
+  MAX_PLAYERS,
+  MIN_PLAYERS,
+  NICKNAME_MAX,
+  NICKNAME_STORAGE_KEY,
+  PLAYER_COLORS,
+  ROUND_OPTIONS,
+  SABOTEUR_MIN_PLAYERS,
+  TURN_TIMER_OPTIONS,
+  autoRounds,
+} from "../../../shared/constants";
+import type { JellyStateView, PlayerView, Role, SettingsMsg } from "../../../shared/protocol";
+
+export interface MenuHandlers {
+  onCreate(nickname: string): void;
+  onJoin(code: string, nickname: string): void;
+  onReady(ready: boolean): void;
+  onColor(color: number): void;
+  onSettings(patch: SettingsMsg): void;
+  onStart(): void;
+  onLeave(): void;
+  /** UI click/hover sounds. */
+  onUiSound(kind: "click" | "hover" | "pop"): void;
+}
+
+// ------------------------------------------------------------------ silly copy
+const COLOR_NAMES = ["Ketchup", "Blueberry", "Pickle", "Mustard", "Grape Jelly", "Bubblegum"];
+const SILLY_NAMES = [
+  "Chef Wobbles", "Sir Sprinkles", "Captain Custard", "Lady Lasagna", "Baron Von Bagel", "Noodle Nancy",
+  "Pudding Pete", "Muffin Man", "Gravy Dave", "Toast Malone", "Sloppy Joe", "Princess Parfait",
+];
+const TAGLINES = [
+  "Stack it. Spin it. Blame the Saboteur.",
+  "100% jelly. 0% structural integrity.",
+  "Health inspectors hate this one weird cake.",
+  "Now with extra wobble!",
+  "Gravity is just a suggestion. (It is not.)",
+];
+const EMPTY_SEATS = [
+  "Empty stool…",
+  "Chef still washing hands",
+  "Seat reserved for a pie",
+  "Someone's microwaving…",
+  "Probably stuck in traffic",
+  "Waiting for a chef",
+];
+const BAKER_QUIPS = [
+  "Stack honestly. Sniff out the cheater.",
+  "Your hands are clean. Mostly. Some frosting.",
+  "Trust no one who smiles at the reel.",
+];
+const SABOTEUR_QUIPS = [
+  "Act natural. Whistle a little.",
+  "Muahaha… quietly. People are watching.",
+  "Look innocent. Practice your shocked face.",
+];
+
+const pick = <T>(arr: readonly T[]): T => arr[Math.floor(Math.random() * arr.length)]!;
+
+/** Chef hat SVG (static markup, fill follows currentColor). */
+const HAT_SVG =
+  '<svg viewBox="0 0 64 56" aria-hidden="true" focusable="false">' +
+  '<path d="M14 36c-9 0-12-12-4-16 0-10 12-14 18-8 4-8 16-8 20 0 8-4 16 4 12 12 6 4 4 12-4 12z" ' +
+  'fill="currentColor" stroke="#2d2a32" stroke-width="4" stroke-linejoin="round"/>' +
+  '<rect x="14" y="34" width="36" height="16" rx="4" fill="#fff6e5" stroke="#2d2a32" stroke-width="4"/>' +
+  '<path d="M24 38v8M32 38v8M40 38v8" stroke="#2d2a32" stroke-width="3" stroke-linecap="round" opacity=".35"/>' +
+  "</svg>";
+
+// ------------------------------------------------------------------ tiny DOM helper
+function h<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  cls?: string,
+  attrs?: Record<string, string>,
+  text?: string,
+): HTMLElementTagNameMap[K] {
+  const el = document.createElement(tag);
+  if (cls) el.className = cls;
+  if (attrs) for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  if (text !== undefined) el.textContent = text;
+  return el;
+}
+function setText(el: HTMLElement, text: string): void {
+  if (el.textContent !== text) el.textContent = text;
+}
+function toggle(el: Element, cls: string, on: boolean): void {
+  el.classList.toggle(cls, on);
+}
+function readStorage(key: string): string {
+  try {
+    return localStorage.getItem(key) ?? "";
+  } catch {
+    return "";
+  }
+}
+function writeStorage(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* private mode: no big deal */
+  }
+}
+/** Googly eye pair (pupils jiggle via CSS). */
+function googlyEyes(): HTMLElement {
+  const eyes = h("span", "jjm-eyes", { "aria-hidden": "true" });
+  for (let i = 0; i < 2; i++) {
+    const eye = h("span", "jjm-eye");
+    eye.appendChild(h("span", "jjm-pupil"));
+    eyes.appendChild(eye);
+  }
+  return eyes;
+}
+
+interface SeatRefs {
+  card: HTMLElement;
+  hat: HTMLElement;
+  name: HTMLElement;
+  badges: HTMLElement;
+  status: HTMLElement;
+  /** Player id currently shown ("" = empty seat). */
+  id: string;
+  ready: boolean;
+}
+
+export class Menu {
+  private readonly handlers: MenuHandlers;
+  private readonly el: HTMLElement;
+  private busy = false;
+  private lastHoverSound = 0;
+
+  // home
+  private readonly home: HTMLElement;
+  private readonly nickInput: HTMLInputElement;
+  private readonly codeInput: HTMLInputElement;
+  private readonly createBtn: HTMLButtonElement;
+  private readonly joinBtn: HTMLButtonElement;
+  private readonly errorEl: HTMLElement;
+  private readonly busyEl: HTMLElement;
+  private readonly tagline: HTMLElement;
+
+  // lobby
+  private readonly lobby: HTMLElement;
+  private readonly codeSticker: HTMLElement;
+  private readonly copyBtn: HTMLButtonElement;
+  private readonly countEl: HTMLElement;
+  private readonly seats: SeatRefs[] = [];
+  private readonly swatches: HTMLButtonElement[] = [];
+  private readonly readyBtn: HTMLButtonElement;
+  private readonly roundsSel: HTMLSelectElement;
+  private readonly timerSel: HTMLSelectElement;
+  private readonly sabBox: HTMLInputElement;
+  private readonly betsBox: HTMLInputElement;
+  private readonly sabNote: HTMLElement;
+  private readonly settingsNote: HTMLElement;
+  private readonly startBtn: HTMLButtonElement;
+  private readonly startReason: HTMLElement;
+  private readonly leaveBtn: HTMLButtonElement;
+  private code = "";
+  private myReady = false;
+  private copyTimer = 0;
+
+  // role
+  private readonly roleWrap: HTMLElement;
+  private roleTimer = 0;
+
+  constructor(root: HTMLElement, handlers: MenuHandlers) {
+    this.handlers = handlers;
+    this.el = h("div", "jjm");
+    root.appendChild(this.el);
+
+    // ================================================================== HOME
+    this.home = h("section", "jjm-screen jjm-home", { "aria-label": "Jelly Jackpot home" });
+    const logo = h("h1", "jjm-logo", { "aria-label": "Jelly Jackpot" });
+    let idx = 0;
+    for (const word of ["JELLY", "JACKPOT"]) {
+      const w = h("span", "jjm-logo-word", { "aria-hidden": "true" });
+      for (const ch of word) {
+        const l = h("span", "jjm-letter", undefined, ch);
+        l.style.setProperty("--i", String(idx));
+        l.style.setProperty("--c", `var(--p${idx % 6})`);
+        if (idx === 0) {
+          const cherry = h("span", "jjm-cherry");
+          cherry.appendChild(h("span", "jjm-cherry-stem"));
+          cherry.appendChild(googlyEyes());
+          l.appendChild(cherry);
+        }
+        w.appendChild(l);
+        idx++;
+      }
+      logo.appendChild(w);
+    }
+    // Hovering the logo pokes it: it wobbles harder and plays a pop.
+    logo.addEventListener("pointerenter", () => {
+      logo.classList.remove("jjm-poked");
+      void logo.offsetWidth;
+      logo.classList.add("jjm-poked");
+      this.handlers.onUiSound("pop");
+    });
+
+    this.tagline = h("p", "jjm-tagline", undefined, pick(TAGLINES));
+
+    const card = h("form", "jj-panel jjm-card jjm-home-card", { novalidate: "" });
+    const nickLabel = h("label", "jjm-label", { for: "jjm-nick" }, "Your chef name");
+    this.nickInput = h("input", "jjm-input", {
+      id: "jjm-nick",
+      type: "text",
+      maxlength: String(NICKNAME_MAX),
+      autocomplete: "nickname",
+      spellcheck: "false",
+      placeholder: pick(SILLY_NAMES),
+    });
+    this.nickInput.value = readStorage(NICKNAME_STORAGE_KEY).slice(0, NICKNAME_MAX);
+    const diceBtn = h("button", "jjm-dice", { type: "button", "aria-label": "Random silly name", title: "Random silly name" }, "🎲");
+    const nickRow = h("div", "jjm-row jjm-nick-row");
+    nickRow.append(this.nickInput, diceBtn);
+    diceBtn.addEventListener("click", () => {
+      this.nickInput.value = pick(SILLY_NAMES).slice(0, NICKNAME_MAX);
+      this.nickInput.focus();
+      this.handlers.onUiSound("pop");
+    });
+
+    this.createBtn = h("button", "jj-btn jj-btn--pink jjm-big", { type: "submit" }, "🎂 Create Room");
+
+    const or = h("div", "jjm-or", { "aria-hidden": "true" }, "or crash a friend's party");
+
+    const codeLabel = h("label", "jjm-label", { for: "jjm-code" }, "Room code");
+    this.codeInput = h("input", "jjm-input jjm-code-input", {
+      id: "jjm-code",
+      type: "text",
+      maxlength: String(CODE_LENGTH),
+      autocomplete: "off",
+      autocapitalize: "characters",
+      spellcheck: "false",
+      placeholder: "ABCD",
+      inputmode: "text",
+    });
+    this.codeInput.addEventListener("input", () => {
+      const clean = this.sanitizeCode(this.codeInput.value);
+      if (clean !== this.codeInput.value) this.codeInput.value = clean;
+      this.clearError();
+    });
+    this.joinBtn = h("button", "jj-btn jjm-big", { type: "button" }, "🚪 Join Room");
+    const joinRow = h("div", "jjm-row jjm-join-row");
+    joinRow.append(this.codeInput, this.joinBtn);
+
+    this.errorEl = h("p", "jjm-error", { role: "alert", "aria-live": "assertive" });
+    this.busyEl = h("p", "jjm-busy", { "aria-live": "polite" });
+    const spinner = h("span", "jjm-spinner", { "aria-hidden": "true" }, "🍮");
+    this.busyEl.append(spinner, h("span", undefined, undefined, "Preheating the oven…"));
+
+    card.append(nickLabel, nickRow, this.createBtn, or, codeLabel, joinRow, this.errorEl, this.busyEl);
+    // Enter in the code field joins, Enter anywhere else creates.
+    card.addEventListener("submit", (e) => {
+      e.preventDefault();
+      if (document.activeElement === this.codeInput) this.doJoin();
+      else this.doCreate();
+    });
+    this.joinBtn.addEventListener("click", () => this.doJoin());
+    this.nickInput.addEventListener("input", () => this.clearError());
+
+    const back = h("a", "jjm-back", { href: "/" }, "← Game Night");
+    this.home.append(logo, this.tagline, card, back);
+
+    // ================================================================== LOBBY
+    this.lobby = h("section", "jjm-screen jjm-lobby", { "aria-label": "Lobby" });
+    const lcard = h("div", "jj-panel jjm-card jjm-lobby-card");
+
+    const top = h("div", "jjm-lobby-top");
+    const stickerWrap = h("div", "jjm-sticker-wrap");
+    stickerWrap.appendChild(h("span", "jjm-sticker-label", undefined, "Kitchen code"));
+    this.codeSticker = h("div", "jjm-sticker", { "aria-live": "polite" });
+    stickerWrap.appendChild(this.codeSticker);
+    this.copyBtn = h("button", "jj-btn jj-btn--green jjm-copy", { type: "button" }, "📋 Copy link");
+    this.copyBtn.addEventListener("click", () => void this.copyLink());
+    top.append(stickerWrap, this.copyBtn);
+
+    const chefsHead = h("div", "jjm-section-head");
+    chefsHead.appendChild(h("h2", "jjm-h2", undefined, "Chefs in the kitchen"));
+    this.countEl = h("span", "jjm-count");
+    chefsHead.appendChild(this.countEl);
+
+    const grid = h("ul", "jjm-chefs", { "aria-label": "Players" });
+    for (let i = 0; i < MAX_PLAYERS; i++) {
+      const li = h("li", "jjm-chef jjm-chef--empty");
+      li.style.setProperty("--tilt", `${(i % 2 ? 1 : -1) * (1 + (i % 3))}deg`);
+      const avatar = h("div", "jjm-avatar", { "aria-hidden": "true" });
+      const hat = h("span", "jjm-hat");
+      hat.innerHTML = HAT_SVG; // static markup, no user text
+      const blob = h("span", "jjm-blob");
+      blob.appendChild(googlyEyes());
+      blob.appendChild(h("span", "jjm-mouth"));
+      avatar.append(hat, blob);
+      const name = h("span", "jjm-chef-name");
+      const badges = h("span", "jjm-badges");
+      const status = h("span", "jjm-chef-status");
+      li.append(avatar, name, badges, status);
+      grid.appendChild(li);
+      this.seats.push({ card: li, hat, name, badges, status, id: "", ready: false });
+    }
+
+    // Hat color picker.
+    const colorHead = h("h2", "jjm-h2", { id: "jjm-color-h" }, "Pick your hat");
+    const colors = h("div", "jjm-colors", { role: "radiogroup", "aria-labelledby": "jjm-color-h" });
+    PLAYER_COLORS.forEach((hex, i) => {
+      const b = h("button", "jjm-swatch", { type: "button", role: "radio", "aria-checked": "false" });
+      b.style.setProperty("--sw", hex);
+      b.setAttribute("aria-label", COLOR_NAMES[i] ?? `Color ${i + 1}`);
+      b.title = COLOR_NAMES[i] ?? "";
+      b.innerHTML = HAT_SVG;
+      b.addEventListener("click", () => {
+        if (b.disabled || b.getAttribute("aria-checked") === "true") return;
+        b.classList.remove("jjm-boing");
+        void b.offsetWidth;
+        b.classList.add("jjm-boing");
+        this.handlers.onUiSound("pop");
+        this.handlers.onColor(i);
+      });
+      colors.appendChild(b);
+      this.swatches.push(b);
+    });
+    // Arrow keys move between free hats (radiogroup pattern).
+    colors.addEventListener("keydown", (e) => {
+      if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) return;
+      e.preventDefault();
+      const dir = e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 1;
+      const cur = this.swatches.indexOf(document.activeElement as HTMLButtonElement);
+      for (let step = 1; step <= this.swatches.length; step++) {
+        const n = (cur + dir * step + this.swatches.length * 2) % this.swatches.length;
+        const sw = this.swatches[n]!;
+        if (!sw.disabled) {
+          sw.focus();
+          break;
+        }
+      }
+    });
+
+    // Host settings.
+    const setHead = h("h2", "jjm-h2", undefined, "House rules");
+    const settings = h("div", "jjm-settings");
+    this.roundsSel = h("select", "jjm-select", { id: "jjm-rounds" });
+    for (const r of ROUND_OPTIONS) this.roundsSel.appendChild(h("option", undefined, { value: String(r) }, r === 0 ? "Auto" : String(r)));
+    this.timerSel = h("select", "jjm-select", { id: "jjm-timer" });
+    for (const t of TURN_TIMER_OPTIONS) this.timerSel.appendChild(h("option", undefined, { value: String(t) }, `${t} s`));
+    this.sabBox = h("input", "jjm-switch", { id: "jjm-sab", type: "checkbox", role: "switch" });
+    this.betsBox = h("input", "jjm-switch", { id: "jjm-bets", type: "checkbox", role: "switch" });
+    const field = (id: string, label: string, ctl: HTMLElement): HTMLElement => {
+      const f = h("div", "jjm-field");
+      f.append(h("label", "jjm-label", { for: id }, label), ctl);
+      return f;
+    };
+    this.sabNote = h("span", "jjm-note");
+    const sabField = field("jjm-sab", "Saboteur 😈", this.sabBox);
+    sabField.appendChild(this.sabNote);
+    settings.append(
+      field("jjm-rounds", "Rounds 🔁", this.roundsSel),
+      field("jjm-timer", "Turn timer ⏱️", this.timerSel),
+      sabField,
+      field("jjm-bets", "Side bets 🪙", this.betsBox),
+    );
+    this.roundsSel.addEventListener("change", () => this.sendSetting({ rounds: Number(this.roundsSel.value) }));
+    this.timerSel.addEventListener("change", () => this.sendSetting({ turnTimer: Number(this.timerSel.value) }));
+    this.sabBox.addEventListener("change", () => this.sendSetting({ saboteur: this.sabBox.checked }));
+    this.betsBox.addEventListener("change", () => this.sendSetting({ sideBets: this.betsBox.checked }));
+    this.settingsNote = h("p", "jjm-note jjm-settings-note");
+
+    // Actions.
+    const actions = h("div", "jjm-actions");
+    this.leaveBtn = h("button", "jj-btn jj-btn--red", { type: "button" }, "🏃 Leave");
+    this.leaveBtn.addEventListener("click", () => this.handlers.onLeave());
+    this.readyBtn = h("button", "jj-btn jj-btn--green jjm-ready", { type: "button", "aria-pressed": "false" });
+    this.readyBtn.addEventListener("click", () => {
+      this.myReady = !this.myReady; // optimistic, the next patch confirms
+      this.renderReady();
+      this.handlers.onUiSound("pop");
+      this.handlers.onReady(this.myReady);
+    });
+    this.startBtn = h("button", "jj-btn jj-btn--pink jjm-big jjm-start", { type: "button", "aria-describedby": "jjm-start-why" }, "🎰 Start the chaos!");
+    this.startBtn.addEventListener("click", () => this.handlers.onStart());
+    this.startReason = h("p", "jjm-start-why", { id: "jjm-start-why", "aria-live": "polite" });
+    actions.append(this.leaveBtn, this.readyBtn, this.startBtn);
+
+    lcard.append(top, chefsHead, grid, colorHead, colors, setHead, settings, this.settingsNote, actions, this.startReason);
+    this.lobby.appendChild(lcard);
+
+    // ================================================================== ROLE
+    this.roleWrap = h("section", "jjm-screen jjm-role", { "aria-label": "Your secret role", "aria-live": "polite" });
+
+    this.el.append(this.home, this.lobby, this.roleWrap);
+
+    // Shared button sounds + squish (delegated).
+    this.el.addEventListener("click", (e) => {
+      const btn = (e.target as HTMLElement).closest("button");
+      if (!btn || btn.disabled) return;
+      btn.classList.remove("jjm-squish");
+      void btn.offsetWidth;
+      btn.classList.add("jjm-squish");
+      if (!btn.classList.contains("jjm-swatch") && btn !== this.readyBtn) this.handlers.onUiSound("click");
+    });
+    this.el.addEventListener("pointerover", (e) => {
+      const btn = (e.target as HTMLElement).closest("button");
+      if (!btn || btn.disabled || (e.relatedTarget instanceof Node && btn.contains(e.relatedTarget))) return;
+      const now = performance.now();
+      if (now - this.lastHoverSound < 70) return;
+      this.lastHoverSound = now;
+      this.handlers.onUiSound("hover");
+    });
+
+    this.showOnly(null);
+  }
+
+  /** Prefill the join code (share link ?room=CODE). */
+  showHome(prefillCode?: string): void {
+    this.showOnly(this.home);
+    this.tagline.textContent = pick(TAGLINES);
+    if (prefillCode) this.codeInput.value = this.sanitizeCode(prefillCode);
+    this.clearError();
+    this.setBusy(false);
+    // Focus where the player most likely wants to type next.
+    requestAnimationFrame(() => {
+      if (!this.nickInput.value) this.nickInput.focus({ preventScroll: true });
+      else if (this.codeInput.value.length === CODE_LENGTH) this.joinBtn.focus({ preventScroll: true });
+    });
+  }
+
+  /** Disable buttons + show a spinner while connecting. */
+  setBusy(busy: boolean): void {
+    this.busy = busy;
+    this.createBtn.disabled = busy;
+    this.joinBtn.disabled = busy;
+    this.nickInput.disabled = busy;
+    this.codeInput.disabled = busy;
+    toggle(this.home, "jjm-is-busy", busy);
+    this.home.setAttribute("aria-busy", String(busy));
+  }
+
+  showError(message: string): void {
+    this.setBusy(false);
+    this.errorEl.textContent = `🥴 ${message}`;
+    this.errorEl.classList.remove("jjm-shake");
+    void this.errorEl.offsetWidth;
+    this.errorEl.classList.add("jjm-shake");
+  }
+
+  showLobby(): void {
+    this.setBusy(false);
+    this.showOnly(this.lobby);
+  }
+
+  /** Re-render the lobby from state (call on every patch while in the lobby). */
+  updateLobby(state: JellyStateView, myId: string): void {
+    const isHost = state.hostId === myId;
+    const players: PlayerView[] = [];
+    state.players.forEach((p) => {
+      if (!p.spectator) players.push(p);
+    });
+    players.sort((a, b) => a.seat - b.seat);
+    const me = state.players.get(myId);
+    const count = players.length;
+
+    // Room code sticker.
+    if (state.code !== this.code) {
+      this.code = state.code;
+      this.codeSticker.replaceChildren();
+      for (const ch of state.code) {
+        const s = h("span", "jjm-sticker-ch", undefined, ch);
+        this.codeSticker.appendChild(s);
+      }
+      this.codeSticker.setAttribute("aria-label", `Room code ${state.code.split("").join(" ")}`);
+    }
+    setText(this.countEl, `${count}/${MAX_PLAYERS}`);
+
+    // Chef cards (by seat order, updated in place).
+    this.seats.forEach((seat, i) => {
+      const p = players[i];
+      if (!p) {
+        if (seat.id !== "" || !seat.name.textContent) {
+          seat.id = "";
+          seat.ready = false;
+          seat.card.className = "jjm-chef jjm-chef--empty";
+          seat.hat.style.color = "";
+          seat.hat.dataset.c = "";
+          setText(seat.name, EMPTY_SEATS[i % EMPTY_SEATS.length]!);
+          seat.badges.replaceChildren();
+          setText(seat.status, "");
+          seat.card.removeAttribute("aria-label");
+        }
+        return;
+      }
+      const joined = seat.id !== p.id;
+      seat.id = p.id;
+      toggle(seat.card, "jjm-chef--empty", false);
+      toggle(seat.card, "jjm-chef--me", p.id === myId);
+      toggle(seat.card, "jjm-chef--away", !p.connected);
+      toggle(seat.card, "jjm-chef--ready", p.ready);
+      if (joined) {
+        seat.card.classList.remove("jjm-pop-in");
+        void seat.card.offsetWidth;
+        seat.card.classList.add("jjm-pop-in");
+      }
+      if (p.ready && !seat.ready && !joined) {
+        seat.card.classList.remove("jjm-hop");
+        void seat.card.offsetWidth;
+        seat.card.classList.add("jjm-hop");
+      }
+      seat.ready = p.ready;
+      const hex = PLAYER_COLORS[p.color] ?? PLAYER_COLORS[0];
+      if (seat.hat.dataset.c !== hex) {
+        seat.hat.dataset.c = hex;
+        seat.hat.style.color = hex;
+        seat.card.style.setProperty("--pc", hex);
+      }
+      setText(seat.name, p.nickname);
+      const badgeKey = `${p.id === state.hostId ? "h" : ""}${p.id === myId ? "y" : ""}`;
+      if (seat.badges.dataset.k !== badgeKey) {
+        seat.badges.dataset.k = badgeKey;
+        seat.badges.replaceChildren();
+        if (p.id === state.hostId) seat.badges.appendChild(h("span", "jjm-badge jjm-badge--host", { title: "Host" }, "👑 host"));
+        if (p.id === myId) seat.badges.appendChild(h("span", "jjm-badge jjm-badge--you", undefined, "(you)"));
+      }
+      setText(seat.status, !p.connected ? "💤 snoozing" : p.ready ? "READY ✓" : "thinking…");
+      seat.card.setAttribute(
+        "aria-label",
+        `${p.nickname}${p.id === state.hostId ? ", host" : ""}${p.id === myId ? ", you" : ""}, ${COLOR_NAMES[p.color] ?? ""} hat, ${p.connected ? (p.ready ? "ready" : "not ready") : "disconnected"}`,
+      );
+    });
+
+    // Color picker: mine checked, taken ones disabled.
+    const taken = new Set<number>();
+    players.forEach((p) => {
+      if (p.id !== myId) taken.add(p.color);
+    });
+    this.swatches.forEach((sw, i) => {
+      const mine = me?.color === i;
+      const isTaken = taken.has(i);
+      if (sw.disabled !== isTaken) sw.disabled = isTaken;
+      sw.setAttribute("aria-checked", String(mine));
+      sw.tabIndex = mine || (me === undefined && i === 0) ? 0 : -1;
+      toggle(sw, "jjm-swatch--taken", isTaken);
+      const label = `${COLOR_NAMES[i] ?? ""}${isTaken ? " (taken)" : ""}`;
+      if (sw.getAttribute("aria-label") !== label) sw.setAttribute("aria-label", label);
+    });
+
+    // Ready toggle.
+    if (me) this.myReady = me.ready;
+    this.renderReady();
+
+    // Settings (host edits, guests read-only). Skip a control while it has focus so we don't fight the user.
+    const s = state.settings;
+    const autoLabel = `Auto (${autoRounds(Math.max(count, MIN_PLAYERS))})`;
+    const autoOpt = this.roundsSel.options[0];
+    if (autoOpt && autoOpt.textContent !== autoLabel) autoOpt.textContent = autoLabel;
+    this.syncSelect(this.roundsSel, String(s.rounds));
+    this.syncSelect(this.timerSel, String(s.turnTimer));
+    if (this.sabBox.checked !== s.saboteur) this.sabBox.checked = s.saboteur;
+    if (this.betsBox.checked !== s.sideBets) this.betsBox.checked = s.sideBets;
+    for (const ctl of [this.roundsSel, this.timerSel, this.sabBox, this.betsBox]) {
+      if (ctl.disabled !== !isHost) ctl.disabled = !isHost;
+    }
+    toggle(this.lobby, "jjm-is-host", isHost);
+    setText(
+      this.sabNote,
+      s.saboteur && count < SABOTEUR_MIN_PLAYERS ? `needs ${SABOTEUR_MIN_PLAYERS}+ chefs` : "",
+    );
+    const host = state.players.get(state.hostId);
+    setText(this.settingsNote, isHost ? "You're the head chef: you set the rules." : `Only ${host ? host.nickname : "the host"} can change these.`);
+
+    // Start button + reason.
+    let reason = "";
+    if (count < MIN_PLAYERS) {
+      const need = MIN_PLAYERS - count;
+      reason = `Need ${need} more chef${need === 1 ? "" : "s"}. Share the link! 📣`;
+    } else {
+      // Mirrors the server's start rule: the host's Start counts as their ready, and chefs who are
+      // disconnected at start just become spectators, so only connected guests need to be ready.
+      const slow = players.filter((p) => p.connected && !p.ready && p.id !== state.hostId);
+      if (slow.length === 1) reason = `Waiting on ${slow[0]!.nickname} to stop daydreaming…`;
+      else if (slow.length > 1) reason = `Waiting on ${slow.length} chefs to press Ready…`;
+    }
+    this.startBtn.hidden = !isHost;
+    this.startBtn.disabled = reason !== "";
+    if (!isHost) reason = reason || `All set! Waiting for ${host ? host.nickname : "the host"} to start…`;
+    else if (!reason) reason = "Everyone's ready. Ring the bell! 🔔";
+    setText(this.startReason, reason);
+  }
+
+  /** Flip the role card; `solo` = 2-player match (no Saboteur). Auto-hides when hide() is called. */
+  showRole(role: Role, solo: boolean): void {
+    this.showOnly(this.roleWrap);
+    window.clearTimeout(this.roleTimer);
+    const sab = role === "saboteur" && !solo;
+
+    const scene = h("div", "jjm-flip");
+    const inner = h("div", "jjm-flip-inner");
+    const back = h("div", "jjm-face jjm-face--back", { "aria-hidden": "true" });
+    back.append(h("span", "jjm-face-q", undefined, "?"), h("span", "jjm-face-hint", undefined, "Top secret. No peeking!"));
+    const front = h("div", `jjm-face jjm-face--front ${sab ? "jjm-face--sab" : "jjm-face--baker"}`);
+    front.appendChild(h("span", "jjm-face-kicker", undefined, "You are"));
+    front.appendChild(h("span", "jjm-face-emoji", { "aria-hidden": "true" }, sab ? "😈" : "🧑‍🍳"));
+    const title = h("span", "jjm-face-title");
+    title.append(sab ? "the " : "a ", h("strong", undefined, undefined, sab ? "SABOTEUR" : "BAKER"));
+    front.appendChild(title);
+    let body: string;
+    if (sab) {
+      body = "Press R during someone else's spin to rig it. Once per round.";
+    } else if (solo) {
+      body = "No Saboteur this time: the cursed cards are extra common instead!";
+    } else {
+      body = "Build tall, bet smart, and catch the Saboteur.";
+    }
+    front.appendChild(h("span", "jjm-face-body", undefined, body));
+    if (sab) front.appendChild(h("kbd", "jjm-key", { "aria-hidden": "true" }, "R"));
+    front.appendChild(h("span", "jjm-face-quip", undefined, pick(sab ? SABOTEUR_QUIPS : BAKER_QUIPS)));
+    inner.append(back, front);
+    scene.appendChild(inner);
+    this.roleWrap.replaceChildren(scene);
+    this.roleWrap.setAttribute("aria-label", sab ? "You are the Saboteur" : "You are a Baker");
+
+    this.roleTimer = window.setTimeout(() => {
+      scene.classList.add("jjm-flipped");
+      this.handlers.onUiSound("pop");
+    }, 650);
+  }
+
+  hide(): void {
+    window.clearTimeout(this.roleTimer);
+    this.roleWrap.replaceChildren();
+    this.showOnly(null);
+  }
+
+  // ------------------------------------------------------------------ internals
+  private showOnly(screen: HTMLElement | null): void {
+    for (const s of [this.home, this.lobby, this.roleWrap]) {
+      const on = s === screen;
+      s.hidden = !on;
+      if (on) {
+        s.classList.remove("jjm-enter");
+        void s.offsetWidth;
+        s.classList.add("jjm-enter");
+      }
+    }
+    this.el.hidden = screen === null;
+  }
+
+  private sanitizeCode(raw: string): string {
+    let out = "";
+    for (const ch of raw.toUpperCase()) if (CODE_ALPHABET.includes(ch)) out += ch;
+    return out.slice(0, CODE_LENGTH);
+  }
+
+  /** Trimmed nickname; empty → a random silly name (filled into the field so the player sees it). */
+  private takeNickname(): string {
+    let name = this.nickInput.value.replace(/\s+/g, " ").trim().slice(0, NICKNAME_MAX);
+    if (!name) {
+      name = (this.nickInput.placeholder || pick(SILLY_NAMES)).slice(0, NICKNAME_MAX);
+      this.nickInput.value = name;
+    }
+    writeStorage(NICKNAME_STORAGE_KEY, name);
+    return name;
+  }
+
+  private doCreate(): void {
+    if (this.busy) return;
+    this.clearError();
+    const name = this.takeNickname();
+    this.setBusy(true);
+    this.handlers.onCreate(name);
+  }
+
+  private doJoin(): void {
+    if (this.busy) return;
+    const code = this.sanitizeCode(this.codeInput.value);
+    if (code.length !== CODE_LENGTH) {
+      this.showError(`Room codes are ${CODE_LENGTH} letters. Like "PIES".`);
+      this.codeInput.focus();
+      return;
+    }
+    this.clearError();
+    const name = this.takeNickname();
+    this.setBusy(true);
+    this.handlers.onJoin(code, name);
+  }
+
+  private clearError(): void {
+    if (this.errorEl.textContent) this.errorEl.textContent = "";
+  }
+
+  private renderReady(): void {
+    this.readyBtn.setAttribute("aria-pressed", String(this.myReady));
+    setText(this.readyBtn, this.myReady ? "✅ Ready! (undo)" : "🍰 I'm Ready!");
+    toggle(this.readyBtn, "jjm-ready--on", this.myReady);
+  }
+
+  private syncSelect(sel: HTMLSelectElement, value: string): void {
+    if (document.activeElement === sel) return;
+    if (sel.value !== value) sel.value = value;
+  }
+
+  private sendSetting(patch: SettingsMsg): void {
+    this.handlers.onUiSound("click");
+    this.handlers.onSettings(patch);
+  }
+
+  private async copyLink(): Promise<void> {
+    const url = `${location.origin}/r/${this.code}`;
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(url);
+      ok = true;
+    } catch {
+      // Fallback for insecure origins (LAN play over http).
+      const ta = h("textarea", "jjm-offscreen", { readonly: "", "aria-hidden": "true" });
+      ta.value = url;
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        ok = document.execCommand("copy");
+      } catch {
+        ok = false;
+      }
+      ta.remove();
+    }
+    this.handlers.onUiSound("pop");
+    window.clearTimeout(this.copyTimer);
+    this.copyBtn.textContent = ok ? "✨ Copied!" : `🔗 ${url}`;
+    toggle(this.copyBtn, "jjm-copied", ok);
+    this.copyTimer = window.setTimeout(() => {
+      this.copyBtn.textContent = "📋 Copy link";
+      this.copyBtn.classList.remove("jjm-copied");
+    }, ok ? 1600 : 6000);
+  }
+}

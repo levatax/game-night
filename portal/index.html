@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Game Night · party games in your browser</title>
+    <meta name="description" content="Browser multiplayer party games for you and your friends. Pick a game, share a 4-letter code, play. No installs, no accounts." />
+    <meta name="theme-color" content="#FFCF33" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <a class="skip" href="#games">Skip to games</a>
+
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Game Night home">
+        <svg class="brand__mark" viewBox="0 0 48 48" aria-hidden="true">
+          <rect x="7" y="9" width="32" height="32" rx="9" transform="rotate(-10 23 25)" fill="#FF5A5F" stroke="currentColor" stroke-width="3.5" />
+          <g fill="#FFF8EC" transform="rotate(-10 23 25)">
+            <circle cx="16" cy="18" r="3.4" /><circle cx="23" cy="25" r="3.4" /><circle cx="30" cy="32" r="3.4" />
+          </g>
+          <path d="M40 3 L42.2 8.6 L48 9.4 L43.6 13.2 L45 19 L40 16 L35 19 L36.4 13.2 L32 9.4 L37.8 8.6 Z" fill="#FFCF33" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round" />
+        </svg>
+        <span>Game Night</span>
+      </a>
+      <nav class="topbar__nav" aria-label="Sections">
+        <a href="#games">Games</a>
+        <a href="#how">How it works</a>
+      </nav>
+      <form class="join join--compact" data-join>
+        <label class="visually-hidden" for="join-top">Room code</label>
+        <input id="join-top" name="code" placeholder="CODE" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" inputmode="text" />
+        <button class="btn btn--small" type="submit">Join</button>
+      </form>
+    </header>
+
+    <main>
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero__copy">
+          <p class="eyebrow">Party games for your group chat</p>
+          <h1 id="hero-title">Grab your friends.<br /><span class="hl">Pick a game.</span> Play.</h1>
+          <p class="lede">Start a room, send the 4-letter code, and everyone's in. It all runs in the browser: nothing to install, no accounts.</p>
+          <div class="hero__actions">
+            <a class="btn btn--primary btn--big" href="#games">Browse games</a>
+            <form class="join" data-join>
+              <label for="join-hero">Got a code?</label>
+              <div class="join__row">
+                <input id="join-hero" name="code" placeholder="ABCD" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" />
+                <button class="btn" type="submit">Join room</button>
+              </div>
+            </form>
+          </div>
+          <p class="join__error" id="join-error" role="alert" hidden></p>
+        </div>
+
+        <div class="hero__art" id="featured" aria-live="polite">
+          <div class="featured featured--placeholder" aria-hidden="true"></div>
+        </div>
+      </section>
+
+      <section class="games" id="games" aria-labelledby="games-title">
+        <div class="section-head">
+          <h2 id="games-title">Games</h2>
+          <p class="section-head__meta" id="games-meta">Loading…</p>
+        </div>
+        <div class="grid" id="game-grid">
+          <div class="card card--skeleton" aria-hidden="true"></div>
+          <div class="card card--skeleton" aria-hidden="true"></div>
+        </div>
+      </section>
+
+      <section class="how" id="how" aria-labelledby="how-title">
+        <h2 id="how-title">How it works</h2>
+        <ol class="steps">
+          <li class="step">
+            <span class="step__num">1</span>
+            <h3>Pick a game</h3>
+            <p>Choose one from the list and hit Play. You'll pick a nickname, and that's the whole sign-up.</p>
+          </li>
+          <li class="step">
+            <span class="step__num">2</span>
+            <h3>Share the code</h3>
+            <p>Create a room and send your friends its 4-letter code or invite link.</p>
+          </li>
+          <li class="step">
+            <span class="step__num">3</span>
+            <h3>Play together</h3>
+            <p>Everyone joins from their own browser. Rematch as many times as you like.</p>
+          </li>
+        </ol>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>Game Night · made for friends who'd rather be playing</p>
+      <p class="footer__meta" id="footer-meta"></p>
+    </footer>
+
+    <dialog class="details" id="details" aria-labelledby="details-title">
+      <form method="dialog" class="details__close-form">
+        <button class="details__close" aria-label="Close">×</button>
+      </form>
+      <div class="details__content" id="details-content"></div>
+    </dialog>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

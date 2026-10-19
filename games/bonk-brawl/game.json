@@ -1,0 +1,36 @@
+{
+  "id": "bonk-brawl",
+  "title": "Bonk Brawl",
+  "tagline": "Dodgeball free-for-all on a floating picnic island.",
+  "description": "Four goofy animals, one floating island, and a pile of balls. Charge a throw, lead your target, and BONK your friends off the edge. Time a right-click perfectly to catch a throw and turn it around on the thrower. Last animal standing takes the round.",
+  "players": { "min": 2, "max": 4 },
+  "duration": "~5 min",
+  "input": "Keyboard + mouse",
+  "tags": ["Free-for-all", "3D", "Aim & timing"],
+  "accent": "#FF5A5F",
+  "cover": "cover.svg",
+  "status": "live",
+  "badge": "NEW",
+  "howToPlay": [
+    "Walk over a ball to pick it up.",
+    "Hold left-click to charge, release to throw. Lead moving targets: balls fly in an arc.",
+    "Right-click just as a ball reaches you to catch it. The thrower loses a heart.",
+    "Three hits or a fall off the island and you're out. Last one standing wins the round.",
+    "Most points after 5 rounds wins the match."
+  ],
+  "controls": [
+    { "keys": "W A S D", "action": "Move" },
+    { "keys": "Mouse", "action": "Aim" },
+    { "keys": "Left click", "action": "Hold to charge, release to throw" },
+    { "keys": "Right click", "action": "Catch" },
+    { "keys": "Space", "action": "Jump" },
+    { "keys": "Shift", "action": "Dodge roll" },
+    { "keys": "E", "action": "Character ability" },
+    { "keys": "Q", "action": "Emote" },
+    { "keys": "Tab", "action": "Scoreboard" }
+  ],
+  "rooms": ["bonk_brawl"],
+  "server": "server/index.ts",
+  "clientDist": "client/dist",
+  "viteConfig": "client/vite.config.ts"
+}

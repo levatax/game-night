@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 400" role="img" aria-label="A duck throws a ball at a frog on a floating island">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6EC6FF"/>
+      <stop offset="1" stop-color="#D6F1FF"/>
+    </linearGradient>
+    <linearGradient id="trail" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#FFC23F" stop-opacity="0"/>
+      <stop offset="1" stop-color="#FFC23F" stop-opacity="0.9"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#FFE38A" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#FFC23F" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="640" height="400" fill="url(#sky)"/>
+
+  <!-- sun -->
+  <circle cx="548" cy="70" r="40" fill="#FFF3B0"/>
+  <circle cx="548" cy="70" r="28" fill="#FFE27A"/>
+
+  <!-- far clouds -->
+  <g fill="#FFFFFF" opacity="0.9">
+    <ellipse cx="90" cy="70" rx="56" ry="18"/>
+    <ellipse cx="120" cy="58" rx="34" ry="20"/>
+    <ellipse cx="420" cy="48" rx="44" ry="14"/>
+    <ellipse cx="444" cy="40" rx="24" ry="14"/>
+  </g>
+
+  <!-- clouds under the island -->
+  <g fill="#FFFFFF">
+    <ellipse cx="70" cy="372" rx="110" ry="40"/>
+    <ellipse cx="190" cy="392" rx="120" ry="36"/>
+    <ellipse cx="560" cy="376" rx="120" ry="42"/>
+    <ellipse cx="430" cy="398" rx="110" ry="30"/>
+  </g>
+  <g fill="#CFE3F2">
+    <ellipse cx="80" cy="392" rx="90" ry="16"/>
+    <ellipse cx="560" cy="398" rx="100" ry="14"/>
+  </g>
+
+  <!-- island underside -->
+  <path d="M96 238 Q320 250 544 238 L470 300 Q420 330 380 330 L352 372 L330 330 Q300 336 270 326 L246 352 L232 318 Q170 300 96 238 Z"
+        fill="#C68B59" stroke="#2D2A32" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M150 270 Q230 300 300 296 M360 300 Q430 292 488 266" fill="none" stroke="#8D5B3A" stroke-width="5" stroke-linecap="round"/>
+
+  <!-- island top -->
+  <ellipse cx="320" cy="236" rx="228" ry="48" fill="#4FA36B" stroke="#2D2A32" stroke-width="5"/>
+  <ellipse cx="320" cy="228" rx="218" ry="40" fill="#7BD389"/>
+  <g fill="#FFFFFF" opacity="0.75">
+    <circle cx="190" cy="222" r="3"/><circle cx="252" cy="246" r="3"/><circle cx="410" cy="214" r="3"/>
+    <circle cx="470" cy="240" r="3"/><circle cx="356" cy="250" r="3"/>
+  </g>
+
+  <!-- watermelon slice cover -->
+  <g transform="translate(318 214)">
+    <path d="M-34 0 A34 34 0 0 0 34 0 Z" fill="#7BD389" stroke="#2D2A32" stroke-width="4" stroke-linejoin="round"/>
+    <path d="M-27 0 A27 27 0 0 0 27 0 Z" fill="#FF5A5F"/>
+    <g fill="#2D2A32"><ellipse cx="-12" cy="8" rx="2.5" ry="4"/><ellipse cx="0" cy="13" rx="2.5" ry="4"/><ellipse cx="12" cy="8" rx="2.5" ry="4"/></g>
+  </g>
+
+  <!-- duck (thrower), left -->
+  <g transform="translate(176 196)">
+    <ellipse cx="0" cy="34" rx="30" ry="7" fill="#2D2A32" opacity="0.2"/>
+    <ellipse cx="-10" cy="30" rx="10" ry="5" fill="#FF9A3C" stroke="#2D2A32" stroke-width="3"/>
+    <ellipse cx="12" cy="30" rx="10" ry="5" fill="#FF9A3C" stroke="#2D2A32" stroke-width="3"/>
+    <ellipse cx="0" cy="6" rx="28" ry="26" fill="#FFD84D" stroke="#2D2A32" stroke-width="4"/>
+    <path d="M22 -2 Q46 -22 52 -40" fill="none" stroke="#2D2A32" stroke-width="13" stroke-linecap="round"/>
+    <path d="M22 -2 Q46 -22 52 -40" fill="none" stroke="#FFD84D" stroke-width="7" stroke-linecap="round"/>
+    <circle cx="4" cy="-34" r="24" fill="#FFD84D" stroke="#2D2A32" stroke-width="4"/>
+    <path d="M24 -34 L44 -30 L24 -24 Z" fill="#FF9A3C" stroke="#2D2A32" stroke-width="3" stroke-linejoin="round"/>
+    <circle cx="12" cy="-40" r="6" fill="#FFFFFF" stroke="#2D2A32" stroke-width="2.5"/>
+    <circle cx="14" cy="-40" r="3" fill="#2D2A32"/>
+    <path d="M-16 -54 L20 -54 L16 -62 L-12 -62 Z" fill="#FFFFFF" stroke="#2D2A32" stroke-width="3" stroke-linejoin="round"/>
+    <rect x="-14" y="-58" width="32" height="4" fill="#3FA7FF"/>
+  </g>
+
+  <!-- ball trail and ball -->
+  <path d="M240 150 Q330 96 420 138" fill="none" stroke="url(#trail)" stroke-width="16" stroke-linecap="round"/>
+  <circle cx="430" cy="144" r="34" fill="url(#glow)"/>
+  <circle cx="430" cy="144" r="18" fill="#FFF4DC" stroke="#2D2A32" stroke-width="4"/>
+  <path d="M414 136 Q430 148 446 136" fill="none" stroke="#FF5A5F" stroke-width="3"/>
+
+  <!-- frog (target), right -->
+  <g transform="translate(470 202)">
+    <ellipse cx="0" cy="28" rx="34" ry="7" fill="#2D2A32" opacity="0.2"/>
+    <ellipse cx="0" cy="8" rx="32" ry="24" fill="#7BE07B" stroke="#2D2A32" stroke-width="4"/>
+    <ellipse cx="0" cy="14" rx="18" ry="12" fill="#C9F5C2"/>
+    <circle cx="-14" cy="-18" r="13" fill="#7BE07B" stroke="#2D2A32" stroke-width="4"/>
+    <circle cx="14" cy="-18" r="13" fill="#7BE07B" stroke="#2D2A32" stroke-width="4"/>
+    <!-- dizzy X eyes -->
+    <g stroke="#2D2A32" stroke-width="3.5" stroke-linecap="round">
+      <path d="M-19 -23 L-9 -13 M-9 -23 L-19 -13"/>
+      <path d="M9 -23 L19 -13 M19 -23 L9 -13"/>
+    </g>
+    <path d="M-12 0 Q0 8 12 0" fill="none" stroke="#2D2A32" stroke-width="3" stroke-linecap="round"/>
+    <path d="M-10 -6 L0 -2 L10 -6 L10 2 L0 -2 L-10 2 Z" fill="#FF5A5F" stroke="#2D2A32" stroke-width="2.5" stroke-linejoin="round"/>
+  </g>
+
+  <!-- stars -->
+  <g fill="#FFCF33" stroke="#2D2A32" stroke-width="3" stroke-linejoin="round">
+    <path transform="translate(512 150) scale(0.8)" d="M0 -14 L4 -4 L14 -4 L6 2 L9 12 L0 6 L-9 12 L-6 2 L-14 -4 L-4 -4 Z"/>
+    <path transform="translate(452 108) scale(0.6)" d="M0 -14 L4 -4 L14 -4 L6 2 L9 12 L0 6 L-9 12 L-6 2 L-14 -4 L-4 -4 Z"/>
+  </g>
+
+  <!-- BONK! burst -->
+  <g transform="translate(528 104) rotate(-8)">
+    <path d="M0 -58 L14 -34 L44 -46 L36 -18 L66 -8 L38 6 L52 32 L22 26 L14 56 L-2 30 L-26 50 L-26 22 L-58 24 L-36 2 L-62 -18 L-30 -20 L-38 -50 L-12 -32 Z"
+          fill="#FFCF33" stroke="#2D2A32" stroke-width="5" stroke-linejoin="round"/>
+    <text x="2" y="12" text-anchor="middle" font-family="Fredoka, 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif"
+          font-weight="700" font-size="30" fill="#FF5A5F" stroke="#2D2A32" stroke-width="2" paint-order="stroke">BONK!</text>
+  </g>
+</svg>

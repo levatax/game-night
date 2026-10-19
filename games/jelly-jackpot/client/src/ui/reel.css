@@ -1,0 +1,612 @@
+/* Case reel: slot-machine housing, card strip, rarity effects, rule chip. Owner: client-reel. */
+.jjr {
+  --jjr-card-w: 140px;
+  --jjr-gap: 12px;
+  --jjr-card-h: calc(var(--jjr-card-w) * 1.22);
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  font-family: var(--font);
+  color: var(--ink);
+  z-index: 20;
+}
+.jjr-defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+/* ----------------------------------------------------------------- stage + title */
+.jjr-stage {
+  position: absolute;
+  left: 50%;
+  top: 40%;
+  width: min(920px, calc(100vw - 24px));
+  transform: translate(-50%, -50%) scale(0.6);
+  opacity: 0;
+  visibility: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+.jjr-stage.is-on {
+  visibility: visible;
+  animation: jjr-boing-in 0.45s cubic-bezier(0.3, 1.7, 0.5, 1) forwards;
+}
+.jjr-stage.is-leaving {
+  animation: jjr-suck-out 0.32s cubic-bezier(0.6, -0.4, 0.8, 0.6) forwards;
+}
+@keyframes jjr-boing-in {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.4, 0.2) rotate(-4deg); }
+  60% { opacity: 1; transform: translate(-50%, -50%) scale(1.06, 0.94) rotate(1deg); }
+  100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+@keyframes jjr-suck-out {
+  0% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(-90%, -140%) scale(0.15) rotate(-12deg); }
+}
+.jjr-title {
+  font: 700 clamp(18px, 3.2vw, 28px) var(--font);
+  color: var(--cream);
+  background: var(--wall-deep);
+  border: var(--border);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+  padding: 6px 20px;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transform: rotate(-1.5deg);
+}
+.jjr-title b {
+  color: var(--coin);
+}
+.jjr-stage.is-spinning .jjr-title {
+  animation: jjr-title-wobble 0.5s ease-in-out infinite alternate;
+}
+@keyframes jjr-title-wobble {
+  from { transform: rotate(-2deg) scale(1); }
+  to { transform: rotate(2deg) scale(1.04); }
+}
+
+/* --------------------------------------------------------------------- housing */
+.jjr-housing {
+  --rc: var(--coin);
+  position: relative;
+  width: 100%;
+  padding: 22px 14px;
+  box-sizing: border-box;
+  background: linear-gradient(180deg, #ff7a7f 0%, var(--bad) 45%, #d63c42 100%);
+  border: var(--border);
+  border-radius: 28px;
+  box-shadow: 0 8px 0 var(--ink), inset 0 6px 0 rgba(255, 255, 255, 0.35), inset 0 -8px 0 rgba(0, 0, 0, 0.18);
+  transition: box-shadow 0.25s ease;
+}
+.jjr-housing.is-tick {
+  animation: jjr-housing-tick 0.12s ease-out;
+}
+@keyframes jjr-housing-tick {
+  50% { transform: translateY(2px) scale(1.004, 0.99); }
+}
+.jjr-housing.is-fast {
+  animation: jjr-rattle 0.07s linear infinite;
+}
+@keyframes jjr-rattle {
+  0% { transform: translate(0, 0) rotate(0); }
+  25% { transform: translate(1px, -1px) rotate(0.2deg); }
+  75% { transform: translate(-1px, 1px) rotate(-0.2deg); }
+}
+.jjr-stage.is-landed .jjr-housing {
+  box-shadow: 0 8px 0 var(--ink), 0 0 40px 6px var(--rc), inset 0 6px 0 rgba(255, 255, 255, 0.35);
+}
+.jjr-housing.is-cursed {
+  background: linear-gradient(180deg, #5a2a35 0%, #3a1c26 60%, #24121a 100%);
+  animation: jjr-shake 0.5s linear;
+}
+.jjr-housing.is-legendary {
+  background: linear-gradient(180deg, #fff1a0 0%, var(--legendary) 45%, #e0a800 100%);
+}
+
+/* Googly eyes on top of the machine. */
+.jjr-eyes {
+  position: absolute;
+  top: -34px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+  z-index: 3;
+}
+.jjr-eye {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  background: #fff;
+  border: var(--border);
+  border-radius: 50%;
+  box-shadow: 0 3px 0 var(--ink);
+  display: grid;
+  place-items: center;
+  transition: transform 0.2s cubic-bezier(0.3, 1.8, 0.5, 1);
+}
+.jjr-eye:last-child {
+  width: 34px;
+  height: 34px;
+  margin-top: 4px;
+}
+.jjr-pupil {
+  width: 16px;
+  height: 16px;
+  background: var(--ink);
+  border-radius: 50%;
+  box-shadow: inset 4px 4px 0 -2px #fff;
+}
+.jjr-housing.is-legendary .jjr-eye { transform: scale(1.3); }
+.jjr-housing.is-cursed .jjr-eye { transform: scale(0.85) translateY(4px); }
+.jjr-housing.is-cursed .jjr-pupil { width: 8px; height: 8px; }
+
+/* Chasing marquee bulbs. */
+.jjr-bulbs {
+  position: absolute;
+  left: 22px;
+  right: 22px;
+  height: 10px;
+  background-image: radial-gradient(circle at 7px 5px, #fff7b0 0 4px, transparent 5px),
+    radial-gradient(circle at 21px 5px, #ffb44a 0 4px, transparent 5px);
+  background-size: 28px 10px;
+  animation: jjr-chase 0.6s steps(2) infinite;
+  filter: drop-shadow(0 0 4px #fff3a0);
+}
+.jjr-bulbs--top { top: 6px; }
+.jjr-bulbs--bottom { bottom: 6px; animation-direction: reverse; }
+.jjr-housing.is-fast .jjr-bulbs { animation-duration: 0.2s; }
+@keyframes jjr-chase {
+  to { background-position: 28px 0, 28px 0; }
+}
+
+/* Slot lever on the right. */
+.jjr-lever {
+  position: absolute;
+  right: -30px;
+  top: 50%;
+  width: 22px;
+  height: 80px;
+  transform-origin: 50% 100%;
+  transform: translateY(-100%);
+}
+.jjr-lever-stick {
+  position: absolute;
+  left: 7px;
+  bottom: 0;
+  width: 8px;
+  height: 64px;
+  background: #c9d1d9;
+  border: 3px solid var(--ink);
+  border-radius: 6px;
+  box-sizing: border-box;
+}
+.jjr-lever-ball {
+  position: absolute;
+  left: -3px;
+  top: -6px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #ff9da0, var(--bad) 60%);
+  border: 3px solid var(--ink);
+  box-sizing: border-box;
+}
+.jjr-housing.is-pulled .jjr-lever {
+  animation: jjr-pull 0.55s cubic-bezier(0.3, 1.6, 0.5, 1);
+}
+@keyframes jjr-pull {
+  0% { transform: translateY(-100%) scaleY(1); }
+  30% { transform: translateY(-40%) scaleY(-0.6); }
+  100% { transform: translateY(-100%) scaleY(1); }
+}
+
+/* ---------------------------------------------------------------- window + strip */
+.jjr-window {
+  position: relative;
+  height: calc(var(--jjr-card-h) + 28px);
+  border: var(--border);
+  border-radius: 16px;
+  background: repeating-linear-gradient(90deg, #262340 0 24px, #2d2a44 24px 48px);
+  box-shadow: inset 0 8px 18px rgba(0, 0, 0, 0.55);
+  overflow-x: clip;
+  overflow-y: visible;
+}
+@supports not (overflow-x: clip) {
+  .jjr-window { overflow: hidden; }
+}
+.jjr-strip {
+  position: absolute;
+  left: 0;
+  top: 14px;
+  height: var(--jjr-card-h);
+  will-change: transform;
+  z-index: 2;
+}
+.jjr-strip[data-blur="1"] { filter: url(#jjr-mb1); }
+.jjr-strip[data-blur="2"] { filter: url(#jjr-mb2); }
+.jjr-strip[data-blur="3"] { filter: url(#jjr-mb3) saturate(1.3); }
+.jjr-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg, rgba(20, 18, 34, 0.92) 0%, rgba(20, 18, 34, 0) 22%, rgba(20, 18, 34, 0) 78%, rgba(20, 18, 34, 0.92) 100%);
+  border-radius: 12px;
+  z-index: 3;
+}
+
+/* Golden center marker: glowing line + chunky arrows. */
+.jjr-marker {
+  position: absolute;
+  left: 50%;
+  top: -6px;
+  bottom: -6px;
+  width: 4px;
+  margin-left: -2px;
+  background: var(--coin);
+  box-shadow: 0 0 10px 2px #ffe680, 0 0 2px 1px var(--ink);
+  border-radius: 2px;
+  z-index: 4;
+}
+.jjr-arrow {
+  position: absolute;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-left: 14px solid transparent;
+  border-right: 14px solid transparent;
+  transform: translateX(-50%);
+  filter: drop-shadow(0 0 0 var(--ink)) drop-shadow(0 2px 0 var(--ink)) drop-shadow(0 -2px 0 var(--ink));
+}
+.jjr-arrow--top { top: -12px; border-top: 20px solid var(--coin); }
+.jjr-arrow--bottom { bottom: -12px; border-bottom: 20px solid var(--coin); }
+.jjr-housing.is-tick .jjr-arrow--top { animation: jjr-flick 0.12s ease-out; }
+@keyframes jjr-flick {
+  50% { transform: translateX(-50%) rotate(-14deg); }
+}
+
+/* ------------------------------------------------------------------------- cards */
+.jjr-card {
+  --rc: var(--common);
+  position: absolute;
+  left: calc(var(--jjr-gap) / 2);
+  top: 0;
+  width: var(--jjr-card-w);
+  height: var(--jjr-card-h);
+  box-sizing: border-box;
+  border: 4px solid var(--ink);
+  border-radius: 14px;
+  background: radial-gradient(circle at 50% 35%, rgba(255, 255, 255, 0.55) 0 28%, transparent 60%),
+    linear-gradient(170deg, color-mix(in srgb, var(--rc) 45%, #fff) 0%, var(--rc) 55%, color-mix(in srgb, var(--rc) 60%, #000) 100%);
+  box-shadow: inset 0 0 0 4px color-mix(in srgb, var(--rc) 70%, #fff), inset 0 -10px 0 rgba(0, 0, 0, 0.18), 0 4px 0 var(--ink);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  text-align: center;
+  overflow: visible;
+  transition: opacity 0.3s ease, filter 0.3s ease;
+}
+.jjr-card::before {
+  /* rarity bar along the bottom, like the real thing */
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 6px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--rc);
+  box-shadow: 0 0 8px var(--rc), 0 0 0 2px var(--ink);
+}
+.jjr-card-emoji {
+  font-size: calc(var(--jjr-card-w) * 0.4);
+  line-height: 1.1;
+  filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.35));
+}
+.jjr-card-name {
+  font: 700 calc(var(--jjr-card-w) * 0.11) / 1.05 var(--font);
+  color: #fff;
+  -webkit-text-stroke: 1px var(--ink);
+  paint-order: stroke fill;
+  text-shadow: 0 2px 0 var(--ink);
+  padding: 0 6px;
+}
+.jjr-card-mult {
+  font: 700 calc(var(--jjr-card-w) * 0.12) var(--font);
+  background: var(--coin);
+  border: 3px solid var(--ink);
+  border-radius: 999px;
+  padding: 0 8px;
+  margin-top: 2px;
+  margin-bottom: 8px;
+  box-shadow: 0 2px 0 var(--ink);
+}
+.jjr-card-skull {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  font-size: calc(var(--jjr-card-w) * 0.14);
+  transform: rotate(14deg);
+}
+.jjr-card-sparkle {
+  position: absolute;
+  top: 2px;
+  left: 6px;
+  font-size: calc(var(--jjr-card-w) * 0.14);
+  animation: jjr-twinkle 1.2s ease-in-out infinite;
+}
+@keyframes jjr-twinkle {
+  50% { transform: scale(1.4) rotate(20deg); opacity: 0.6; }
+}
+
+/* Cursed: scorched and burnt around the edges. */
+.jjr-card.jjr-r-cursed {
+  background: radial-gradient(circle at 20% 15%, rgba(0, 0, 0, 0.45) 0 14%, transparent 22%),
+    radial-gradient(circle at 85% 80%, rgba(0, 0, 0, 0.5) 0 12%, transparent 20%),
+    radial-gradient(circle at 50% 40%, rgba(255, 150, 120, 0.35) 0 25%, transparent 60%),
+    linear-gradient(170deg, #b23a3a 0%, #6e1f22 60%, #2a0d10 100%);
+  box-shadow: inset 0 0 18px 4px rgba(0, 0, 0, 0.7), inset 0 0 0 4px #8a2a2a, 0 4px 0 var(--ink);
+}
+.jjr-card.jjr-r-cursed .jjr-card-emoji { filter: grayscale(0.3) sepia(0.4) drop-shadow(0 3px 0 rgba(0, 0, 0, 0.5)); }
+
+/* Legendary: a glossy shimmer sweeping across. */
+.jjr-card.jjr-r-legendary {
+  overflow: hidden;
+}
+.jjr-card.jjr-r-legendary::after {
+  content: "";
+  position: absolute;
+  inset: -20%;
+  background: linear-gradient(105deg, transparent 38%, rgba(255, 255, 255, 0.85) 48%, transparent 58%);
+  animation: jjr-shimmer 1.6s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes jjr-shimmer {
+  0% { transform: translateX(-60%); }
+  60%, 100% { transform: translateX(60%); }
+}
+
+/* Landed: winner pops, everyone else sulks. */
+.jjr-strip.is-landed .jjr-card:not(.is-win) {
+  opacity: 0.35;
+  filter: grayscale(0.7) brightness(0.8);
+}
+.jjr-strip.is-landed .jjr-card.is-tease {
+  opacity: 0.75;
+  filter: none;
+  animation: jjr-tease 0.9s ease-in-out infinite;
+}
+@keyframes jjr-tease {
+  50% { rotate: -4deg; scale: 0.96; }
+}
+.jjr-card.is-win {
+  z-index: 3;
+  animation: jjr-pop 0.6s cubic-bezier(0.3, 1.9, 0.5, 1) forwards;
+  box-shadow: inset 0 0 0 4px color-mix(in srgb, var(--rc) 70%, #fff), 0 4px 0 var(--ink), 0 0 26px 8px var(--rc);
+}
+.jjr-card.is-win.jjr-r-legendary {
+  animation: jjr-pop 0.6s cubic-bezier(0.3, 1.9, 0.5, 1) forwards, jjr-gold-pulse 0.8s ease-in-out 0.6s infinite alternate;
+}
+.jjr-card.is-win.jjr-r-cursed {
+  animation: jjr-pop 0.6s cubic-bezier(0.3, 1.9, 0.5, 1) forwards, jjr-cursed-shake 0.35s linear 0.5s infinite;
+}
+@keyframes jjr-pop {
+  0% { scale: 1; }
+  35% { scale: 1.28 0.86; }
+  60% { scale: 0.94 1.12; }
+  100% { scale: 1.12; }
+}
+@keyframes jjr-gold-pulse {
+  from { box-shadow: 0 4px 0 var(--ink), 0 0 20px 6px #ffd700; }
+  to { box-shadow: 0 4px 0 var(--ink), 0 0 44px 16px #fff3a0; }
+}
+@keyframes jjr-cursed-shake {
+  0%, 100% { transform: none; }
+  20% { transform: translate(-3px, 1px) rotate(-3deg); }
+  40% { transform: translate(3px, -1px) rotate(2deg); }
+  60% { transform: translate(-2px, 0) rotate(-2deg); }
+  80% { transform: translate(2px, 1px) rotate(3deg); }
+}
+@keyframes jjr-shake {
+  0%, 100% { translate: 0 0; }
+  20% { translate: -6px 2px; }
+  40% { translate: 6px -2px; }
+  60% { translate: -4px 1px; }
+  80% { translate: 4px -1px; }
+}
+
+/* Cursed goo drips under the winning card. */
+.jjr-card.is-win.jjr-r-cursed::after {
+  content: "";
+  position: absolute;
+  left: 10%;
+  right: 10%;
+  top: calc(100% - 6px);
+  height: 34px;
+  background: radial-gradient(circle at 12% 0, #a3121b 0 9px, transparent 10px),
+    radial-gradient(ellipse 6px 16px at 30% 0, #a3121b 0 100%, transparent 100%),
+    radial-gradient(circle at 52% 0, #a3121b 0 7px, transparent 8px),
+    radial-gradient(ellipse 5px 22px at 72% 0, #a3121b 0 100%, transparent 100%),
+    radial-gradient(circle at 90% 0, #a3121b 0 6px, transparent 7px);
+  transform-origin: top;
+  animation: jjr-drip 1.6s cubic-bezier(0.5, 0, 0.8, 0.5) 0.4s infinite;
+  filter: drop-shadow(0 2px 0 var(--ink));
+}
+@keyframes jjr-drip {
+  0% { transform: scaleY(0.2); opacity: 1; }
+  70% { transform: scaleY(1.4); opacity: 1; }
+  100% { transform: scaleY(1.6) translateY(6px); opacity: 0; }
+}
+
+/* Rays behind the winner (golden for legendary, faint for the rest, sickly for cursed). */
+.jjr-rays {
+  --rc: var(--coin);
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: calc(var(--jjr-card-w) * 4);
+  height: calc(var(--jjr-card-w) * 4);
+  margin: calc(var(--jjr-card-w) * -2) 0 0 calc(var(--jjr-card-w) * -2);
+  border-radius: 50%;
+  background: repeating-conic-gradient(from 0deg, color-mix(in srgb, var(--rc) 70%, transparent) 0 10deg, transparent 10deg 24deg);
+  mask-image: radial-gradient(circle, #000 20%, transparent 68%);
+  -webkit-mask-image: radial-gradient(circle, #000 20%, transparent 68%);
+  opacity: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+.jjr-rays.is-on {
+  opacity: 0.35;
+  animation: jjr-spin-rays 6s linear infinite, jjr-rays-in 0.4s ease-out;
+}
+.jjr-rays.is-on.jjr-r-legendary {
+  opacity: 0.8;
+  width: calc(var(--jjr-card-w) * 6);
+  height: calc(var(--jjr-card-w) * 6);
+  margin: calc(var(--jjr-card-w) * -3) 0 0 calc(var(--jjr-card-w) * -3);
+  animation-duration: 3s, 0.4s;
+}
+.jjr-rays.is-on.jjr-r-cursed {
+  background: repeating-conic-gradient(from 0deg, rgba(140, 10, 20, 0.8) 0 8deg, transparent 8deg 30deg);
+  animation-direction: reverse, normal;
+  opacity: 0.7;
+}
+@keyframes jjr-spin-rays {
+  to { rotate: 360deg; }
+}
+@keyframes jjr-rays-in {
+  from { scale: 0.2; }
+}
+
+/* Funny caption bubble under the machine. */
+.jjr-quip {
+  --rc: var(--coin);
+  font: 700 clamp(16px, 2.6vw, 22px) var(--font);
+  background: var(--cream);
+  border: var(--border);
+  border-radius: 16px;
+  box-shadow: 0 4px 0 var(--ink), 0 0 0 4px var(--rc) inset;
+  padding: 6px 16px;
+  opacity: 0;
+  transform: scale(0.3) rotate(-6deg);
+  white-space: nowrap;
+}
+.jjr-quip.is-on {
+  animation: jjr-quip-in 0.45s cubic-bezier(0.3, 1.9, 0.5, 1) 0.15s forwards;
+}
+.jjr-quip.jjr-r-cursed { background: #2a0d10; color: #ffb0b0; }
+.jjr-quip.jjr-r-legendary { background: var(--legendary); }
+@keyframes jjr-quip-in {
+  to { opacity: 1; transform: scale(1) rotate(-2deg); }
+}
+
+/* -------------------------------------------------------------- current-rule chip */
+.jjr-chip {
+  --rc: var(--common);
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  max-width: min(320px, calc(100vw - 32px));
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px 8px 8px;
+  background: var(--cream);
+  border: var(--border);
+  border-radius: 18px;
+  box-shadow: 0 5px 0 var(--ink), inset 0 0 0 4px var(--rc);
+  opacity: 0;
+  transform: translateY(-30px) scale(0.5);
+  visibility: hidden;
+}
+.jjr-chip.is-on {
+  visibility: visible;
+  animation: jjr-chip-in 0.5s cubic-bezier(0.3, 1.9, 0.5, 1) forwards;
+}
+@keyframes jjr-chip-in {
+  0% { opacity: 0; transform: translateY(-30px) scale(0.5) rotate(8deg); }
+  100% { opacity: 1; transform: translateY(0) scale(1) rotate(-1deg); }
+}
+.jjr-chip-emoji {
+  flex: none;
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  font-size: 30px;
+  border: 3px solid var(--ink);
+  border-radius: 12px;
+  background: linear-gradient(170deg, color-mix(in srgb, var(--rc) 45%, #fff), var(--rc));
+  animation: jjr-chip-bob 1.6s ease-in-out infinite;
+}
+@keyframes jjr-chip-bob {
+  50% { transform: rotate(-8deg) translateY(-2px); }
+}
+.jjr-chip-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.jjr-chip-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.jjr-chip-name {
+  font: 700 17px var(--font);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.jjr-chip-mult {
+  flex: none;
+  font: 700 14px var(--font);
+  background: var(--coin);
+  border: 3px solid var(--ink);
+  border-radius: 999px;
+  padding: 0 7px;
+}
+.jjr-chip-text {
+  font: 500 13px / 1.2 var(--font);
+  opacity: 0.8;
+}
+.jjr-chip-skull {
+  position: absolute;
+  top: -12px;
+  right: -8px;
+  font-size: 22px;
+  transform: rotate(18deg);
+}
+.jjr-chip.jjr-r-legendary {
+  background: linear-gradient(110deg, #fff6d0 30%, #ffffff 45%, #fff6d0 60%) 0 0 / 300% 100%;
+  animation: jjr-chip-in 0.5s cubic-bezier(0.3, 1.9, 0.5, 1) forwards, jjr-chip-shine 2s linear infinite;
+}
+@keyframes jjr-chip-shine {
+  to { background-position: -300% 0; }
+}
+.jjr-chip.jjr-r-cursed {
+  background: #3a1c26;
+  color: #ffd6d6;
+}
+
+/* ------------------------------------------------------------------- small screens */
+@media (max-width: 560px) {
+  .jjr-stage { top: 38%; gap: 10px; }
+  .jjr-housing { padding: 18px 8px; border-radius: 22px; }
+  .jjr-lever { display: none; }
+  .jjr-eye { width: 32px; height: 32px; }
+  .jjr-eye:last-child { width: 28px; height: 28px; }
+  .jjr-eyes { top: -28px; }
+  .jjr-pupil { width: 12px; height: 12px; }
+  .jjr-chip { top: 10px; left: 10px; }
+  .jjr-chip-text { display: none; }
+}

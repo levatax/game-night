@@ -1,0 +1,78 @@
+/* Touch DROP button for placement (client-controls). A big wobbly red "panic button" with googly eyes. */
+.jj-drop {
+  position: fixed;
+  left: 50%;
+  bottom: calc(22px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 40;
+  width: 132px;
+  height: 132px;
+  border-radius: 50%;
+  border: 5px solid var(--ink, #2d2a32);
+  background: radial-gradient(circle at 35% 30%, #ff9a9d 0 18%, var(--bad, #ff5a5f) 46%, #c8333a 100%);
+  box-shadow: 0 8px 0 var(--ink, #2d2a32), inset 0 -8px 0 rgba(0, 0, 0, 0.18);
+  color: #fff;
+  font: 800 26px var(--font, system-ui, sans-serif);
+  letter-spacing: 1px;
+  text-shadow: 0 3px 0 var(--ink, #2d2a32);
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  animation: jj-drop-in 0.45s cubic-bezier(0.3, 1.8, 0.5, 1) both, jj-drop-jiggle 1.6s ease-in-out 0.45s infinite;
+}
+.jj-drop__label { display: block; margin-top: 22px; }
+.jj-drop__eyes {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+}
+.jj-drop__eye {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #fff;
+  border: 3px solid var(--ink, #2d2a32);
+}
+.jj-drop__eye::after {
+  content: "";
+  position: absolute;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--ink, #2d2a32);
+  left: 6px;
+  top: 8px;
+  animation: jj-drop-pupil 0.9s ease-in-out infinite alternate;
+}
+.jj-drop__eye + .jj-drop__eye::after { animation-delay: -0.37s; animation-duration: 0.7s; }
+.jj-drop:active,
+.jj-drop.is-pressed {
+  transform: translateX(-50%) translateY(6px) scale(1.12, 0.82);
+  box-shadow: 0 2px 0 var(--ink, #2d2a32);
+  animation: none;
+}
+@keyframes jj-drop-in {
+  from { transform: translateX(-50%) translateY(180px) scale(0.4); }
+  to { transform: translateX(-50%) translateY(0) scale(1); }
+}
+@keyframes jj-drop-jiggle {
+  0%, 100% { transform: translateX(-50%) rotate(0deg) scale(1, 1); }
+  20% { transform: translateX(-50%) rotate(-5deg) scale(1.05, 0.95); }
+  40% { transform: translateX(-50%) rotate(4deg) scale(0.96, 1.04); }
+  60% { transform: translateX(-50%) rotate(-2deg) scale(1.02, 0.98); }
+}
+@keyframes jj-drop-pupil {
+  0% { transform: translate(-4px, -3px); }
+  50% { transform: translate(3px, 2px); }
+  100% { transform: translate(-1px, 4px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .jj-drop, .jj-drop__eye::after { animation: none; }
+}
