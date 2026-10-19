@@ -158,6 +158,7 @@ export class Overlays {
   private layer: HTMLDivElement;
   private endEl: HTMLDivElement;
   private settingsEl: HTMLDivElement;
+  private cornerEl: HTMLElement;
   private wheelEl: HTMLDivElement;
   private bannerEl: HTMLDivElement;
   private bannerText: HTMLSpanElement;
@@ -209,7 +210,8 @@ export class Overlays {
     });
     this.bannerEl.append(h("span", "jjo-banner__whisk", "🥄"), this.bannerText, this.bannerBtn);
 
-    this.layer.append(this.endEl, this.wheelEl, this.settingsEl, this.bannerEl);
+    this.cornerEl = this.buildCorner();
+    this.layer.append(this.cornerEl, this.endEl, this.wheelEl, this.settingsEl, this.bannerEl);
     root.append(this.layer);
 
     this.buildSettings();
@@ -692,6 +694,43 @@ export class Overlays {
     this.votesDoneAt = 0;
   }
 
+  // ============================================================ CORNER BUTTONS
+  /** Always-visible 🔊 mute toggle + ⚙️ settings button (right edge), so nobody has to know about Esc. */
+  private buildCorner(): HTMLElement {
+    const wrap = h("div", "jjo-corner");
+    const mute = h("button", "jjo-corner__btn");
+    mute.type = "button";
+    mute.addEventListener("click", () => {
+      settings.set({ muted: !settings.get().muted });
+      this.handlers.onUiSound("click");
+    });
+    this.bindings.push((s) => {
+      mute.textContent = s.muted ? "🔇" : "🔊";
+      mute.classList.toggle("jjo-corner__btn--off", s.muted);
+      mute.title = s.muted ? "Unmute (M)" : "Mute (M)";
+      mute.setAttribute("aria-label", mute.title);
+      mute.setAttribute("aria-pressed", String(s.muted));
+    });
+    const gear = h("button", "jjo-corner__btn", "⚙️");
+    gear.type = "button";
+    gear.title = "Settings: sound, camera, graphics (Esc)";
+    gear.setAttribute("aria-label", "Open settings");
+    gear.addEventListener("click", () => {
+      this.handlers.onUiSound("click");
+      this.toggleSettings();
+    });
+    wrap.append(mute, gear);
+
+    // M toggles mute anywhere except while typing.
+    window.addEventListener("keydown", (e) => {
+      if (e.repeat || e.ctrlKey || e.metaKey || e.altKey || e.key.toLowerCase() !== "m") return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      settings.set({ muted: !settings.get().muted });
+    });
+    return wrap;
+  }
+
   // ================================================================= SETTINGS
   private buildSettings(): void {
     const backdrop = h("div", "jjo-settings__backdrop");
@@ -723,7 +762,11 @@ export class Overlays {
         out.textContent = fmt(s[key]);
         input.style.setProperty("--fill", `${((s[key] - min) / (max - min)) * 100}%`);
       };
-      input.addEventListener("input", () => settings.set({ [key]: Number(input.value) }));
+      input.addEventListener("input", () => {
+        // Dragging a volume slider while muted means "I want to hear this": unmute.
+        const unmute = key !== "cameraSensitivity" && settings.get().muted;
+        settings.set(unmute ? { [key]: Number(input.value), muted: false } : { [key]: Number(input.value) });
+      });
       input.addEventListener("change", () => this.handlers.onUiSound("click"));
       this.bindings.push(sync);
       row.append(h("span", "jjo-row__label", `${emoji} ${label}`), input, out);
@@ -731,6 +774,18 @@ export class Overlays {
     };
     const pct = (v: number) => `${Math.round(v * 100)}%`;
     panel.append(h("h3", "jjo-settings__group", "Noises"));
+    {
+      const row = h("label", "jjo-row jjo-row--toggle");
+      const input = h("input", "jjo-check");
+      input.type = "checkbox";
+      input.addEventListener("change", () => {
+        settings.set({ muted: !input.checked });
+        this.handlers.onUiSound("click");
+      });
+      this.bindings.push((st) => (input.checked = !st.muted));
+      row.append(h("span", "jjo-row__label", "🔔 Sound on (M)"), input, h("span", "jjo-switch"));
+      panel.append(row);
+    }
     slider("Master", "🔊", "masterVolume", 0, 1, 0.01, pct);
     slider("Music", "🎷", "musicVolume", 0, 1, 0.01, pct);
     slider("SFX", "📯", "sfxVolume", 0, 1, 0.01, pct);

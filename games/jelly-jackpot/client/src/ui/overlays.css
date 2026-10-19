@@ -523,3 +523,42 @@
   .jjo-chef--l { transform: scale(1.1); margin: 6px; }
   .jjo-stamp { font-size: 28px; right: -6px; }
 }
+
+/* ------------------------------------------------- corner sound + settings */
+.jjo-corner {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: auto;
+}
+.jjo-corner__btn {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+  line-height: 1;
+  background: var(--cream);
+  border: var(--border);
+  border-radius: 14px;
+  box-shadow: 0 4px 0 var(--ink);
+  cursor: pointer;
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+}
+.jjo-corner__btn:hover { transform: translateY(-2px) rotate(-6deg) scale(1.05); }
+.jjo-corner__btn:active { transform: translateY(3px) scale(0.92, 0.86); box-shadow: 0 1px 0 var(--ink); }
+.jjo-corner__btn:focus-visible { outline: 3px solid var(--coin); outline-offset: 2px; }
+.jjo-corner__btn--off { background: var(--frosting); animation: jjo-corner-shh 2.4s ease-in-out infinite; }
+@keyframes jjo-corner-shh {
+  0%, 90%, 100% { transform: rotate(0); }
+  93% { transform: rotate(-10deg); }
+  96% { transform: rotate(10deg); }
+}
+@media (max-width: 520px) {
+  .jjo-corner { right: 8px; gap: 8px; }
+  .jjo-corner__btn { width: 40px; height: 40px; font-size: 19px; }
+}

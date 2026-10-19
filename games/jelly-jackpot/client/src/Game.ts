@@ -661,7 +661,7 @@ export class Game {
 
   private applySettings(s: Settings): void {
     const c = this.ctx;
-    c.audio.setVolumes({ master: s.masterVolume, music: s.musicVolume, sfx: s.sfxVolume });
+    c.audio.setVolumes({ master: s.muted ? 0 : s.masterVolume, music: s.musicVolume, sfx: s.sfxVolume });
     c.stage.setQuality(s.quality);
     c.stage.setReducedFlashing(s.reducedFlashing);
     c.fx.setReducedFlashing(s.reducedFlashing);
