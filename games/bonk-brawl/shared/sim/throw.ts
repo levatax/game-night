@@ -2,7 +2,11 @@
 // Owner: sim. Deterministic.
 
 import {
+  BALL_KILL_Y,
   CHEST_HEIGHT,
+  DT,
+  FLOOR_Y,
+  GRAVITY,
   HAND_FORWARD,
   HAND_RIGHT,
   KNOCKBACK_FULL_CHARGE_MULT,
@@ -10,9 +14,11 @@ import {
   THROW_PITCH_BIAS,
   THROW_SPEED_MAX,
   THROW_SPEED_MIN,
+  TRIPLE_SPREAD_RAD,
 } from "../constants.js";
 import type { BallKind, HeldPowerUp } from "../types.js";
 import type { FloorQuery } from "./context.js";
+import { isFloorAt, sphereCoverContactInto, type Contact } from "./geometry.js";
 import { clamp, dirFromYawPitch, lerp, vec3, type Vec3 } from "./math.js";
 
 /** Aim direction (unit): (-sin(yaw)cos(pitch), sin(pitch), -cos(yaw)cos(pitch)). */
@@ -51,19 +57,35 @@ export function ballKindForPowerUp(powerUp: HeldPowerUp): BallKind {
   return powerUp === "mega" ? "mega" : powerUp === "boomerang" ? "boomerang" : "normal";
 }
 
+const BIAS_COS = Math.cos(THROW_PITCH_BIAS);
+const BIAS_SIN = Math.sin(THROW_PITCH_BIAS);
+
 /**
  * Release velocity of the CENTER ball: direction = aim rotated up by THROW_PITCH_BIAS
  * (i.e. aimDirection(yaw, pitch + THROW_PITCH_BIAS) when given yaw/pitch), magnitude = throwSpeed(charge).
- * `aim` is the unit aim direction (aimDirection(yaw, pitch)); the bias is applied by recomputing
- * pitch from it. Power-ups don't change speed (mega/triple/boomerang change kind/count only).
+ * `aim` is the unit aim direction (aimDirection(yaw, pitch)); the bias rotates it inside its own
+ * vertical plane (same result as recomputing pitch, without the trig round trip). A non-unit aim
+ * is normalized first. Power-ups don't change speed (mega/triple/boomerang change kind/count only),
+ * so `powerUp` is accepted for call-site symmetry and ignored.
  */
 export function computeThrowVelocity(charge: number, aim: Vec3, powerUp: HeldPowerUp, out: Vec3 = vec3()): Vec3 {
-  // TODO(sim): implement exactly as documented (bias + speed). Placeholder: no bias.
-  void powerUp;
   const speed = throwSpeed(charge);
-  out.x = aim.x * speed;
-  out.y = aim.y * speed;
-  out.z = aim.z * speed;
+  const h = Math.sqrt(aim.x * aim.x + aim.z * aim.z);
+  const len = Math.sqrt(h * h + aim.y * aim.y);
+  if (len < 1e-9) {
+    out.x = 0;
+    out.y = speed;
+    out.z = 0;
+    return out;
+  }
+  const h0 = h / len;
+  const y0 = aim.y / len;
+  const h1 = h0 * BIAS_COS - y0 * BIAS_SIN;
+  const y1 = y0 * BIAS_COS + h0 * BIAS_SIN;
+  const k = h > 1e-9 ? (h1 / h) * speed : 0;
+  out.x = aim.x * k;
+  out.y = y1 * speed;
+  out.z = aim.z * k;
   return out;
 }
 
@@ -76,8 +98,11 @@ export function computeThrowVelocity(charge: number, aim: Vec3, powerUp: HeldPow
  * client's predicted throw alike).
  */
 export function computeThrowVelocities(charge: number, yaw: number, pitch: number, powerUp: HeldPowerUp): Vec3[] {
-  // TODO(sim): add the triple spread.
-  return [computeThrowVelocity(charge, aimDirection(yaw, pitch), powerUp)];
+  const center = computeThrowVelocity(charge, aimDirection(yaw, pitch), powerUp);
+  if (powerUp !== "triple") return [center];
+  const left = computeThrowVelocity(charge, aimDirection(yaw + TRIPLE_SPREAD_RAD, pitch), powerUp);
+  const right = computeThrowVelocity(charge, aimDirection(yaw - TRIPLE_SPREAD_RAD, pitch), powerUp);
+  return [center, left, right];
 }
 
 /**
@@ -86,6 +111,8 @@ export function computeThrowVelocities(charge: number, yaw: number, pitch: numbe
 export function knockbackMultiplier(charge: number, kind: BallKind): number {
   return lerp(1, KNOCKBACK_FULL_CHARGE_MULT, clamp(charge, 0, 1)) * (kind === "mega" ? KNOCKBACK_MEGA_MULT : 1);
 }
+
+/* ============================================================ trajectory */
 
 export interface TrajectoryOptions {
   /** Ball radius (BALL_RADIUS or MEGA_BALL_RADIUS). */
@@ -96,16 +123,83 @@ export interface TrajectoryOptions {
   maxPoints: number;
 }
 
+/** Longest flight sampleTrajectory looks ahead. */
+export const TRAJECTORY_MAX_SEC = 3;
+/** Collision sub-steps per DT are capped at this (fast balls vs thin candles). */
+const MAX_SUBSTEPS = 8;
+
+const probe: Vec3 = vec3();
+const probeContact: Contact = { nx: 0, ny: 0, nz: 0, depth: 0, coverIndex: -1 };
+
+/** Point at time t on the gravity-only path from origin with velocity (exact parabola). */
+export function ballisticPoint(origin: Vec3, velocity: Vec3, t: number, out: Vec3 = vec3()): Vec3 {
+  out.x = origin.x + velocity.x * t;
+  out.y = origin.y + velocity.y * t + 0.5 * GRAVITY * t * t;
+  out.z = origin.z + velocity.z * t;
+  return out;
+}
+
+/** Collision sub-steps so a ball never moves more than its radius between checks. */
+export function substepCount(distance: number, radius: number): number {
+  if (!(distance > radius) || radius <= 0) return 1;
+  return Math.min(MAX_SUBSTEPS, Math.ceil(distance / radius));
+}
+
+/**
+ * Seconds until the gravity-only path first touches the floor (where solid) or cover, falls below
+ * BALL_KILL_Y, or TRAJECTORY_MAX_SEC. The floor crossing is interpolated inside the step.
+ */
+export function flightTime(q: FloorQuery, origin: Vec3, velocity: Vec3, radius: number): number {
+  const speed = Math.sqrt(velocity.x * velocity.x + velocity.y * velocity.y + velocity.z * velocity.z);
+  const h = DT / substepCount(speed * DT, radius);
+  const steps = Math.ceil(TRAJECTORY_MAX_SEC / h);
+  let prevY = origin.y;
+  for (let k = 1; k <= steps; k++) {
+    const t = k * h;
+    ballisticPoint(origin, velocity, t, probe);
+    if (probe.y < BALL_KILL_Y) return t;
+    if (sphereCoverContactInto(q.arena, probe, radius, probeContact)) return t;
+    const floorY = FLOOR_Y + radius;
+    if (prevY > FLOOR_Y && probe.y < floorY && isFloorAt(q, probe.x, probe.z)) {
+      const frac = prevY > floorY ? (prevY - floorY) / (prevY - probe.y) : 0;
+      return t - h + clamp(frac, 0, 1) * h;
+    }
+    prevY = probe.y;
+  }
+  return TRAJECTORY_MAX_SEC;
+}
+
 /**
  * Sample the ballistic path from origin with velocity (gravity only, no bounces, no curve).
- * Simulates in DT steps until the first floor/cover contact (or 3 s / falling below BALL_KILL_Y),
- * then returns points covering the first `fraction` of that flight time, starting at origin.
+ * Simulates until the first floor/cover contact (or 3 s / falling below BALL_KILL_Y), then returns
+ * points covering the first `fraction` of that flight time, starting at origin. Points lie exactly
+ * on the same parabola stepBall integrates, evenly spaced in time; `maxPoints` of them (at least
+ * the origin alone when maxPoints < 2 or the flight is instant).
  * Used by the full-charge arc preview (client-fx ArcPreview gets these points from client-app).
  */
 export function sampleTrajectory(q: FloorQuery, origin: Vec3, velocity: Vec3, opts: TrajectoryOptions): Vec3[] {
-  // TODO(sim): implement as documented.
-  void q;
-  void velocity;
-  void opts;
-  return [{ x: origin.x, y: origin.y, z: origin.z }];
+  return sampleTrajectoryInto(q, origin, velocity, opts, []);
+}
+
+/**
+ * Allocation-light sampleTrajectory(): reuses the point objects already in `out` (adds missing
+ * ones), sets out.length to the point count and returns `out`. Handy for a per-frame arc preview.
+ */
+export function sampleTrajectoryInto(
+  q: FloorQuery,
+  origin: Vec3,
+  velocity: Vec3,
+  opts: TrajectoryOptions,
+  out: Vec3[],
+): Vec3[] {
+  const span = flightTime(q, origin, velocity, opts.radius) * clamp(opts.fraction, 0, 1);
+  const wanted = Math.floor(opts.maxPoints);
+  const count = span > 0 && wanted >= 2 ? wanted : 1;
+  for (let i = 0; i < count; i++) {
+    const point = out[i] ?? (out[i] = vec3());
+    const t = count === 1 ? 0 : (span * i) / (count - 1);
+    ballisticPoint(origin, velocity, t, point);
+  }
+  out.length = count;
+  return out;
 }

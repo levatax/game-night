@@ -15,7 +15,7 @@ export const ICON_HEART_FULL = `
 
 export const ICON_HEART_EMPTY = `
 <svg viewBox="0 0 100 92" class="i-heart">
-  <path d="${HEART_PATH}" fill="rgba(255,255,255,0.3)" stroke="${INK}" stroke-width="7" stroke-linejoin="round"/>
+  <path d="${HEART_PATH}" fill="rgba(45,42,50,0.42)" stroke="${INK}" stroke-width="7" stroke-linejoin="round" stroke-dasharray="10 9"/>
 </svg>`;
 
 export const ICON_CROWN = `

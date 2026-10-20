@@ -8,3 +8,5 @@ in your own types) and append one line below so the integrator can reconcile it 
 
 Format: `- [role] file: what you need changed and why (where your workaround lives).`
 
+- [server] server/world/events.ts: `BroadcastWorldEvent` for powerUpWarning/powerUpSpawn/powerUpPickup was uninhabitable (the payload's own `type: PowerUpType` intersected with the `type` discriminator → never). Those three world events now carry the power-up kind as `powerUpType`, and the new `toMessage(ev)` rebuilds the exact protocol payload (`type: PowerUpType`) that BonkRoom broadcasts. Wire format unchanged; only server-internal typing.
+- [client-audio] client/src/audio/AudioEngine.ts: PlayOptions says "HRTF on high quality, equalpower otherwise", but the engine has no quality input. Added `AudioEngine.setSpatialQuality(hrtf: boolean)` (default HRTF); client-app may call `audio.setSpatialQuality(s.quality !== "low")` where it applies the `quality` setting in App.applySettings. Optional: without it every quality level uses HRTF.

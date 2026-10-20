@@ -1,7 +1,12 @@
 // Procedural low-poly animals. Owner: client-characters.
 
 import * as THREE from "three";
+import { CHARACTERS } from "../../../shared/constants";
 import type { CharacterId } from "../../../shared/types";
+import { addOutline } from "../render/Toon";
+import { faceOffset, getFaceSheet } from "./faces";
+import { buildAnimalModel } from "./models";
+import { AnimalMaterials, OUTLINE_THICKNESS, PartBuilder } from "./parts";
 import type { FaceExpression } from "./types";
 
 /** Named parts the Animator drives. Every part is a Group pivoted at its joint. */
@@ -25,6 +30,23 @@ export interface AnimalRig {
   face: THREE.Mesh;
 }
 
+/** Extra pivots beyond the contract rig (see models/common.ts for the hierarchy). */
+export interface AnimalParts {
+  /** Lift / lean container between the root and the squash body (pivot at the feet). */
+  offset: THREE.Group;
+  /** Rolls, tumbles, flips and twirls around the center of mass. */
+  spin: THREE.Group;
+  /** Upper body (torso, head, arms, tail) pivoting at the waist: twist and bend. */
+  upper: THREE.Group;
+  jaw: THREE.Object3D | null;
+  sac: THREE.Object3D | null;
+  belly: THREE.Object3D | null;
+  ears: THREE.Object3D[];
+  tailTip: THREE.Object3D | null;
+  ghostTail: THREE.Group;
+  accessory: THREE.Object3D | null;
+}
+
 /**
  * Built only from Three.js primitives (spheres/capsules/cones/boxes, low segment counts) with
  * createToonMaterial colors from CHARACTERS[id].colors and addOutline (≈0.025). Big head
@@ -36,46 +58,136 @@ export interface AnimalRig {
 export class Animal {
   readonly character: CharacterId;
   readonly rig: AnimalRig;
+  readonly parts: AnimalParts;
+  /** Height of the top of the model incl. accessories (feet space, rest pose). */
+  readonly topY: number;
+  /** Rest scales of the parts the animator inflates (sac, belly). */
+  readonly sacScale = new THREE.Vector3(1, 1, 1);
+  readonly bellyScale = new THREE.Vector3(1, 1, 1);
+  private readonly materials: AnimalMaterials;
+  private readonly faceTexture: THREE.Texture;
+  private readonly casters: THREE.Mesh[] = [];
+  private currentExpression: FaceExpression = "idle";
+  private isGhost = false;
+  private shadows = true;
 
   constructor(character: CharacterId, slotColor: string) {
     this.character = character;
-    void slotColor;
-    const root = new THREE.Group();
-    const g = () => new THREE.Group();
+    this.materials = new AnimalMaterials(CHARACTERS[character].colors, slotColor);
+    this.faceTexture = getFaceSheet(character).clone();
+    const { root, skeleton: s, extras, spec } = buildAnimalModel(character, new PartBuilder(this.materials), this.faceTexture);
+    root.name = `animal:${character}`;
+    this.topY = spec.topY;
+
+    for (const outline of addOutline(s.model, OUTLINE_THICKNESS)) outline.material = this.materials.outline;
+    root.traverse((o) => {
+      if (o instanceof THREE.Mesh && o.castShadow) this.casters.push(o);
+    });
+
     this.rig = {
       root,
-      body: g(),
-      head: g(),
-      armL: g(),
-      armR: g(),
-      legL: g(),
-      legR: g(),
-      extra: g(),
-      hand: new THREE.Object3D(),
-      headTop: new THREE.Object3D(),
-      face: new THREE.Mesh(),
+      body: s.body,
+      head: s.head,
+      armL: s.armL,
+      armR: s.armR,
+      legL: s.legL,
+      legR: s.legR,
+      extra: s.extra,
+      hand: s.hand,
+      headTop: s.headTop,
+      face: extras.face,
     };
-    // TODO(client-characters): build the model.
+    this.parts = {
+      offset: s.offset,
+      spin: s.spin,
+      upper: s.upper,
+      jaw: extras.jaw,
+      sac: extras.sac,
+      belly: s.belly,
+      ears: extras.ears,
+      tailTip: extras.tailTip,
+      ghostTail: s.ghostTail,
+      accessory: extras.accessory,
+    };
+    if (extras.sac) {
+      this.sacScale.copy(extras.sac.scale);
+      extras.sac.scale.setScalar(1e-3);
+      extras.sac.visible = false;
+    }
+    if (s.belly) this.bellyScale.copy(s.belly.scale);
+    this.setExpression("idle");
+  }
+
+  get expression(): FaceExpression {
+    return this.currentExpression;
+  }
+
+  get ghost(): boolean {
+    return this.isGhost;
   }
 
   /** Change the slot tint (player color). */
   setSlotColor(color: string): void {
-    void color;
+    this.materials.setSlotColor(color);
   }
 
   setExpression(expression: FaceExpression): void {
-    void expression;
+    this.currentExpression = expression;
+    const { u, v } = faceOffset(expression);
+    this.faceTexture.offset.set(u, v);
   }
 
   /** Ghost form: translucent, pale, no shadow, floating bob, ghost tail instead of legs. */
   setGhost(ghost: boolean): void {
-    void ghost;
+    if (ghost === this.isGhost) return;
+    this.isGhost = ghost;
+    this.materials.setGhost(ghost);
+    this.rig.legL.visible = !ghost;
+    this.rig.legR.visible = !ghost;
+    this.parts.ghostTail.visible = ghost;
+    this.applyShadows();
+  }
+
+  /** 0..1 visibility of the ghost form (fade-in). */
+  setGhostFade(fade: number): void {
+    this.materials.setGhostFade(fade);
   }
 
   /** Damage flash (white blink) while hurtTicks > 0. */
   setFlash(on: boolean): void {
-    void on;
+    this.materials.setFlash(on);
   }
 
-  dispose(): void {}
+  /** Show / hide the signature accessory (it pops off and floats away on a KO). */
+  setAccessoryVisible(visible: boolean): void {
+    if (this.parts.accessory) this.parts.accessory.visible = visible;
+  }
+
+  /** Toggle shadow casting (off for ghosts, the lobby preview casts its own). */
+  setCastShadows(on: boolean): void {
+    this.shadows = on;
+    this.applyShadows();
+  }
+
+  dispose(): void {
+    this.rig.root.removeFromParent();
+    this.materials.dispose();
+    this.faceTexture.dispose();
+  }
+
+  private applyShadows(): void {
+    const cast = this.shadows && !this.isGhost;
+    for (const mesh of this.casters) mesh.castShadow = cast;
+  }
+}
+
+/** Triangle count of everything under `root` (outlines included), for the dev harness. */
+export function countTriangles(root: THREE.Object3D): number {
+  let count = 0;
+  root.traverse((o) => {
+    if (!(o instanceof THREE.Mesh)) return;
+    const g = o.geometry as THREE.BufferGeometry;
+    count += (g.index ? g.index.count : g.getAttribute("position").count) / 3;
+  });
+  return Math.round(count);
 }

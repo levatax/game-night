@@ -1,9 +1,27 @@
 // Own-player client-side prediction + server reconciliation. Owner: client-net.
 
+import { DT, MAX_PENDING_INPUTS, PREDICTION_SMOOTH_MS, PREDICTION_SNAP_DIST } from "../../../shared/constants";
 import type { InputCmd } from "../../../shared/protocol";
 import type { SimContext } from "../../../shared/sim/context";
-import { createPlayerSim, emptyStepResult, type PlayerSim, type StepPlayerResult } from "../../../shared/sim/player";
+import { lerp } from "../../../shared/sim/math";
+import {
+  copyPlayerSim,
+  createPlayerSim,
+  emptyStepResult,
+  stepPlayer,
+  stepPlayerInto,
+  type PlayerSim,
+  type StepPlayerResult,
+} from "../../../shared/sim/player";
 import type { PlayerSimFields, PlayerView } from "../../../shared/types";
+
+const SMOOTH_TAU_SEC = PREDICTION_SMOOTH_MS / 1000;
+
+/** An input the server has not acknowledged yet, plus the lock it was predicted with. */
+interface PendingInput {
+  cmd: InputCmd;
+  locked: boolean;
+}
 
 /**
  * Algorithm (TECH_BRIEF §3):
@@ -16,34 +34,71 @@ import type { PlayerSimFields, PlayerView } from "../../../shared/types";
  *   (offset = 0), else offset += error. current = replayed. If the server says !alive, stop.
  * - render: lerp(prev, current, alpha) for position + offset; offset decays as
  *   offset *= exp(-dt / (PREDICTION_SMOOTH_MS/1000)) each frame. Discrete fields from current.
+ *
+ * Input lock on replay: each pending input remembers the `ctx.locked` it was predicted with, and
+ * is replayed with `reconcileCtx.locked && thatLock`. Net predicts the countdown → playing
+ * transition from the server clock (an input that will reach the server after "go" is predicted
+ * unlocked), so a replay during countdown keeps that decision, and once the server reports
+ * `playing` every pending input replays unlocked (the server consumes them after that tick).
  */
 export class Prediction {
   /** Latest predicted state (HUD reads timers/charge/heldCount from here). */
   readonly current: PlayerSim = createPlayerSim();
 
+  /** Position of the predicted tick before `current` (render interpolation). */
+  private readonly prev = { x: 0, y: 0, z: 0 };
+  /** Visual error offset (old prediction − corrected prediction), decaying to 0. */
+  private readonly offset = { x: 0, y: 0, z: 0 };
+  private readonly pending: PendingInput[] = [];
+  private readonly replayResult = emptyStepResult();
+  /** Reused replay context (a per-input copy of the reconcile context with its own lock). */
+  private replayCtx: SimContext | null = null;
+  private activeFlag = false;
+
   /** True between reset() and stop(). */
   get active(): boolean {
-    return false; // TODO(client-net)
+    return this.activeFlag;
   }
 
   /** Start predicting from authoritative state: clears pending inputs and the smoothing offset. */
   reset(server: PlayerView): void {
-    void server;
+    copyPlayerSim(server, this.current);
+    this.setPrevFromCurrent();
+    this.pending.length = 0;
+    this.clearOffset();
+    this.activeFlag = true;
   }
 
-  stop(): void {}
+  stop(): void {
+    this.activeFlag = false;
+    this.pending.length = 0;
+    this.clearOffset();
+  }
 
   /** Predict one tick for a freshly sampled input. */
   predict(cmd: InputCmd, ctx: SimContext): StepPlayerResult {
-    void cmd;
-    void ctx;
-    return emptyStepResult(); // TODO(client-net)
+    if (!this.activeFlag) return emptyStepResult();
+    this.pending.push({ cmd: { ...cmd }, locked: ctx.locked });
+    if (this.pending.length > MAX_PENDING_INPUTS) this.pending.shift();
+    this.setPrevFromCurrent();
+    return stepPlayer(this.current, cmd, ctx);
   }
 
   /** Reconcile against the server's copy of the local player (call on every state patch). */
   reconcile(server: PlayerView, ctx: SimContext): void {
-    void server;
-    void ctx;
+    if (!this.activeFlag) return;
+    if (!server.alive) {
+      this.stop();
+      return;
+    }
+    const oldX = this.current.x;
+    const oldY = this.current.y;
+    const oldZ = this.current.z;
+
+    copyPlayerSim(server, this.current);
+    this.dropAcknowledged(server.lastSeq);
+    this.replay(ctx);
+    this.absorbError(oldX - this.current.x, oldY - this.current.y, oldZ - this.current.z);
   }
 
   /**
@@ -52,13 +107,85 @@ export class Prediction {
    * offset; every other field from `current`. `dtSec` advances the offset decay.
    */
   getRenderSim(alpha: number, dtSec: number, out: PlayerSimFields): PlayerSimFields {
-    void alpha;
-    void dtSec;
+    this.decayOffset(dtSec);
+    const t = alpha < 0 ? 0 : alpha > 1 ? 1 : alpha;
+    const cur = this.current;
+    copyPlayerSim(cur, out);
+    out.x = lerp(this.prev.x, cur.x, t) + this.offset.x;
+    out.y = lerp(this.prev.y, cur.y, t) + this.offset.y;
+    out.z = lerp(this.prev.z, cur.z, t) + this.offset.z;
     return out;
   }
 
   /** Inputs not yet acknowledged by the server. */
   get pendingCount(): number {
-    return 0;
+    return this.pending.length;
+  }
+
+  /** Current visual smoothing offset (read-only view, for tests and debugging). */
+  get smoothingOffset(): Readonly<{ x: number; y: number; z: number }> {
+    return this.offset;
+  }
+
+  private dropAcknowledged(lastSeq: number): void {
+    let acked = 0;
+    while (acked < this.pending.length && this.pending[acked].cmd.seq <= lastSeq) acked++;
+    if (acked > 0) this.pending.splice(0, acked);
+  }
+
+  /** Re-run every pending input on top of the server state; `prev` ends one tick before `current`. */
+  private replay(ctx: SimContext): void {
+    const cur = this.current;
+    if (this.pending.length === 0) {
+      // No unacked input: the tick before the server's is unknown, extrapolate it backwards.
+      this.prev.x = cur.x - cur.vx * DT;
+      this.prev.y = cur.y - cur.vy * DT;
+      this.prev.z = cur.z - cur.vz * DT;
+      return;
+    }
+    const rc = (this.replayCtx ??= { ...ctx });
+    rc.arena = ctx.arena;
+    rc.rings = ctx.rings;
+    rc.character = ctx.character;
+    rc.dt = ctx.dt;
+    for (const input of this.pending) {
+      rc.locked = ctx.locked && input.locked;
+      this.setPrevFromCurrent();
+      stepPlayerInto(cur, input.cmd, rc, this.replayResult);
+    }
+  }
+
+  private absorbError(ex: number, ey: number, ez: number): void {
+    const o = this.offset;
+    if (ex * ex + ey * ey + ez * ez > PREDICTION_SNAP_DIST * PREDICTION_SNAP_DIST) {
+      this.clearOffset();
+      return;
+    }
+    o.x += ex;
+    o.y += ey;
+    o.z += ez;
+    if (o.x * o.x + o.y * o.y + o.z * o.z > PREDICTION_SNAP_DIST * PREDICTION_SNAP_DIST) this.clearOffset();
+  }
+
+  private decayOffset(dtSec: number): void {
+    if (!(dtSec > 0)) return;
+    const k = Math.exp(-dtSec / SMOOTH_TAU_SEC);
+    const o = this.offset;
+    o.x *= k;
+    o.y *= k;
+    o.z *= k;
+    if (Math.abs(o.x) + Math.abs(o.y) + Math.abs(o.z) < 1e-5) this.clearOffset();
+  }
+
+  private setPrevFromCurrent(): void {
+    this.prev.x = this.current.x;
+    this.prev.y = this.current.y;
+    this.prev.z = this.current.z;
+  }
+
+  private clearOffset(): void {
+    this.offset.x = 0;
+    this.offset.y = 0;
+    this.offset.z = 0;
   }
 }

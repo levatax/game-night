@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bonk Brawl · UI harness</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      /* Same base as client/index.html. */
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #6ec6ff;
+        color: #2d2a32;
+        font-family: "Fredoka", system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        user-select: none;
+      }
+      #game {
+        position: fixed;
+        inset: 0;
+      }
+      #ui {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+      }
+
+      /* Fake 3D backdrop so screenshots read like the real game (the harness has no WebGL). */
+      .fake-scene {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+        background: linear-gradient(180deg, #6ec6ff 0%, #d6f1ff 70%);
+      }
+      .fake-scene__cloud {
+        position: absolute;
+        width: 220px;
+        height: 70px;
+        background: #fff;
+        border-radius: 999px;
+        box-shadow: 60px -26px 0 -8px #fff, -50px -14px 0 -12px #fff;
+        opacity: 0.95;
+      }
+      .fake-scene__island {
+        position: absolute;
+        left: 50%;
+        bottom: -16vh;
+        width: 150vw;
+        height: 62vh;
+        transform: translateX(-50%);
+        background: radial-gradient(ellipse at 50% 30%, #8fe39b, #7bd389 55%, #4fa36b);
+        border-radius: 50%;
+        border-top: 10px solid #4fa36b;
+      }
+      .fake-scene__animal {
+        position: absolute;
+        font-size: 64px;
+        filter: drop-shadow(0 10px 0 rgba(45, 42, 50, 0.25));
+        animation: fake-hop 1.4s ease-in-out infinite;
+      }
+      .fake-scene__ball {
+        position: absolute;
+        width: 34px;
+        height: 34px;
+        background: #fff4dc;
+        border: 4px solid #2d2a32;
+        border-radius: 50%;
+      }
+      @keyframes fake-hop {
+        50% {
+          transform: translateY(-18px);
+        }
+      }
+
+      /* Harness controls: press H to hide/show (hidden for screenshots via ?hide=1). */
+      #harness {
+        position: fixed;
+        right: 10px;
+        bottom: 10px;
+        z-index: 1000;
+        width: 290px;
+        max-height: calc(100vh - 20px);
+        overflow: auto;
+        padding: 10px;
+        font: 13px/1.3 system-ui, sans-serif;
+        color: #fff;
+        background: rgba(20, 18, 26, 0.88);
+        border-radius: 10px;
+        pointer-events: auto;
+      }
+      #harness[hidden] {
+        display: none;
+      }
+      #harness h1 {
+        margin: 0 0 6px;
+        font-size: 13px;
+      }
+      #harness select {
+        width: 100%;
+        margin-bottom: 8px;
+        font-size: 13px;
+      }
+      #harness .row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        margin-bottom: 6px;
+      }
+      #harness button {
+        padding: 3px 7px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      #harness p {
+        margin: 6px 0 0;
+        opacity: 0.7;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="game" aria-hidden="true"></div>
+    <div id="ui"></div>
+    <aside id="harness" aria-label="UI harness controls"></aside>
+    <script type="module" src="./client-ui.ts"></script>
+  </body>
+</html>

@@ -69,4 +69,9 @@ export interface CharacterSyncOptions {
   localId: string;
   /** Hide the local player's body (e.g. camera too close). */
   hideLocal: boolean;
+  /**
+   * Camera position. The local player's own ghost is hidden while the camera is inside it (the
+   * ghost cam starts right where the ghost floats). Omit to never hide ghosts.
+   */
+  cameraPos?: Vec3Like;
 }

@@ -10,7 +10,7 @@ A small hub of browser multiplayer party games. One Node process serves:
 
 | Game | Folder | Design doc |
 |---|---|---|
-| Bonk Brawl: 3D dodgeball free-for-all for 2–4 players | `games/bonk-brawl/` | [`game1.md`](game1.md) |
+| Bonk Brawl: 3D dodgeball free-for-all for 2–8 players | `games/bonk-brawl/` | [`game1.md`](game1.md) |
 | Jelly Jackpot: wobbly cake-stacking, gambling and a secret Saboteur for 2–6 players | `games/jelly-jackpot/` | [`game2.md`](game2.md) |
 
 ## Run it

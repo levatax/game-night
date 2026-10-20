@@ -2,6 +2,7 @@
 
 import type * as THREE from "three";
 import type { PlayerFrame } from "../net/types";
+import { Avatar } from "./Avatar";
 import type { AnimTrigger, CharacterSyncOptions, TriggerOptions } from "./types";
 
 /**
@@ -17,39 +18,70 @@ import type { AnimTrigger, CharacterSyncOptions, TriggerOptions } from "./types"
  * Held balls are rendered by fx using getHandPosition().
  */
 export class Characters {
+  private readonly scene: THREE.Scene;
+  private readonly avatars = new Map<string, Avatar>();
+  private stamp = 0;
+
   constructor(scene: THREE.Scene) {
-    void scene;
+    this.scene = scene;
   }
 
   /** Per frame with cosmetic dt. Frames: local + remotes (Net.getLocalPlayer / getRemotePlayers). */
   sync(frames: readonly PlayerFrame[], opts: CharacterSyncOptions, dt: number): void {
-    void frames;
-    void opts;
-    void dt;
+    const stamp = ++this.stamp;
+    for (const frame of frames) {
+      let avatar = this.avatars.get(frame.id);
+      if (avatar && avatar.character !== frame.character) {
+        avatar.dispose();
+        avatar = undefined;
+      }
+      if (!avatar) {
+        avatar = new Avatar(this.scene, frame);
+        this.avatars.set(frame.id, avatar);
+      }
+      avatar.stamp = stamp;
+      avatar.sync(frame, opts, dt);
+    }
+    for (const [id, avatar] of this.avatars) {
+      if (avatar.stamp === stamp) continue;
+      avatar.dispose();
+      this.avatars.delete(id);
+    }
   }
 
   trigger(id: string, anim: AnimTrigger, opts?: TriggerOptions): void {
-    void id;
-    void anim;
-    void opts;
+    this.avatars.get(id)?.trigger(anim, opts);
   }
 
   /** World position of the player's right hand (held ball). false if the id has no animal. */
   getHandPosition(id: string, out: THREE.Vector3): boolean {
-    void id;
-    void out;
-    return false;
+    const avatar = this.avatars.get(id);
+    if (!avatar) return false;
+    avatar.getHandPosition(out);
+    return true;
   }
 
   /** World position above the head (pop text / emote anchor). */
   getHeadTop(id: string, out: THREE.Vector3): boolean {
-    void id;
-    void out;
-    return false;
+    const avatar = this.avatars.get(id);
+    if (!avatar) return false;
+    avatar.getHeadTop(out);
+    return true;
+  }
+
+  /** Current animation state and face of a player (dev harness / debugging). */
+  inspect(id: string): { state: string; expression: string } | null {
+    const avatar = this.avatars.get(id);
+    return avatar ? { state: avatar.animator.state, expression: avatar.animator.expression } : null;
   }
 
   /** Remove every animal (leaving a room). */
-  clear(): void {}
+  clear(): void {
+    for (const avatar of this.avatars.values()) avatar.dispose();
+    this.avatars.clear();
+  }
 
-  dispose(): void {}
+  dispose(): void {
+    this.clear();
+  }
 }

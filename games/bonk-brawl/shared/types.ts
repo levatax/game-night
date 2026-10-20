@@ -61,7 +61,7 @@ export type PlayerAction =
   | "ability"
   | "ghost";
 
-/** Player slot 0..3 = P1..P4 (color index into PLAYER_COLORS). */
+/** Player slot 0..7 = P1..P8 (color index into PLAYER_COLORS). */
 export type SlotIndex = 0 | 1 | 2 | 3;
 
 /** Plain vector used in messages and the shared sim (never a THREE.Vector3). */
@@ -199,7 +199,7 @@ export interface PlayerView extends PlayerSimFields {
   id: string;
   nickname: string;
   character: CharacterId;
-  /** 0..3, P1..P4, picks the player color. Lowest free slot on join, kept for the room lifetime. */
+  /** 0..7, P1..P8, picks the player color. Lowest free slot on join, kept for the room lifetime. */
   slot: number;
   /** Lobby ready flag. */
   ready: boolean;

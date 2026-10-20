@@ -8,7 +8,7 @@
 // - ringRadii ascending; ring i covers shapeDistance in (ringRadii[i-1], ringRadii[i]]; ring 0 is the
 //   inner disc (0, ringRadii[0]] and NEVER falls. The last radius is the island edge.
 // - All cover footprints lie fully inside ring 0, so cover never falls.
-// - Pedestals sit in ring 1, spawns in the outer rings on the 4 diagonals, facing the center.
+// - Pedestals sit in ring 1, spawns in the outer rings on the 4 diagonals + 4 axes, facing the center.
 
 import { DEFAULT_MAP, MAP_IDS } from "./constants.js";
 import type { MapId } from "./types.js";
@@ -157,7 +157,7 @@ export interface ArenaDef {
   cover: ReadonlyArray<CoverDef>;
   /** Exactly 3 power-up pedestals. */
   pedestals: ReadonlyArray<Pedestal>;
-  /** Exactly 4 spawns, used in slot order (slot 0 → spawns[0]). Slots 0/1 are opposite corners. */
+  /** Exactly MAX_PLAYERS (8) spawns, used in slot order (slot 0 → spawns[0]). Slots 0/1 are opposite corners. */
   spawns: ReadonlyArray<SpawnPoint>;
   /** Center of the ball drop pattern (offsets in constants.BALL_DROP_OFFSETS). */
   ballDrop: { x: number; z: number };
@@ -218,8 +218,17 @@ const SLIPPERY_FRICTION: FrictionProfile = {
   ballBounceFriction: 0.95,
 };
 
-/** Diagonal corners; slot 0/1 opposite, then 2/3. */
-const DIAGONAL_SPAWNS: ReadonlyArray<SpawnPoint> = [spawn(-7.5, 7.5), spawn(7.5, -7.5), spawn(7.5, 7.5), spawn(-7.5, -7.5)];
+/** Diagonal corners (slot 0/1 opposite, then 2/3), then the axes for slots 4..7 (4/5 and 6/7 opposite). */
+const DIAGONAL_SPAWNS: ReadonlyArray<SpawnPoint> = [
+  spawn(-7.5, 7.5),
+  spawn(7.5, -7.5),
+  spawn(7.5, 7.5),
+  spawn(-7.5, -7.5),
+  spawn(-9, 0),
+  spawn(9, 0),
+  spawn(0, 9),
+  spawn(0, -9),
+];
 
 /** Three pedestals at radius 6.4 between the spawn diagonals (north, south-east, south-west). */
 const RING1_PEDESTALS: ReadonlyArray<Pedestal> = [

@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bonk Brawl · Audio harness</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --ink: #2d2a32;
+        --yellow: #ffcf33;
+        --red: #ff5a5f;
+        --blue: #3fa7ff;
+        --green: #7be07b;
+        --paper: #fff8e8;
+        --sky: #6ec6ff;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        background: linear-gradient(#6ec6ff, #d6f1ff 420px) fixed;
+        color: var(--ink);
+        font-family: "Fredoka", system-ui, sans-serif;
+        font-size: 14px;
+      }
+      header {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px 16px;
+        padding: 10px 16px;
+        background: var(--ink);
+        color: #fff;
+        box-shadow: 0 4px 0 rgba(0, 0, 0, 0.2);
+      }
+      header h1 {
+        margin: 0;
+        font-size: 22px;
+        letter-spacing: 0.5px;
+      }
+      header h1 span {
+        color: var(--yellow);
+      }
+      #status {
+        padding: 2px 10px;
+        border-radius: 999px;
+        background: var(--red);
+        font-weight: 600;
+      }
+      #status.on {
+        background: #3cb371;
+      }
+      #meter {
+        width: 220px;
+        height: 44px;
+        border-radius: 8px;
+        background: #1c1a20;
+      }
+      main {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+        gap: 14px;
+        padding: 14px 16px 40px;
+      }
+      section {
+        background: var(--paper);
+        border: 3px solid var(--ink);
+        border-radius: 16px;
+        box-shadow: 0 5px 0 var(--ink);
+        padding: 10px 12px 12px;
+      }
+      section.wide {
+        grid-column: 1 / -1;
+      }
+      section h2 {
+        margin: 0 0 8px;
+        font-size: 17px;
+      }
+      h3 {
+        margin: 8px 0 4px;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+        opacity: 0.7;
+      }
+      button {
+        font: inherit;
+        font-size: 13px;
+        font-weight: 500;
+        margin: 2px;
+        padding: 4px 9px;
+        border: 2px solid var(--ink);
+        border-radius: 9px;
+        background: var(--yellow);
+        color: var(--ink);
+        cursor: pointer;
+        box-shadow: 0 2px 0 var(--ink);
+      }
+      button:active,
+      button.down {
+        transform: translateY(2px);
+        box-shadow: none;
+      }
+      button.on {
+        background: var(--green);
+      }
+      button.alt {
+        background: #fff;
+      }
+      button.danger {
+        background: var(--red);
+        color: #fff;
+      }
+      label.row {
+        display: grid;
+        grid-template-columns: 92px 1fr 44px;
+        align-items: center;
+        gap: 8px;
+        margin: 3px 0;
+      }
+      header label.row {
+        grid-template-columns: auto 90px 34px;
+        margin: 0;
+      }
+      input[type="range"] {
+        width: 100%;
+        accent-color: var(--red);
+      }
+      .muted {
+        opacity: 0.65;
+        font-size: 12px;
+      }
+      #pad {
+        display: block;
+        width: 260px;
+        height: 260px;
+        margin: 4px auto;
+        border: 3px solid var(--ink);
+        border-radius: 14px;
+        background: #7bd389;
+        cursor: crosshair;
+      }
+      .scroll-x {
+        overflow-x: auto;
+      }
+      table.voices {
+        border-collapse: collapse;
+      }
+      table.voices td,
+      table.voices th {
+        padding: 1px 2px;
+        text-align: left;
+      }
+      table.voices button {
+        padding: 2px 6px;
+        font-size: 12px;
+      }
+      #summary {
+        font-weight: 600;
+        margin: 6px 0;
+      }
+      #gallery {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+        gap: 8px;
+      }
+      .card {
+        border: 2px solid var(--ink);
+        border-radius: 10px;
+        background: #fff;
+        padding: 4px 6px 6px;
+        cursor: pointer;
+      }
+      .card.fail {
+        background: #ffe1e1;
+        border-color: var(--red);
+      }
+      .card .name {
+        display: flex;
+        justify-content: space-between;
+        font-weight: 600;
+      }
+      .card canvas {
+        display: block;
+        width: 100%;
+        height: 70px;
+        border-radius: 6px;
+        background: #14121a;
+        margin-top: 3px;
+      }
+      .card .stats {
+        font-size: 11px;
+        opacity: 0.75;
+      }
+      .ok {
+        color: #2e9e5b;
+      }
+      .bad {
+        color: var(--red);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>BONK BRAWL <span>audio</span></h1>
+      <span id="status">locked: click anything</span>
+      <span id="voices" class="muted"></span>
+      <canvas id="meter" width="440" height="88"></canvas>
+      <span id="peak" class="muted"></span>
+    </header>
+    <main id="app"></main>
+    <script type="module" src="./audio.ts"></script>
+  </body>
+</html>

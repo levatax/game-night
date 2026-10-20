@@ -200,14 +200,12 @@ export const MAX_HELD_BALLS_TRIPLE = 2;
 /** Balls in arena = max(BALLS_MIN, players − 1) (+ SUDDEN_DEATH_EXTRA_BALLS during sudden death). */
 export const BALLS_MIN = 2;
 export const SUDDEN_DEATH_EXTRA_BALLS = 1;
-/** Drop spots around the arena's ballDrop center, used in order for simultaneous drops. */
-export const BALL_DROP_OFFSETS: ReadonlyArray<{ x: number; z: number }> = [
-  { x: 0, z: 0 },
-  { x: 1.3, z: 0.7 },
-  { x: -1.2, z: 0.8 },
-  { x: 0.1, z: -1.4 },
-  { x: 1.0, z: -0.9 },
-];
+/** Random ball drops: tries per spawn before falling back to the arena's ballDrop center. */
+export const BALL_SPAWN_ATTEMPTS = 40;
+/** Random ball drops stay this far inside the edge of the remaining solid floor. */
+export const BALL_SPAWN_EDGE_MARGIN = 1.2;
+/** Random ball drops prefer this much room from other loose balls. */
+export const BALL_SPAWN_SPACING = 2;
 
 export function ballsForPlayers(players: number, suddenDeath: boolean): number {
   return Math.max(BALLS_MIN, players - 1) + (suddenDeath ? SUDDEN_DEATH_EXTRA_BALLS : 0);
@@ -379,7 +377,7 @@ export const MAX_PENDING_INPUTS = 120;
 
 /* ======================================================= room & players */
 
-export const MAX_PLAYERS = 4;
+export const MAX_PLAYERS = 8;
 export const MIN_PLAYERS_TO_START = 2;
 export const NICKNAME_MIN = 1;
 export const NICKNAME_MAX = 16;
@@ -394,9 +392,18 @@ export const SETTINGS_STORAGE_KEY = "bonk-brawl.settings.v1";
 
 /* =============================================================== colors */
 
-/** Player colors by slot: P1 red, P2 blue, P3 green, P4 yellow. */
-export const PLAYER_COLORS: ReadonlyArray<string> = ["#FF5A5F", "#3FA7FF", "#7BE07B", "#FFC23F"];
-export const PLAYER_COLOR_NAMES: ReadonlyArray<string> = ["Red", "Blue", "Green", "Yellow"];
+/** Player colors by slot: P1 red, P2 blue, P3 green, P4 yellow, P5 purple, P6 orange, P7 pink, P8 teal. */
+export const PLAYER_COLORS: ReadonlyArray<string> = [
+  "#FF5A5F",
+  "#3FA7FF",
+  "#7BE07B",
+  "#FFC23F",
+  "#B07CFF",
+  "#FF8A3D",
+  "#FF7EC8",
+  "#3FD9C8",
+];
+export const PLAYER_COLOR_NAMES: ReadonlyArray<string> = ["Red", "Blue", "Green", "Yellow", "Purple", "Orange", "Pink", "Teal"];
 
 export const PALETTE = {
   grass: "#7BD389",
