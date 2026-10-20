@@ -1,0 +1,136 @@
+/* 3D name labels + taunt bubbles (Characters). The labels layer sits UNDER the HUD layer: no z-index here,
+   labels are positioned with transform only (no layout per frame) and fade instead of popping. */
+.ks-char-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .2em;
+  width: max-content;
+  font: 700 clamp(12px, .95vw, 17px) / 1.15 "Fredoka", system-ui, sans-serif;
+  transform: translate3d(-9999px, -9999px, 0);
+  will-change: transform;
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity .18s ease-out;
+}
+.ks-char-label--hidden {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity .18s ease-in, visibility 0s linear .18s;
+}
+.ks-char-label__pill {
+  display: inline-flex;
+  align-items: baseline;
+  gap: .32em;
+  max-width: 15em;
+  padding: .2em .62em .24em;
+  color: #fff4df;
+  background: rgba(24, 19, 29, .82);
+  border: 1.5px solid var(--player-color, #ffc93c);
+  border-radius: 999px;
+  box-shadow: 0 2px 8px #0008;
+  white-space: nowrap;
+  transition: transform .15s ease-out, box-shadow .15s ease-out, border-color .15s;
+}
+.ks-char-label__name {
+  overflow: hidden;
+  max-width: 9em;
+  text-overflow: ellipsis;
+}
+.ks-char-label__kasa {
+  color: #7bd389;
+  font-weight: 600;
+}
+.ks-char-label__kasa::before {
+  content: "· ";
+  color: #fff4df99;
+}
+.ks-char-label__icons {
+  font-size: .9em;
+  letter-spacing: .05em;
+}
+.ks-char-label--nokasa .ks-char-label__kasa,
+.ks-char-label--noicons .ks-char-label__icons { display: none; }
+.ks-char-label--active .ks-char-label__pill {
+  border-color: #ffc93c;
+  box-shadow: 0 2px 8px #0008, 0 0 14px #ffc93c88;
+}
+.ks-char-label--ghost .ks-char-label__pill { color: #bff0ef; background: rgba(11, 46, 50, .8); }
+.ks-char-label--offline .ks-char-label__pill { color: #aaa3a3; filter: grayscale(.85); }
+.ks-char-label--target .ks-char-label__pill { border-color: #ff3b3f; }
+.ks-char-label--hot .ks-char-label__pill {
+  border-color: #ffc93c;
+  box-shadow: 0 2px 10px #000a, 0 0 18px #ffc93caa;
+  transform: scale(1.12);
+}
+
+/* What this rival would lose if I pick them (Haraç −40$, Takas, Lanet). */
+.ks-char-label__preview {
+  display: none;
+  padding: .16em .55em .2em;
+  border-radius: .5em;
+  color: #fff4df;
+  background: rgba(24, 19, 29, .9);
+  border: 1.5px solid currentColor;
+  font-size: 1.08em;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.ks-char-label--preview .ks-char-label__preview { display: block; }
+.ks-char-label__preview--bad { color: #ff7a7c; }
+.ks-char-label__preview--good { color: #7bd389; }
+.ks-char-label__preview--info { color: #8ec8ff; }
+.ks-char-label--hot .ks-char-label__preview { transform: scale(1.12); }
+
+/* My own label: only my speech bubble shows. */
+.ks-char-label--me .ks-char-label__pill,
+.ks-char-label--me .ks-char-label__preview { display: none; }
+
+/* Names hidden (a hero card is up): a taunt bubble still shows, at the same height (the pill keeps its box). */
+.ks-char-label--bubbleonly .ks-char-label__pill,
+.ks-char-label--bubbleonly .ks-char-label__preview { visibility: hidden; }
+
+.ks-char-bubble {
+  position: absolute;
+  bottom: calc(100% + .45em);
+  left: 50%;
+  min-width: 8em;
+  max-width: 15em;
+  padding: .42em .64em;
+  color: #241f2b;
+  background: #fff4df;
+  border: 2px solid #241f2b;
+  border-radius: .85em;
+  box-shadow: 0 4px 0 #241f2b, 0 8px 20px #0008;
+  font-size: .95em;
+  line-height: 1.2;
+  text-align: center;
+  white-space: normal;
+  opacity: 0;
+  transform: translate(-50%, .3em) scale(.88);
+  transition: opacity .15s, transform .15s;
+  pointer-events: none;
+}
+.ks-char-label--talk .ks-char-bubble {
+  opacity: 1;
+  transform: translate(-50%, 0) scale(1);
+}
+.ks-char-bubble::after {
+  content: "";
+  position: absolute;
+  left: calc(50% - .4em);
+  bottom: -.5em;
+  width: .7em;
+  height: .7em;
+  background: #fff4df;
+  border-right: 2px solid #241f2b;
+  border-bottom: 2px solid #241f2b;
+  transform: rotate(45deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ks-char-label, .ks-char-label__pill, .ks-char-bubble { transition: none; }
+}
