@@ -14,7 +14,7 @@ import type { MaterialBank } from "../kit/MaterialBank";
 import { letteringTexture } from "../textures";
 import { addOutline, createToonMaterial, vertexColorToon } from "../Toon";
 import { bakeCampChest, bakeCampfireBase, yawToward } from "./props/camp";
-import { bakeCave, bakeSpring, secretChestGeometries, SPRING_POOL_RADIUS } from "./props/landmarks";
+import { bakeCave, bakeSpring, secretChestGeometries, SPRING_POOL_RADIUS, SPRING_WATER_HEIGHT } from "./props/landmarks";
 import { bakeWreck, wreckLetteringGeometry } from "./props/wreck";
 import { Sparkles } from "./Sparkles";
 
@@ -129,7 +129,7 @@ export class Sites {
     const mat = bank.own(createToonMaterial("#7FD9F0", { emissive: "#BDF3FF", emissiveIntensity: 0.18, transparent: true, opacity: 0.85 }));
     const water = new THREE.Mesh(geo, mat);
     water.name = "springWater";
-    water.position.set(x, y + 0.03, z);
+    water.position.set(x, y + SPRING_WATER_HEIGHT, z);
     water.receiveShadow = true;
     water.renderOrder = 2;
     this.group.add(water);
@@ -138,7 +138,7 @@ export class Sites {
     for (let i = 0; i < 6; i++) {
       const a = (i / 6) * Math.PI * 2 + i;
       const d = SPRING_POOL_RADIUS * (0.25 + (i % 3) * 0.22);
-      pts.push(new THREE.Vector3(x + Math.cos(a) * d, y + 0.08, z + Math.sin(a) * d));
+      pts.push(new THREE.Vector3(x + Math.cos(a) * d, y + SPRING_WATER_HEIGHT + 0.05, z + Math.sin(a) * d));
     }
     const sp = new Sparkles(pts, "#EFFFFF", 22, bank);
     this.group.add(sp.object);

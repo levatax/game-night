@@ -13,6 +13,8 @@ import type { WorldGround } from "./camp";
 
 /** Spring pool radius (the water disc Sites draws on top). */
 export const SPRING_POOL_RADIUS = 0.95;
+/** Water surface above the basin's top at +0.03, leaving depth between the two meshes. */
+export const SPRING_WATER_HEIGHT = 0.065;
 
 function lumpy(g: THREE.BufferGeometry, amount: number, seed: number, squash = 1): THREE.BufferGeometry {
   const pos = g.getAttribute("position") as THREE.BufferAttribute;
@@ -53,8 +55,8 @@ export function bakeSpring(out: Baker, spring: { x: number; z: number }, rock: s
     if (i % 3 === 0) b.addAt(new THREE.CapsuleGeometry(0.035, 0.12, 1, 5), "#7A4E2D", new THREE.Vector3(Math.cos(a) * d, h - 0.05, Math.sin(a) * d), null, 1, true);
   }
   // Lily pad with a flower.
-  b.addAt(new THREE.CylinderGeometry(0.2, 0.2, 0.02, 8, 1, false, 0.4, Math.PI * 1.8), "#4FA36B", new THREE.Vector3(0.3, 0.03, -0.2), null, 1, true);
-  b.addAt(new THREE.ConeGeometry(0.07, 0.08, 5), "#FF8FB8", new THREE.Vector3(0.32, 0.08, -0.18), null, 1, true);
+  b.addAt(new THREE.CylinderGeometry(0.2, 0.2, 0.02, 8, 1, false, 0.4, Math.PI * 1.8), "#4FA36B", new THREE.Vector3(0.3, SPRING_WATER_HEIGHT + 0.02, -0.2), null, 1, true);
+  b.addAt(new THREE.ConeGeometry(0.07, 0.08, 5), "#FF8FB8", new THREE.Vector3(0.32, SPRING_WATER_HEIGHT + 0.07, -0.18), null, 1, true);
   // Bamboo spout trickling into the pool from the uphill side.
   const spout = new THREE.Vector3(-SPRING_POOL_RADIUS - 0.25, 0.55, 0);
   b.addAt(new THREE.CylinderGeometry(0.06, 0.06, 0.9, 6), "#B9C46A", spout, new THREE.Euler(0, 0, 1.25), 1, true);

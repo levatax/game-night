@@ -18,7 +18,7 @@ import { onKeyCapsChange } from "../../input/bindings";
 import type { Emitter } from "../../util/Emitter";
 import { keyParams, keysSignature } from "../controls";
 import { button, el, fill, play, setHidden, setText, SHAKE_KEYFRAMES, svg, tr } from "../dom";
-import { ICON_BACK, ICON_DICE } from "../icons";
+import { ICON_BACK, ICON_DICE, ICON_MOUSE } from "../icons";
 import type { HomeModel, UiEventMap } from "../models";
 import { browserMedia, deviceNoticeDue, dismissDeviceNotice, reloadKeepingDraft, saveHomeDraft, sessionStore, takeHomeDraft, type HomeDraft } from "./homeState";
 
@@ -61,8 +61,8 @@ const BACKDROP = `
   <g stroke="#FFF4DC" stroke-width="5" stroke-linecap="round" opacity="0.45" fill="none">
     <path d="M620 680h120M860 676h140M700 712h220M560 748h120M930 744h160"/>
   </g>
-  <path d="M0 820c180-40 340-46 520-20 120 18 220 10 300-20l0 140H0Z" fill="#F4E4B0"/>
-  <path d="M1600 800c-160-30-300-32-440-10-90 14-170 8-240-12V900h680Z" fill="#E6D7A8"/>
+  <path d="M0 820C180 780 340 774 520 800C640 818 740 810 820 780C930 812 1040 812 1160 790C1300 768 1440 770 1600 800V900H0Z" fill="#F4E4B0"/>
+  <path d="M820 900C920 842 1040 814 1160 790C1300 768 1440 770 1600 800V900Z" fill="#E6D7A8" opacity="0.7"/>
   <g class="rr-home__palm" fill="#2D2A32">
     <path d="M196 860c4-120 26-230 70-330l14 6c-38 104-56 210-58 324Z"/>
     <path d="M276 528c-60-40-150-30-196 14 60-12 120-6 178 22Zm8-4c10-70 70-120 140-120-50 26-90 66-122 128Zm-8 6c-80 0-150 50-170 120 50-50 110-82 176-96Zm12 2c70-10 150 30 180 100-56-40-116-60-180-70Zm-6-10c30-60 0-130-56-160 26 50 36 104 40 160Z"/>
@@ -209,7 +209,7 @@ export class HomeScreen {
       this.nickInput.focus({ preventScroll: true });
     });
     card.append(
-      el("span", "rr-home__device-icon", "⌨️🖱️"),
+      el("span", "rr-home__device-icon", el("kbd", "", "WASD"), svg(ICON_MOUSE)),
       title,
       this.deviceBody,
       el("div", "rr-home__device-actions", other),
