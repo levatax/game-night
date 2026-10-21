@@ -5,11 +5,16 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import express from "express";
 import { Server, matchMaker } from "@colyseus/core";
 import { WebSocketTransport } from "@colyseus/ws-transport";
-import { loadGames, publicManifest, type LoadedGame } from "./games.js";
+import { hubHealth, loadGames, publicManifest, type LoadedGame } from "./games.js";
 import { CODE_PATTERN, createRoomCodeRegistry, normalizeCode } from "./roomCodes.js";
 import type { GameServerModule } from "./types.js";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+// Runs from source (`npm start`: tsx server/index.ts) or compiled (`npm run start:prod`: node dist/server/index.js,
+// built by tsconfig.server.json). Compiled, the game server modules sit in dist/ and everything else (portal,
+// game.json files, client builds, covers) stays at the repo root one level up.
+const COMPILED = path.extname(fileURLToPath(import.meta.url)) === ".js";
+const BUILD_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = COMPILED ? path.dirname(BUILD_ROOT) : BUILD_ROOT;
 const PORTAL_DIR = path.join(ROOT, "portal");
 const GAMES_DIR = path.join(ROOT, "games");
 const PORT = Number(process.env.PORT ?? 3000);
@@ -25,15 +30,30 @@ const clientDistOf = (game: LoadedGame) => path.join(game.dir, game.manifest.cli
 const isClientBuilt = (game: LoadedGame) => fs.existsSync(path.join(clientDistOf(game), "index.html"));
 
 // ---------------------------------------------------------------- game servers
+/** Registered game server modules by game id (asked for their `health()` on /healthz). */
+const modules = new Map<string, GameServerModule>();
+/**
+ * Games whose server module failed to import or register, with the error: /healthz answers 503 for them. The full
+ * error (message, stack, file paths) is only logged here; /healthz shows a short reason (games.ts `errorReason`).
+ */
+const failed = new Map<string, unknown>();
+/** `games/<id>/server/index.ts`, or `dist/games/<id>/server/index.js` when compiled. */
+const serverEntryOf = (game: LoadedGame, server: string) =>
+  COMPILED
+    ? path.join(BUILD_ROOT, path.relative(ROOT, game.dir), server.replace(/\.ts$/, ".js"))
+    : path.join(game.dir, server);
+
 for (const game of games) {
   const { manifest } = game;
   if (!manifest.server || manifest.status === "soon") continue;
-  const entry = path.join(game.dir, manifest.server);
+  const entry = serverEntryOf(game, manifest.server);
   try {
     const mod = (await import(pathToFileURL(entry).href)) as GameServerModule;
     await mod.register({ gameId: manifest.id, gameDir: game.dir, gameServer, app, codes, manifest });
+    modules.set(manifest.id, mod);
     console.log(`[hub] registered ${manifest.id}`);
   } catch (err) {
+    failed.set(manifest.id, err);
     console.error(`[hub] failed to register ${manifest.id}:`, err);
   }
 }
@@ -53,7 +73,10 @@ async function liveStats(game: LoadedGame) {
 
 app.get("/api/games", async (_req, res) => {
   const list = await Promise.all(
-    games.map(async (game) => ({ ...publicManifest(game, isClientBuilt(game)), live: await liveStats(game) })),
+    games.map(async (game) => ({
+      ...publicManifest(game, isClientBuilt(game), failed.has(game.manifest.id)),
+      live: await liveStats(game),
+    })),
   );
   res.set("Cache-Control", "no-store").json({ games: list });
 });
@@ -71,7 +94,14 @@ app.get("/api/rooms/:code", (req, res) => {
   res.json({ code, gameId: owner.gameId, url: `/games/${owner.gameId}/?room=${code}` });
 });
 
-app.get("/healthz", (_req, res) => void res.json({ ok: true, games: games.length }));
+// 503 as soon as one game says it isn't ok (e.g. a stalled room loop) or never registered, so the container
+// healthcheck notices. Public: no error messages, paths or room codes in the body (a game's own report is cut to
+// counts and flags, games.ts `publicHealth`), those stay in the server log, which polling can't flood
+// (`throttledHealthLog`).
+app.get("/healthz", (_req, res) => {
+  const health = hubHealth(games.length, modules, failed);
+  res.set("Cache-Control", "no-store").status(health.ok ? 200 : 503).json(health);
+});
 
 // Share links: /r/ABCD → whichever game owns that room.
 app.get("/r/:code", (req, res) => {

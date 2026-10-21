@@ -68,8 +68,8 @@ export interface SimImpact {
 }
 
 // ------------------------------------------------------------------ tuning (toy-scale wobble)
-const LINEAR_DAMPING = 0.2;
-const ANGULAR_DAMPING = 0.8;
+const LINEAR_DAMPING = 0.35;
+const ANGULAR_DAMPING = 1.6;
 const SOLVER_ITERATIONS = 8;
 const STATIC_FRICTION = 0.8;
 const STATIC_RESTITUTION = 0.1;

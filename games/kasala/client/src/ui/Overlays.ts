@@ -1,4 +1,4 @@
-// In-game loan, score, settings, reaction, mugshot and match-end windows.
+// In-game loan, score, settings, reaction, mugshot, round summary and match-end windows.
 // Helpers under ui/overlays/** (OfferDock, SettingsPanel, scoreboard, matchEnd, dom), styles in ui/overlays.css.
 // Nothing here sits over the felt unless the player asked for it: loan offers dock to the right edge (only the
 // recipient's Kabul / Reddet take clicks), the emote / taunt picker floats above the HUD's action stack, and
@@ -6,11 +6,11 @@
 import "./overlays.css";
 import { linesFor, lineDurationSec, type AnnouncerEvent } from "../../../shared/announcer";
 import { EMOTES, LOAN_MAX_PCT, LOAN_MIN, LOAN_RATES, TAUNTS, type EmoteId } from "../../../shared/constants";
-import type { DebtView, KasalaStateView, LoanKind, MatchEndMsg, PlayerView } from "../../../shared/protocol";
+import type { DebtView, KasalaStateView, LoanKind, MatchEndMsg, PlayerView, RoundEndMsg } from "../../../shared/protocol";
 import { settings } from "../app/settings";
 import { money, toName, type UiSound } from "../app/ui";
 import { addKeyGate } from "./keyGate";
-import { botBadge, btn, face, h, kbd, vals, who } from "./overlays/dom";
+import { botBadge, btn, face, h, kbd, nameTag, vals, who } from "./overlays/dom";
 import { collectionsView, podiumView, titleView } from "./overlays/matchEnd";
 import { OfferDock } from "./overlays/OfferDock";
 import { buildScoreboard, scoreSignature } from "./overlays/scoreboard";
@@ -48,6 +48,7 @@ export class Overlays {
   private readonly endShade = h("div", "ks-ov-end-shade");
   private readonly picker = h("div", "ks-ov-picker");
   private readonly mug = h("div", "ks-ov-mugshot");
+  private readonly round = h("div", "ks-ov-round");
   private readonly end = h("section", "ks-ov-end");
   private readonly endBody = h("div", "ks-ov-body");
   /** Podium only: Rövanş / Masadan kalk, outside the scrolling body so they never scroll out of view. */
@@ -68,6 +69,7 @@ export class Overlays {
   private loanKey = "";
   private scoreKey = "";
   private mugTime = 0;
+  private roundTime = 0;
   private endMsg: MatchEndMsg | null = null;
   private endState: KasalaStateView | null = null;
   private step: MatchEndStep = "collections";
@@ -96,12 +98,13 @@ export class Overlays {
       sound: (kind) => this.sound(kind),
       keysAllowed: () => !this.modal && !this.endMsg,
     });
-    this.picker.hidden = this.mug.hidden = this.end.hidden = true;
+    this.picker.hidden = this.mug.hidden = this.round.hidden = this.end.hidden = true;
     this.picker.setAttribute("role", "menu");
     this.end.setAttribute("aria-label", "Maç sonucu");
     this.endFoot.hidden = true;
     this.end.append(this.endBody, this.endFoot);
-    this.root.append(this.picker, this.mug, this.end);
+    this.round.setAttribute("role", "status");
+    this.root.append(this.picker, this.mug, this.round, this.end);
     this.root.addEventListener("pointerover", (event) => {
       const target = event.target instanceof Element ? event.target.closest("button") : null;
       if (!target || (target as HTMLButtonElement).disabled) return;
@@ -124,6 +127,7 @@ export class Overlays {
   }
   tick(dt: number): void {
     if (this.mugTime > 0 && (this.mugTime -= dt) <= 0) this.mug.hidden = true;
+    if (this.roundTime > 0 && (this.roundTime -= dt) <= 0) this.round.hidden = true;
     if (!this.endMsg || this.step === "podium" || (this.stepTime -= dt) > 0) return;
     if (this.step === "collections") { this.step = this.endMsg.titles.length ? "title" : "podium"; this.stepIndex = 0; }
     else if (this.stepIndex + 1 < this.endMsg.titles.length) this.stepIndex++;
@@ -168,6 +172,7 @@ export class Overlays {
     this.loans.hidden = this.score.hidden = this.settingsPanel.hidden = true;
     this.openPicker(null);
     this.mug.hidden = true; this.mugTime = 0;
+    this.round.hidden = true; this.roundTime = 0;
     this.hideMatchEnd();
     this.offers.clear();
     this.state = null;
@@ -181,10 +186,39 @@ export class Overlays {
     this.mug.replaceChildren(card);
     this.mug.hidden = false; this.mugTime = 2.5;
   }
+  /** Between full rounds: who has what and how this round went for them, while the room pauses (msg.pauseSec). */
+  roundSummary(msg: RoundEndMsg, state: KasalaStateView, myId: string): void {
+    if (msg.pauseSec <= 0) return;
+    const card = h("div", "ks-ov-round__card");
+    card.appendChild(h("h2", "", `${msg.round}. TUR BİTTİ`));
+    const list = h("ol", "ks-ov-round__list");
+    msg.standings.forEach((row, i) => {
+      const p = state.players.get(row.playerId);
+      if (!p) return;
+      const li = h("li");
+      li.style.setProperty("--i", String(i));
+      if (p.id === myId) li.dataset.me = "true";
+      if (p.ghost) li.dataset.ghost = "true";
+      const tone = row.delta > 0 ? "ks-ov-pos" : row.delta < 0 ? "ks-ov-neg" : "";
+      li.append(
+        h("span", "ks-ov-round__rank", i === 0 && !p.ghost ? "👑" : String(i + 1)),
+        nameTag(p),
+        h("strong", "ks-ov-round__kasa", money(row.kasa)),
+        h("span", `ks-ov-round__delta ${tone}`, row.delta ? money(row.delta, true) : "±0$"),
+      );
+      list.appendChild(li);
+    });
+    card.appendChild(list);
+    const next = msg.finalTableNext ? "Sıradaki tur SON MASA: her şey ×2!" : `Sıradaki tur: ${msg.round + 1}/${state.totalRounds}`;
+    card.appendChild(h("p", msg.finalTableNext ? "ks-ov-round__next ks-ov-round__next--final" : "ks-ov-round__next", next));
+    this.round.replaceChildren(card);
+    this.round.hidden = false;
+    this.roundTime = msg.pauseSec;
+  }
   matchEnd(msg: MatchEndMsg, state: KasalaStateView, myId: string): void {
     this.state = this.endState = state; this.myId = myId; this.endMsg = msg;
     this.step = "collections"; this.stepIndex = 0;
-    this.setModal(null); this.openPicker(null); this.mug.hidden = true;
+    this.setModal(null); this.openPicker(null); this.mug.hidden = this.round.hidden = true;
     this.offers.clear();
     this.end.hidden = false; this.showEndStep();
   }

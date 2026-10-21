@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Raft Rush</title>
+    <meta name="description" content="Raft Rush: first-person co-op island survival for 1-6 friends in the browser. Build a raft before the storm." />
+    <meta name="theme-color" content="#FF9A5A" />
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='30' r='26' fill='%23FF9A5A'/%3E%3Cpath d='M6 44h52' stroke='%233FB7D9' stroke-width='10' stroke-linecap='round'/%3E%3Crect x='14' y='34' width='36' height='8' rx='3' fill='%23B07A45' stroke='%232D2A32' stroke-width='3'/%3E%3Cpath d='M32 12v22M32 14l14 14H32z' fill='%23FFF4DC' stroke='%232D2A32' stroke-width='3' stroke-linejoin='round'/%3E%3C/svg%3E"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #102a4a;
+        color: #2d2a32;
+        font-family: "Fredoka", system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        user-select: none;
+      }
+      #game {
+        position: fixed;
+        inset: 0;
+      }
+      #game canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+      #ui {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+      }
+      /* Loading splash until the bundle runs (app/splash.ts removes it). The backdrop is the page's own navy, so
+         nothing changes on a fast load; the card only fades in after 350 ms (SPLASH_DELAY_MS). Never blocks input. */
+      #rr-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 10;
+        display: grid;
+        place-items: center;
+        background: #102a4a;
+        color: #fff4dc;
+        pointer-events: none;
+        transition: opacity 0.3s ease;
+      }
+      #rr-splash.is-leaving {
+        opacity: 0;
+      }
+      .rr-splash__card {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+        opacity: 0;
+        animation: rr-splash-in 0.4s ease-out 0.35s forwards;
+      }
+      .rr-splash__raft {
+        width: 72px;
+        height: 72px;
+        animation: rr-splash-bob 1.4s ease-in-out infinite;
+      }
+      .rr-splash__title {
+        margin: 0;
+        font-size: 30px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-shadow: 0 3px 0 #2d2a32;
+      }
+      .rr-splash__text {
+        margin: 0;
+        font-size: 17px;
+        font-weight: 500;
+        opacity: 0.85;
+      }
+      /* The bundle never ran (the fallback script below): the card stays put and its Reload button takes clicks. */
+      #rr-splash.is-stuck .rr-splash__card {
+        opacity: 1;
+        animation: none;
+      }
+      #rr-splash.is-stuck .rr-splash__raft {
+        animation: none;
+      }
+      .rr-splash__reload {
+        margin-top: 6px;
+        padding: 10px 22px;
+        border: 3px solid #2d2a32;
+        border-radius: 999px;
+        background: #ff9a5a;
+        color: #2d2a32;
+        font: inherit;
+        font-size: 17px;
+        font-weight: 600;
+        cursor: pointer;
+        pointer-events: auto;
+      }
+      .rr-splash__reload:focus-visible {
+        outline: 3px solid #fff4dc;
+        outline-offset: 3px;
+      }
+      @keyframes rr-splash-in {
+        to {
+          opacity: 1;
+        }
+      }
+      @keyframes rr-splash-bob {
+        50% {
+          transform: translateY(-6px) rotate(-3deg);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #rr-splash {
+          transition: none;
+        }
+        .rr-splash__card {
+          animation: rr-splash-in 0s linear 0.35s forwards;
+        }
+        .rr-splash__raft {
+          animation: none;
+        }
+      }
+    </style>
+    <noscript><style>#rr-splash { display: none; }</style></noscript>
+  </head>
+  <body>
+    <div id="game" aria-hidden="true"></div>
+    <div id="ui"></div>
+    <div id="rr-splash" role="status" aria-live="polite">
+      <div class="rr-splash__card">
+        <svg class="rr-splash__raft" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+          <circle cx="32" cy="30" r="26" fill="#FF9A5A" />
+          <path d="M6 44h52" stroke="#3FB7D9" stroke-width="10" stroke-linecap="round" />
+          <rect x="14" y="34" width="36" height="8" rx="3" fill="#B07A45" stroke="#2D2A32" stroke-width="3" />
+          <path d="M32 12v22M32 14l14 14H32z" fill="#FFF4DC" stroke="#2D2A32" stroke-width="3" stroke-linejoin="round" />
+        </svg>
+        <p class="rr-splash__title">RAFT RUSH</p>
+        <p class="rr-splash__text" data-tr="Ada yükleniyor…">Loading the island…</p>
+      </div>
+    </div>
+    <script>
+      // Splash language before the bundle runs, picked like app/settings.ts does: the saved setting
+      // (localStorage "raft-rush.settings.v1" .language), else the browser's first language.
+      (function () {
+        var lang = "";
+        try {
+          var saved = JSON.parse(localStorage.getItem("raft-rush.settings.v1") || "{}");
+          if (saved && (saved.language === "en" || saved.language === "tr")) lang = saved.language;
+        } catch (e) {}
+        if (!lang) lang = String((navigator.languages && navigator.languages[0]) || navigator.language || "").toLowerCase().indexOf("tr") === 0 ? "tr" : "en";
+        if (lang !== "tr") return;
+        document.documentElement.lang = "tr";
+        var text = document.querySelector("#rr-splash .rr-splash__text");
+        if (text && text.getAttribute("data-tr")) text.textContent = text.getAttribute("data-tr");
+      })();
+    </script>
+    <script>
+      // The bundle never ran (a chunk failed to download, a page cached across a deploy, a browser too old for it):
+      // rather than "Loading…" forever, say so and offer a reload. A module script / modulepreload that fails to
+      // load says it at once; otherwise a splash still up after 30 s (SPLASH_STALL_MS) asks. app/splash.ts removes
+      // the splash once the home screen is up, which ends both.
+      (function () {
+        var tr = document.documentElement.lang === "tr";
+        var TEXT = {
+          failed: tr ? "Oyun yüklenemedi." : "The game couldn't load.",
+          slow: tr ? "Yükleme normalden uzun sürüyor." : "This is taking longer than usual.",
+          reload: tr ? "Sayfayı yenile" : "Reload the page",
+        };
+        var shown = "";
+        function offerReload(kind) {
+          if (shown === kind || shown === "failed") return;
+          var splash = document.getElementById("rr-splash");
+          if (!splash || splash.classList.contains("is-leaving")) return;
+          var text = splash.querySelector(".rr-splash__text");
+          if (text) text.textContent = TEXT[kind];
+          if (!shown) {
+            var button = document.createElement("button");
+            button.type = "button";
+            button.className = "rr-splash__reload";
+            button.textContent = TEXT.reload;
+            button.addEventListener("click", function () {
+              location.reload();
+            });
+            splash.classList.add("is-stuck");
+            (splash.querySelector(".rr-splash__card") || splash).appendChild(button);
+            button.focus();
+          }
+          shown = kind;
+        }
+        // Capture phase: a script / link load error doesn't bubble. ES5 only, so an old browser runs this too.
+        window.addEventListener(
+          "error",
+          function (event) {
+            var el = event.target;
+            if (el && (el.tagName === "SCRIPT" || (el.tagName === "LINK" && el.rel === "modulepreload"))) offerReload("failed");
+          },
+          true
+        );
+        setTimeout(function () {
+          offerReload("slow");
+        }, 30000);
+      })();
+    </script>
+    <noscript>Raft Rush needs JavaScript and WebGL.</noscript>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

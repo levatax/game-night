@@ -12,7 +12,7 @@
 //   remove. If the active player is gone their timer still runs and the piece auto-drops at the center.
 //   Remove them from turnOrder only if they are gone for good. Dispose EMPTY_ROOM_DISPOSE_SEC after empty.
 // - onDispose: getRoomCodes().release(roomId); sim.dispose().
-// - Phases & timers: state.timeLeft / timeTotal every tick. Turn order rotates by one each round.
+// - Phases & timers: state.timeLeft / timeTotal every tick. Turn order stays the same every round (one turn per player).
 //   Round = turnsPerRound(players) turns (wraps around turnOrder).
 // - Spin: SPIN (or SPIN_IDLE_SEC) → spinStage "rolling", broadcast SPIN_START; roll the card NOW with rollCard;
 //   a RIG before RIG_WINDOW_SEC swaps it to rollCursed (record a RigRecord); then broadcast SPIN_RESULT
@@ -428,10 +428,8 @@ export class JellyRoom extends Room<JellyState> {
     const s = this.state;
     if (this.checkTooFew()) return;
     s.round++;
-    if (s.round > 1 && s.turnOrder.length > 1) {
-      const first = s.turnOrder.shift();
-      if (first !== undefined) s.turnOrder.push(first);
-    }
+    // Same order every round: with one turn per player per round, rotating it would hand the last player of
+    // a round the first turn of the next one (two turns in a row). Fairness comes from the tower resetting.
     const order = [...s.turnOrder];
     const n = turnsPerRound(order.length);
     this.schedule = Array.from({ length: n }, (_, i) => order[i % order.length]!);

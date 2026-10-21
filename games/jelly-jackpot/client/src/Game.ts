@@ -7,7 +7,7 @@
 // feed lines), context.ts (module bag + frame helpers).
 
 import * as THREE from "three";
-import { BET_AMOUNTS, CARD_BY_ID, NICKNAME_STORAGE_KEY, SABOTEUR_MIN_PLAYERS, type CardId } from "../../shared/constants";
+import { BET_STAKE, CARD_BY_ID, NICKNAME_STORAGE_KEY, SABOTEUR_MIN_PLAYERS, type CardId } from "../../shared/constants";
 import type { BetSide, JellyStateView, Phase, Role } from "../../shared/protocol";
 import { settings, type Settings } from "./app/settings";
 import { AudioEngine } from "./audio/AudioEngine";
@@ -68,8 +68,9 @@ export class Game {
   private role: Role | null = null;
   private rig = { available: false, used: false };
   private myBet: { side: BetSide; amount: number } | null = null;
-  private betAmount = 10;
   private betsLocked = false;
+  /** Turns started per player this match (drives the first-turn coach hints). */
+  private turnsSeen = new Map<string, number>();
   private turnKey = "";
   private reelKey = "";
   private placingStart = -1;
@@ -81,7 +82,6 @@ export class Game {
   private wheelOpen = false;
   private wheelOpenedAt = 0;
   private wheelSticky = false;
-  private emotePickedAt = -1;
 
   // Frame loop.
   private time = 0;
@@ -111,10 +111,7 @@ export class Game {
       onUiSound: ui,
     });
     const hud = new Hud(hudLayer, {
-      onBet: (side, amount) => {
-        if (amount > 0) this.betAmount = amount;
-        this.placeBet(side, amount);
-      },
+      onBet: (side) => this.placeBet(side),
       onSpin: () => this.trySpin(),
       onUiSound: ui,
     });
@@ -133,8 +130,6 @@ export class Game {
       onLeave: () => this.leaveRoom(),
       onEmote: (emote) => {
         this.net.emote(emote);
-        // Keys 1–4 pick an emote here AND reach Controls as bet-amount keys: swallow that echo.
-        this.emotePickedAt = performance.now();
         this.setWheel(false);
       },
       onUiSound: ui,
@@ -196,6 +191,13 @@ export class Game {
     const c = this.ctx;
     const myId = this.net.myId;
     const hoverWorld = this.placement.frame(state, dt);
+    // First-turn coach: point at my hovering piece.
+    let aim: { x: number; y: number } | null = null;
+    if (hoverWorld && this.coach(state).place) {
+      const s = c.stage.worldToScreen(hoverWorld);
+      if (s.visible) aim = { x: s.x, y: s.y };
+    }
+    c.hud.pointAt(aim);
 
     // The active chef puppets the hover piece.
     const holding = state.phase === "placing" && (hoverWorld !== null || state.hover.active);
@@ -270,7 +272,7 @@ export class Game {
     });
     n.on("topple", (m) => react.topple(c(), st(), m, this.later));
     n.on("result", (m) => {
-      react.result(c(), st(), m, this.later);
+      react.result(c(), st(), m, this.later, me());
       const [icon, html] = feed.resultLine(st(), m, me());
       this.feedLine(icon, html);
       if (m.reset) this.pendingNewCake = true;
@@ -322,6 +324,7 @@ export class Game {
 
     switch (phase) {
       case "lobby":
+        this.turnsSeen.clear();
         this.role = null;
         this.rig = { available: false, used: false };
         this.reelKey = "";
@@ -333,6 +336,7 @@ export class Game {
         if (state) c.menu.updateLobby(state, this.net.myId);
         break;
       case "roleReveal":
+        this.turnsSeen.clear();
         c.hud.hide();
         if (state && this.role) this.showRole(state);
         else c.menu.hide();
@@ -453,6 +457,7 @@ export class Game {
     const key = `${state.round}:${state.turnInRound}:${state.activeId}`;
     if (key === this.turnKey) return;
     this.turnKey = key;
+    if (state.activeId) this.turnsSeen.set(state.activeId, (this.turnsSeen.get(state.activeId) ?? 0) + 1);
     this.myBet = null;
     this.betsLocked = false;
     this.placingStart = state.phase === "placing" ? this.time : -1;
@@ -475,15 +480,8 @@ export class Game {
     const c = this.ctx;
     a.on("spin", () => this.trySpin());
     a.on("rig", () => this.tryRig());
-    a.on("betAmount", (v) => {
-      if (this.wheelOpen || performance.now() - this.emotePickedAt < 100) return;
-      this.betAmount = toBetAmount(v);
-      c.audio.sfx("click");
-      // Re-pressing a chip with a bet already placed moves that bet to the new amount.
-      if (this.myBet) this.placeBet(this.myBet.side, this.betAmount);
-      else this.refreshHud();
-    });
-    a.on("bet", (side) => this.placeBet(side, this.betAmount));
+    // F / G: one fixed stake, pressing the other key switches the guess.
+    a.on("bet", (side) => this.placeBet(side));
     a.on("emoteDown", () => {
       if (!this.inRoom) return;
       if (this.wheelOpen) {
@@ -537,7 +535,9 @@ export class Game {
     this.net.rig(); // feedback arrives as rigStatus
   }
 
-  private placeBet(side: BetSide, amount: number): void {
+  /** One fixed stake (BET_STAKE): guess stays up / falls; the other side switches the guess. */
+  private placeBet(side: BetSide): void {
+    const amount = BET_STAKE;
     const s = this.net.state;
     const myId = this.net.myId;
     const me = s?.players.get(myId);
@@ -546,14 +546,15 @@ export class Game {
       this.ctx.audio.sfx("buzzer", { volume: 0.5 });
       return;
     }
+    if (this.myBet?.side === side) return; // already guessed that
     if (amount > me.coins) {
       this.ctx.hud.banner(t("game.noCoins"), "bad");
       this.ctx.audio.sfx("buzzer", { volume: 0.5 });
       return;
     }
     this.net.bet(side, amount);
-    this.myBet = amount > 0 ? { side, amount } : null;
-    this.ctx.audio.sfx(amount > 0 ? "coin" : "click");
+    this.myBet = { side, amount };
+    this.ctx.audio.sfx("coin");
     this.refreshHud(s);
   }
 
@@ -599,6 +600,7 @@ export class Game {
     this.rig = { available: false, used: false };
     this.myBet = null;
     this.betsLocked = false;
+    this.turnsSeen.clear();
     this.turnKey = "";
     this.reelKey = "";
     this.pendingNewCake = false;
@@ -646,8 +648,20 @@ export class Game {
       isSaboteur: this.role === "saboteur",
       rig: this.rig,
       myBet: this.myBet,
-      betAmount: this.betAmount,
+      coach: this.coach(state),
     });
+  }
+
+  /** Which first-turn hints to show: my first 2 placing turns, my first spin, someone else's first turn. */
+  private coach(state: JellyStateView): { place: boolean; spin: boolean; watch: boolean } {
+    const myId = this.net.myId;
+    const mine = state.activeId !== "" && state.activeId === myId;
+    const n = this.turnsSeen.get(state.activeId) ?? 0;
+    return {
+      place: mine && state.phase === "placing" && n <= 2,
+      spin: mine && state.phase === "spinning" && n <= 1,
+      watch: !mine && state.activeId !== "" && n <= 1 && (state.phase === "spinning" || state.phase === "placing"),
+    };
   }
 
   private setWheel(open: boolean): void {
@@ -667,13 +681,6 @@ export class Game {
     c.stage.setReducedFlashing(s.reducedFlashing);
     c.fx.setReducedFlashing(s.reducedFlashing);
   }
-}
-
-/** Controls' betAmount payload: an amount from BET_AMOUNTS, or a chip index 0..3 (keys 1–4). */
-function toBetAmount(v: number): number {
-  if ((BET_AMOUNTS as readonly number[]).includes(v)) return v;
-  const i = Math.max(0, Math.min(BET_AMOUNTS.length - 1, Math.round(v)));
-  return BET_AMOUNTS[i]!;
 }
 
 /** NetError messages are English (net/Net.ts): map the known ones to my language, keep anything else as-is. */

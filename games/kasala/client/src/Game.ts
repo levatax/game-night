@@ -68,6 +68,7 @@ import {
   amTargeting,
   betBlockReason,
   canCash,
+  canShop,
   canFlip,
   canHeckle,
   cashBlockReason,
@@ -76,9 +77,12 @@ import {
   flipWaitsForBets,
   isParticipant,
   loanBlockReason,
+  marketBlockReason,
   me,
   myBet,
   participants,
+  rowLeft,
+  sideBetsFor,
   stateTurnKey,
   turnKey,
   validTargets,
@@ -274,6 +278,7 @@ export class Game {
           onCash: () => this.safe("hud.cash", () => this.tryCash()),
           onBet: (box, amount) => this.safe("hud.bet", () => this.placeBet(box, amount, false)),
           onBetPass: () => this.safe("hud.pass", () => this.betPass()),
+          onMarket: (flipNo) => this.safe("hud.market", () => this.marketChoose(flipNo)),
           onChip: (amount) => this.safe("hud.chip", () => this.setChip(amount)),
           onLoanMenu: () => this.safe("hud.loans", () => this.hudLoanMenu()),
           onEmotePicker: () => this.safe("hud.emote", () => this.openPicker(this.picker === "emote" ? null : "emote")),
@@ -533,6 +538,7 @@ export class Game {
     n.on("cashed", (m) => show.cashed(m));
     n.on("raided", (m) => show.raided(m));
     n.on("betsSettled", (m) => show.betsSettled(m));
+    n.on("marketResult", (m) => show.marketResult(m));
     n.on("loan", (m) => show.loan(m));
     n.on("taslik", (m) => show.taslik(m));
     n.on("roundEnd", (m) => show.roundEnd(m));
@@ -748,6 +754,8 @@ export class Game {
 
     if (prev === "wheel" && phase !== "wheel") this.show.raiseWheel();
     if (prev === "result" && phase !== "result") c.dealer.hide(false);
+    if (prev === "market" && phase !== "market") c.cards.markRow(null);
+    if (phase === "market" && prev !== "market") c.audio.sfx("open", { volume: 0.6 });
     if (phase !== "betting" && phase !== "flipping") this.flipQueued = false;
     if (phase !== "matchEnd" && this.matchEndShown) {
       c.overlays.hideMatchEnd();
@@ -939,11 +947,8 @@ export class Game {
         return this.tryFlip();
       case "cash":
         return this.tryCash();
-      case "box":
-        if (amTargeting(this.net.state, this.net.myId)) return this.targetByNumber(a.box);
-        return this.placeBet(a.box, null, true);
-      case "betPass":
-        return this.betPass();
+      case "digit":
+        return this.digit(a.n);
       case "chip":
         return this.setChip(a.amount);
       case "loans":
@@ -1018,6 +1023,44 @@ export class Game {
     }
     const why = cashBlockReason(s, myId);
     if (why) this.deny(why);
+  }
+
+  /** 0–9: the Pazar (the N-th card on sale, 0 = pas), a target while I pick one, else a bet box (1–4) / PAS (0). */
+  private digit(n: number): void {
+    if (!this.inRoom) return;
+    const s = this.net.state;
+    const myId = this.net.myId;
+    if (s?.phase === "market") {
+      if (n === 0) return this.marketChoose(0);
+      const card = rowLeft(s)[n - 1];
+      if (card) return this.marketChoose(card.flipNo);
+      if (canShop(s, myId)) this.deny("Bu numarada kart yok.");
+      return;
+    }
+    if (amTargeting(s, myId)) {
+      if (n > 0) this.targetByNumber(n);
+      return;
+    }
+    // Side bets are off at most tables now: the digits stay quiet there.
+    if (!s || !sideBetsFor(s, me(s, myId))) return;
+    if (n === 0) return this.betPass();
+    const box = BET_BOXES[n - 1];
+    if (box) this.placeBet(box.id, null, true);
+  }
+
+  /** Pazar pick (0 = pas): secret until the reveal, changeable until the market closes. */
+  private marketChoose(flipNo: number): void {
+    if (!this.inRoom) return;
+    const c = this.ctx;
+    const why = marketBlockReason(this.net.state, this.net.myId, flipNo);
+    if (why !== null) {
+      if (why) this.deny(why);
+      return;
+    }
+    this.net.market(flipNo);
+    c.hud.marketPicked(flipNo);
+    c.cards.markRow(flipNo || null);
+    c.audio.sfx(flipNo ? "chips" : "click", { volume: flipNo ? 0.7 : 0.6 });
   }
 
   /**
@@ -1200,7 +1243,14 @@ export class Game {
 
   /** Left click (or the crosshair while locked) on the 3D table: pick an attack target while I'm targeting. */
   private click(x: number, y: number): void {
-    if (!this.inRoom || !this.targetingLive()) return;
+    if (!this.inRoom) return;
+    const s = this.net.state;
+    if (s?.phase === "market" && canShop(s, this.net.myId)) {
+      const flipNo = this.ctx.cards.rowCardAt(x, y, rowLeft(s).map((card) => card.flipNo));
+      if (flipNo !== null) this.marketChoose(flipNo);
+      return;
+    }
+    if (!this.targetingLive()) return;
     const id = this.ctx.characters.pick(x, y);
     if (id) this.sendTarget(id);
   }
@@ -1219,11 +1269,10 @@ export class Game {
     this.show.cycleTarget(dir);
   }
 
-  /** 1–4 while targeting: the N-th valid target (in seat order, as the HUD prompt lists them). */
-  private targetByNumber(box: BetBox): void {
+  /** 1–9 while targeting: the N-th valid target (in seat order, as the HUD prompt lists them). */
+  private targetByNumber(n: number): void {
     if (!this.targetingLive()) return;
-    const index = BET_BOXES.findIndex((b) => b.id === box);
-    const id = validTargets(this.net.state)[index];
+    const id = validTargets(this.net.state)[n - 1];
     if (id) this.sendTarget(id);
     else this.deny("Bu numarada hedef yok.");
   }

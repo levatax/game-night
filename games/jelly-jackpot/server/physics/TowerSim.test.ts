@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CAKE_RADIUS, CAKE_TOP_Y, TICK_HZ } from "../../shared/constants.js";
+import type { PieceType } from "../../shared/constants.js";
 import type { Pose } from "../../shared/protocol.js";
 import { TowerSim, type SpawnMods } from "./TowerSim.js";
 
@@ -65,6 +66,46 @@ describe("TowerSim", () => {
     expect(settle(sim)).toBe(true);
     expect(sim.toppled()).toBeNull();
     expect(sim.towerTop()).toBeGreaterThan(one + 0.06);
+  });
+
+  /** Drop `types` one by one at minHoverY (so exactly MIN_DROP_GAP above the tower), each nudged by `off`. */
+  function buildStack(types: PieceType[], off: (i: number) => [number, number, number]): number[] {
+    const tops: number[] = [];
+    types.forEach((type, i) => {
+      const [dx, dz, yaw] = off(i);
+      const y = sim.minHoverY(type, 1);
+      const p = pose(dx, y, dz);
+      p.qy = Math.sin(yaw / 2);
+      p.qw = Math.cos(yaw / 2);
+      sim.spawn(type, `p${i}`, p, PLAIN);
+      expect(settle(sim)).toBe(true);
+      expect(sim.toppled()).toBeNull();
+      tops.push(sim.towerTop());
+    });
+    return tops;
+  }
+
+  it("keeps a 3-piece stack of normal pieces standing when dropped roughly centered", () => {
+    // A handful of "roughly centered" drops: up to ±2 cm off and a bit of yaw.
+    const jitters: [number, number, number][][] = [
+      [[0, 0, 0], [0, 0, 0], [0, 0, 0]],
+      [[0.01, -0.01, 0.2], [-0.015, 0.01, -0.4], [0.02, 0.005, 0.8]],
+      [[-0.02, 0.02, 1.2], [0.02, -0.02, 0.3], [-0.01, -0.02, -0.7]],
+    ];
+    for (const jit of jitters) {
+      sim.clear();
+      const tops = buildStack(["toaster", "cheese", "pancakes"], (i) => jit[i]!);
+      expect(tops[1]!).toBeGreaterThan(tops[0]! + 0.05);
+      expect(tops[2]!).toBeGreaterThan(tops[1]! + 0.05);
+      expect(sim.pieces().every((p) => Math.hypot(p.pose.x, p.pose.z) < 0.08)).toBe(true);
+    }
+  });
+
+  it("lets a careful player build 5+ pieces", () => {
+    const types: PieceType[] = ["toaster", "cheese", "pancakes", "pan", "cheese", "croissant"];
+    const tops = buildStack(types, (i) => [(i % 2 ? 1 : -1) * 0.01, (i % 3 - 1) * 0.01, i * 0.3]);
+    for (let i = 1; i < tops.length; i++) expect(tops[i]!).toBeGreaterThan(tops[i - 1]! + 0.01);
+    expect(sim.pieces()).toHaveLength(types.length);
   });
 
   it("clear() empties the tower", () => {

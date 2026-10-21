@@ -27,7 +27,7 @@ export class StatsState extends Schema implements StatsView {
 export class SettingsState extends Schema implements SettingsView {
   @type("uint8") rounds = 0;
   @type("uint8") turnTimer = DEFAULT_TURN_TIMER;
-  @type("boolean") saboteur = true;
+  @type("boolean") saboteur = false;
   @type("boolean") sideBets = true;
 }
 

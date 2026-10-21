@@ -1,4 +1,4 @@
-// Top center, always on: ONE compact plate. "TUR 3/10" (+ a SON MASA ×2 tag), TUR POTU as a counting gold
+// Top center, always on: ONE compact plate. "TUR 3/10" (+ a SON MASA ×2 tag), VİTRİN (the row's value) as a counting gold
 // number with inline icons (×3 combo, ⚖️×1 lawyer for watchers, 🧿 curse), and a small 🐷 kumbara footer.
 // Turn outcomes only recolor it (green banked / red lost); the words and the deltas belong to fx.slam and
 // the 3D floats, so nothing here pops "+50$" or swaps its label.
@@ -33,7 +33,7 @@ export class TopPlate {
     this.finalTag.title = "Son tur: kartlar, cezalar ve bahisler ×2";
 
     this.potBox = h("div", "ks-hud-plate__pot", row);
-    h("span", "ks-hud-plate__label", this.potBox, "TUR POTU");
+    h("span", "ks-hud-plate__label", this.potBox, "VİTRİN");
     this.valueEl = h("span", "ks-hud-plate__value", this.potBox);
     this.pot = new Counter(this.valueEl, (n) => money(n), 6, 45);
     const icons = h("span", "ks-hud-plate__icons", this.potBox);
@@ -49,7 +49,7 @@ export class TopPlate {
     h("span", "ks-hud-plate__klabel", foot, "Kumbara");
     const kval = h("span", "ks-hud-plate__kval", foot);
     this.kumbara = new Counter(kval, (n) => money(n), 5, 50);
-    foot.title = "Patronun Kumbarası: baskınlar ve kaybeden bahisler buraya akar";
+    foot.title = "Patronun Kumbarası: baskınlar, satılmayan vitrin kartları ve kaybeden bahisler buraya akar";
   }
 
   /** A fresh match: numbers snap instead of counting from the old match. */
@@ -74,7 +74,7 @@ export class TopPlate {
     if (kd > 0) replay(this.pig, "ks-hud-pop");
 
     // pot: only while a turn is on the table
-    const potOn = LIVE_PHASES.has(ctx.phase) || ctx.phase === "result" || ctx.phase === "settle";
+    const potOn = LIVE_PHASES.has(ctx.phase) || ctx.phase === "result" || ctx.phase === "market" || ctx.phase === "settle";
     if (potOn !== this.potOn) {
       this.potOn = potOn;
       show(this.potBox, potOn);

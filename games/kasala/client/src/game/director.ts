@@ -102,7 +102,8 @@ export class Director {
     switch (v.phase) {
       case "betting":
       case "flipping":
-      case "result": {
+      case "result":
+      case "market": {
         const seat = this.seatOf(v, v.activeId);
         return seat === undefined ? { focus: "table" } : { focus: "seat", seat };
       }

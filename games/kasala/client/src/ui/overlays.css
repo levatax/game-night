@@ -482,6 +482,50 @@
 .ks-ov-mugshot img,
 .ks-ov-mugshot svg { display: block; max-width: 100%; margin: 0.35em auto; }
 
+/* ============================================================== round summary */
+.ks-ov-round {
+  position: absolute;
+  z-index: 13;
+  top: 46%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(28em, calc(100vw - 2em));
+  pointer-events: none;
+}
+.ks-ov-round__card {
+  padding: 0.9em 1.1em 0.8em;
+  text-align: center;
+  background: rgba(28, 23, 32, 0.92);
+  border: 0.18em solid #000;
+  border-radius: 0.9em;
+  box-shadow: 0 0.35em 0 #000, 0 1em 3em rgba(0, 0, 0, 0.55);
+  animation: ks-ov-direct-enter 0.38s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+.ks-ov-round h2 { margin: 0 0 0.55em; font-size: 1.35em; letter-spacing: 0.06em; color: var(--gold); }
+.ks-ov-round__list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.3em; text-align: left; }
+.ks-ov-round__list li {
+  display: grid;
+  grid-template-columns: 1.6em minmax(0, 1fr) auto minmax(3.6em, auto);
+  align-items: center;
+  gap: 0.55em;
+  padding: 0.25em 0.5em;
+  border-radius: 0.5em;
+  background: rgba(255, 244, 223, 0.06);
+  animation: ks-ov-row-in 0.3s calc(0.12s + var(--i, 0) * 0.07s) cubic-bezier(0.2, 1.3, 0.4, 1) both;
+}
+.ks-ov-round__list li[data-me] { background: rgba(255, 201, 60, 0.16); outline: 0.1em solid rgba(255, 201, 60, 0.55); }
+.ks-ov-round__list li[data-ghost] { opacity: 0.55; }
+.ks-ov-round__rank { text-align: center; font-weight: 700; }
+.ks-ov-round__kasa,
+.ks-ov-round__delta { font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; }
+.ks-ov-round__delta { font-weight: 700; opacity: 0.85; }
+.ks-ov-round__delta.ks-ov-pos { color: var(--money); opacity: 1; }
+.ks-ov-round__delta.ks-ov-neg { color: #ff6b6e; opacity: 1; }
+.ks-ov-round__next { margin: 0.65em 0 0; font-size: 0.85em; opacity: 0.75; }
+.ks-ov-round__next--final { color: #ff6b6e; font-weight: 700; opacity: 1; }
+.ks-ov--calm .ks-ov-round__card,
+.ks-ov--calm .ks-ov-round__list li { animation: ks-ov-fade 0.2s ease-out both; }
+
 /* ============================================================== match end */
 .ks-ov-end { width: min(40em, calc(100vw - 2.5em)); }
 .ks-ov-end .ks-ov-body { text-align: center; }

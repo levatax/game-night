@@ -16,9 +16,11 @@ import type {
   CashedMsg,
   KasalaStateView,
   LoanMsg,
+  MarketResultMsg,
   MatchEndMsg,
   NoticeMsg,
   RaidedMsg,
+  RoundEndMsg,
 } from "../shared/protocol.js";
 import { KasalaRoom } from "./KasalaRoom.js";
 
@@ -145,6 +147,7 @@ describe("KasalaRoom e2e", () => {
       await waitFor(() => host.room.state?.players?.size === 2 && guest.room.state?.players?.size === 2, "both players synced");
       expect(host.room.state.hostId).toBe(host.room.sessionId);
       expect(host.room.state.code).toMatch(/^[A-Z]{4}$/);
+      host.room.send(MSG.SETTINGS, { sideBets: true }); // Off by default since the Pazar.
       drive(host, guest);
       guest.room.send(MSG.READY, { ready: true });
       await waitFor(() => host.room.state.players.get(guest.room.sessionId)?.ready === true, "guest ready");
@@ -163,7 +166,12 @@ describe("KasalaRoom e2e", () => {
       const loans = events<LoanMsg>(host, MSG.LOAN);
       expect(loans.map((m) => m.event)).toContain("accepted");
       expect(loans.some((m) => m.event === "repaid" && m.amount === 20)).toBe(true);
-      expect(events<unknown>(host, MSG.ROUND_END)).toHaveLength(1);
+      const rounds = events<RoundEndMsg>(host, MSG.ROUND_END);
+      expect(rounds).toHaveLength(1);
+      // The last round goes straight to the match end; its standings still carry the round's kasa change.
+      expect(rounds[0]!.pauseSec).toBe(0);
+      expect(rounds[0]!.standings).toHaveLength(2);
+      for (const r of rounds[0]!.standings) expect(r.delta).toBe(r.kasa - START_KASA);
       const end = events<MatchEndMsg>(host, MSG.MATCH_END)[0]!;
       // One completed round adds 10% interest to the remaining 30$ before collection.
       expect(end.collections).toEqual([expect.objectContaining({ paid: 33, wiped: 0 })]);
@@ -218,6 +226,7 @@ describe("KasalaRoom e2e", () => {
     const guest = await join(host.room.roomId, "Fare");
     try {
       await waitFor(() => host.room.state?.players?.size === 2 && guest.room.state?.players?.size === 2, "both players synced");
+      host.room.send(MSG.SETTINGS, { sideBets: true });
       autoplay(guest); // PAS on the host's turn.
       autoplay(host, { pas: false }); // Lets the guest's bet window run out.
       const opened = new Map<string, number>();
@@ -243,7 +252,7 @@ describe("KasalaRoom e2e", () => {
     }
   }, 20_000);
 
-  it("a walk-out mid-turn is taken over by a bot: the Haraç money and the pot survive, the match goes on", async () => {
+  it("a walk-out mid-turn is taken over by a bot: the Haraç money and the row survive, the bot shops in the Pazar", async () => {
     const host = await create({ nickname: "Kedi", fast: true, seed: 9, rounds: 1, cards: ["harac", "tomar"] });
     const guest = await join(host.room.roomId, "Fare");
     const h = host.room.sessionId;
@@ -275,10 +284,19 @@ describe("KasalaRoom e2e", () => {
       expect(host.room.state.phase).toBe("flipping");
 
       host.room.send(MSG.CASH, {});
-      await waitFor(() => host.room.state.phase === "result" || host.room.state.phase === "settle", "host cashed");
-      expect(events<CashedMsg>(host, MSG.CASHED)[0]).toMatchObject({ playerId: h, pot: 90, kept: 90 });
+      await waitFor(() => events<CashedMsg>(host, MSG.CASHED).length > 0 && host.room.state.players.get(h)!.kasa !== 200, "host cashed");
+      // Two cards → one pick: the Tomar (50$). The Haraç card (40$) stays on the table for the Pazar.
+      expect(events<CashedMsg>(host, MSG.CASHED)[0]).toMatchObject({ playerId: h, pot: 50, kept: 50, taken: [2], rowLeft: 1 });
       expect(money(host.room.state)).toBe(before);
-      expect(host.room.state.players.get(h)!.kasa).toBe(290);
+      expect(host.room.state.players.get(h)!.kasa).toBe(250);
+
+      await waitFor(() => events<MarketResultMsg>(host, MSG.MARKET_RESULT).length > 0, "market closed");
+      const market = events<MarketResultMsg>(host, MSG.MARKET_RESULT)[0]!;
+      expect(market.sales).toEqual([{ buyerId: g, flipNo: 1, card: "harac", value: 40, fee: 20 }]); // The bot bought it back.
+      expect(market).toMatchObject({ sellerId: h, leftovers: [], toKumbara: 0, feesKept: 20 });
+      await waitFor(() => host.room.state.players.get(h)!.kasa === 270, "fee paid");
+      expect(host.room.state.players.get(g)!.kasa).toBe(180);
+      expect(money(host.room.state)).toBe(before);
 
       await waitFor(() => host.room.state.phase === "matchEnd", "match end", 10_000);
       expect(events<CardMsg>(host, MSG.CARD).some((c) => c.playerId === g)).toBe(true); // The bot played the turn.
@@ -291,6 +309,48 @@ describe("KasalaRoom e2e", () => {
       expect(host.room.state.players.has(g)).toBe(false);
     } finally {
       await closeAll([host, guest]);
+    }
+  }, 25_000);
+
+  it("Pazar: KASALA takes the best card, a clash goes to the first in line, the leftovers to the kumbara", async () => {
+    const host = await create({ nickname: "Kedi", fast: true, seed: 11, rounds: 1, cards: ["tomar", "canta", "bozukluk"] });
+    const a = await join(host.room.roomId, "Fare");
+    const b = await join(host.room.roomId, "Domuz");
+    const h = host.room.sessionId;
+    try {
+      await waitFor(() => host.room.state?.players?.size === 3 && b.room.state?.players?.size === 3, "three players synced");
+      autoplay(a);
+      autoplay(b);
+      autoplay(host, { cashAt: 3 });
+      let saw = false;
+      for (const p of [a, b]) {
+        p.room.onStateChange((s) => {
+          if (s.phase !== "market" || s.activeId !== h || s.marketDone.indexOf(p.room.sessionId) >= 0) return;
+          saw = true;
+          p.room.send(MSG.MARKET, { flipNo: 1 }); // Both want the Tomar.
+        });
+      }
+      for (const p of [a, b]) p.room.send(MSG.READY, { ready: true });
+      await waitFor(() => [...host.room.state.players.values()].every((p) => p.ready || p.id === h), "everyone ready");
+      host.room.send(MSG.START, {});
+      await waitFor(() => events<MarketResultMsg>(host, MSG.MARKET_RESULT).length > 0, "market closed", 8000);
+
+      expect(saw).toBe(true);
+      // SON MASA ×2: Tomar 50, Çanta 100, Bozukluk 20. Three cards → one pick: the Çanta.
+      expect(events<CashedMsg>(host, MSG.CASHED)[0]).toMatchObject({ playerId: h, flips: 3, pot: 100, taken: [2], rowLeft: 2 });
+      const m = events<MarketResultMsg>(host, MSG.MARKET_RESULT)[0]!;
+      const first = host.room.state.turnOrder[1]!; // Equal kasas: the first in line after the seller wins.
+      const second = host.room.state.turnOrder[2]!;
+      expect(m.sales).toEqual([{ buyerId: first, flipNo: 1, card: "tomar", value: 50, fee: 25 }]);
+      expect(m.clashes).toEqual([{ flipNo: 1, winnerId: first, loserIds: [second] }]);
+      expect(m).toMatchObject({ leftovers: [{ flipNo: 3, value: 20 }], toKumbara: 20, feesKept: 25 });
+      await waitFor(() => host.room.state.players.get(h)!.kasa === 325, "seller paid");
+      expect(host.room.state.players.get(first)!.kasa).toBe(225);
+      expect(host.room.state.players.get(second)!.kasa).toBe(200);
+      expect(host.room.state.kumbara).toBe(120);
+      await waitFor(() => host.room.state.phase === "matchEnd", "match end", 10_000);
+    } finally {
+      await closeAll([host, a, b]);
     }
   }, 25_000);
 
@@ -383,6 +443,7 @@ describe("KasalaRoom bots", () => {
     const host = await create({ nickname: "Kedi", fast: true, seed: 21, rounds: 2 });
     try {
       await waitFor(() => host.room.state?.players?.size === 1, "host synced");
+      host.room.send(MSG.SETTINGS, { sideBets: true });
       for (let i = 0; i < 3; i++) host.room.send(MSG.ADD_BOT, {});
       await waitFor(() => host.room.state.players.size === 4, "three bots");
       autoplay(host);
@@ -400,6 +461,12 @@ describe("KasalaRoom bots", () => {
       expect(cashed.every((c) => c.skipped || c.flips >= 1)).toBe(true);
       // Bots decide well before their timers: they never get auto-KASALA'd.
       expect(cashed.filter((c) => bots.includes(c.playerId)).every((c) => !c.auto)).toBe(true);
+      // Round 1 ends with a summary pause, richest first; the last round ends the match without one.
+      const rounds = events<RoundEndMsg>(host, MSG.ROUND_END);
+      expect(rounds.map((r) => r.pauseSec > 0)).toEqual([true, false]);
+      const kasas = rounds[0]!.standings.map((r) => r.kasa);
+      expect(kasas).toHaveLength(4);
+      expect(kasas).toEqual([...kasas].sort((a, b) => b - a));
       const end = events<MatchEndMsg>(host, MSG.MATCH_END)[0]!;
       expect(end.standings).toHaveLength(4);
       expect(host.room.state.hostId).toBe(host.room.sessionId);

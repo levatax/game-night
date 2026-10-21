@@ -501,12 +501,12 @@
 /* Funny caption bubble under the machine. */
 .jjr-quip {
   --rc: var(--coin);
-  font: 700 clamp(16px, 2.6vw, 22px) var(--font);
+  font: 700 clamp(13px, 2vw, 16px) var(--font);
   background: var(--cream);
-  border: var(--border);
-  border-radius: 16px;
+  border: 3px solid var(--ink);
+  border-radius: 14px;
   box-shadow: 0 4px 0 var(--ink), 0 0 0 4px var(--rc) inset;
-  padding: 6px 16px;
+  padding: 4px 12px;
   opacity: 0;
   transform: scale(0.3) rotate(-6deg);
   max-width: min(92vw, 560px);
@@ -521,6 +521,119 @@
 .jjr-quip.jjr-r-legendary { background: var(--legendary); }
 @keyframes jjr-quip-in {
   to { opacity: 1; transform: scale(1) rotate(-2deg); }
+}
+
+/* ------------------------------------------------------------ big result banner */
+/* The "what did I get" answer, readable in one glance: name, what it pays, what it does. */
+.jjr-result {
+  --rc: var(--coin);
+  position: relative;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  max-width: min(92vw, 620px);
+  box-sizing: border-box;
+  padding: 12px 26px 14px;
+  background: var(--cream);
+  border: var(--border);
+  border-radius: 22px;
+  box-shadow: 0 6px 0 var(--ink), inset 0 0 0 6px var(--rc);
+  text-align: center;
+  opacity: 0;
+  transform: scale(0.3) translateY(-20px);
+}
+.jjr-result.is-on {
+  display: flex;
+  animation: jjr-result-in 0.5s cubic-bezier(0.3, 1.9, 0.5, 1) forwards;
+}
+@keyframes jjr-result-in {
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+.jjr-result-tag {
+  position: absolute;
+  top: -15px;
+  left: 50%;
+  translate: -50% 0;
+  font: 700 14px var(--font);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  background: var(--rc);
+  color: var(--ink);
+  border: 3px solid var(--ink);
+  border-radius: 999px;
+  padding: 1px 12px;
+  rotate: -3deg;
+}
+.jjr-result-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font: 700 clamp(26px, 5vw, 42px) / 1.1 var(--font);
+}
+.jjr-result-emoji {
+  font-size: 1.15em;
+  filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.3));
+  animation: jjr-chip-bob 1.2s ease-in-out infinite;
+}
+.jjr-result-pay {
+  font: 700 clamp(18px, 3.2vw, 26px) / 1.2 var(--font);
+  text-wrap: balance;
+}
+.jjr-result-mult {
+  display: inline-block;
+  background: var(--coin);
+  border: 3px solid var(--ink);
+  border-radius: 999px;
+  padding: 0 10px;
+  box-shadow: 0 2px 0 var(--ink);
+  rotate: -3deg;
+}
+.jjr-result-text {
+  font: 500 clamp(15px, 2.4vw, 19px) / 1.25 var(--font);
+  opacity: 0.85;
+  text-wrap: balance;
+}
+.jjr-result.jjr-r-legendary {
+  background: linear-gradient(110deg, #fff6d0 30%, #ffffff 45%, #fff6d0 60%) 0 0 / 300% 100%;
+  animation: jjr-result-in 0.5s cubic-bezier(0.3, 1.9, 0.5, 1) forwards, jjr-chip-shine 2s linear infinite;
+}
+/* Cursed: spooky-silly. Dark, scorched, dripping goo, skull tag, and it shivers. Text stays plain. */
+.jjr-result.jjr-r-cursed {
+  background: radial-gradient(circle at 12% 20%, rgba(0, 0, 0, 0.35) 0 12%, transparent 20%),
+    radial-gradient(circle at 88% 75%, rgba(0, 0, 0, 0.35) 0 10%, transparent 18%),
+    linear-gradient(170deg, #5a1a1f 0%, #2a0d10 100%);
+  color: #ffe0e0;
+  box-shadow: 0 6px 0 var(--ink), inset 0 0 0 6px #a3121b, 0 0 30px 6px rgba(163, 18, 27, 0.55);
+  animation: jjr-result-in 0.5s cubic-bezier(0.3, 1.9, 0.5, 1) forwards, jjr-shake 0.5s linear 0.5s 3;
+}
+.jjr-result.jjr-r-cursed .jjr-result-tag {
+  background: #a3121b;
+  color: #fff;
+  animation: jjr-twinkle 0.9s ease-in-out infinite;
+}
+.jjr-result.jjr-r-cursed .jjr-result-emoji {
+  animation: jjr-cursed-shake 0.4s linear infinite;
+}
+.jjr-result.jjr-r-cursed .jjr-result-mult {
+  color: var(--ink);
+}
+.jjr-result.jjr-r-cursed::after {
+  content: "";
+  position: absolute;
+  left: 12%;
+  right: 12%;
+  top: calc(100% - 2px);
+  height: 26px;
+  background: radial-gradient(circle at 10% 0, #a3121b 0 8px, transparent 9px),
+    radial-gradient(ellipse 5px 16px at 34% 0, #a3121b 0 100%, transparent 100%),
+    radial-gradient(circle at 60% 0, #a3121b 0 6px, transparent 7px),
+    radial-gradient(ellipse 5px 20px at 84% 0, #a3121b 0 100%, transparent 100%);
+  transform-origin: top;
+  animation: jjr-drip 1.6s cubic-bezier(0.5, 0, 0.8, 0.5) 0.4s infinite;
+  pointer-events: none;
 }
 
 /* -------------------------------------------------------------- current-rule chip */
@@ -623,4 +736,6 @@
   .jjr-pupil { width: 12px; height: 12px; }
   .jjr-chip { top: 10px; left: 10px; }
   .jjr-chip-text { display: none; }
+  .jjr-result { padding: 10px 14px 12px; }
+  .jjr-quip { display: none; }
 }

@@ -1,6 +1,6 @@
 // Keyboard + mouse → game actions (§12). Owner: client-net-game. PUBLIC API IS THE CONTRACT.
 //
-// Space → flip · Enter → cash · 1–4 → box (BET_BOXES order) · 0 → PAS (no bet this turn) · Q/W/E → chip
+// Space → flip · Enter → cash · 0–9 → digit (Game decides: Pazar card / PAS, bet box 1–4 / PAS, target) · Q/W/E → chip
 // 10/25/50 · B → loans · T held + 1–6 → emote (tap T alone → picker "emote", T again / Esc closes) · Y held +
 // 1–8 → taunt (tap Y → picker "taunt") · Z / X → heckle "ÇEVİR!" / "KASALA!" at the active player · V →
 // first person / Masa view · H held → key legend · ←/→ → cycle the attack target · Tab down/up → scoreboard
@@ -25,15 +25,14 @@
 // F keyboards work, with e.code as the fallback for non-Latin layouts. A one-finger touch drag looks around
 // and a tap clicks, for free. Game tells Controls when it opens/closes a picker itself (syncPicker).
 
-import { BET_BOXES, CHIP_AMOUNTS, EMOTES, TAUNTS, type BetBox, type EmoteId } from "../../../shared/constants";
+import { CHIP_AMOUNTS, EMOTES, TAUNTS, type EmoteId } from "../../../shared/constants";
 import type { Stage } from "../scene/Stage";
 import { Emitter } from "../util/Emitter";
 
 export type Action =
   | { type: "flip" }
   | { type: "cash" }
-  | { type: "box"; box: BetBox }
-  | { type: "betPass" }
+  | { type: "digit"; n: number }
   | { type: "chip"; amount: number }
   | { type: "loans" }
   | { type: "emote"; emote: EmoteId }
@@ -341,12 +340,7 @@ export class Controls {
 
     if (digit >= 0) {
       if (e.repeat) return;
-      if (digit === 0) {
-        this.emit({ type: "betPass" });
-        return;
-      }
-      const box = BET_BOXES[digit - 1];
-      if (box) this.emit({ type: "box", box: box.id });
+      this.emit({ type: "digit", n: digit });
       return;
     }
 

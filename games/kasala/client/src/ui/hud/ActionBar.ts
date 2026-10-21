@@ -11,7 +11,7 @@
 // - elim: the cement shoes moment.
 // The attack target prompt lives at the top (TargetPrompt), so the table stays clickable.
 
-import { EMOTE_COOLDOWN_SEC, SIREN_SHAKE_CHANCE, TASLIK_CUT_PCT, TIME_LOW_SEC, boxAlive } from "../../../../shared/constants";
+import { EMOTE_COOLDOWN_SEC, SIREN_SHAKE_CHANCE, TASLIK_CUT_PCT, TIME_LOW_SEC, boxAlive, picksFor } from "../../../../shared/constants";
 import { money, pct, playerColor, toName, type UiSound } from "../../app/ui";
 import { uiCapturesKeys } from "../keyGate";
 import { Countdown, setBar, tierColor, tierOf, type HudCtx } from "./ctx";
@@ -136,7 +136,7 @@ export class ActionBar {
     this.watchRisk = h("span", "ks-hud-watch__part ks-hud-watch__risk", this.watch);
     this.watchRisk.title = "Sonraki kartın baskın ihtimali";
     this.watchPot = h("span", "ks-hud-watch__part ks-hud-watch__pot", this.watch);
-    this.watchPot.title = "Tur potu";
+    this.watchPot.title = "Vitrin";
     this.watchSecs = h("span", "ks-hud-watch__part ks-hud-watch__secs", this.watch);
     this.heckleCash = this.heckleButton("cash", "X", "KASALA!", "Kasalasın diye bağır");
     this.watchRow.appendChild(this.heckleCash);
@@ -321,6 +321,8 @@ export class ActionBar {
     } else if (s.raidChance >= SIREN_SHAKE_CHANCE) {
       note = "Delisin sen! Bir kart daha mı?";
       tone = "hot";
+    } else if (picksFor(s.flips + 1) > picksFor(s.flips)) {
+      note = `Bir kart daha: KASALA'da ${picksFor(s.flips + 1)} kart alırsın!`;
     } else note = "Çevir ya da KASALA! Karar senin.";
     setText(this.actNote, note);
     if (tone !== this.noteKey) {
@@ -335,14 +337,22 @@ export class ActionBar {
     show(this.lawyerChip, s.lawyers > 0);
     if (s.lawyers > 0) setText(this.lawyerChip, `⚖️×${s.lawyers}`);
 
-    // what reaches the kasa under KASALA!
-    const pot = Math.max(0, s.turnPot);
+    // what reaches the kasa under KASALA!: the best picksFor(flips) vitrin cards (the rest go to the Pazar)
+    const values: number[] = [];
+    s.row.forEach((card) => {
+      if (!card.ownerId) values.push(card.value);
+    });
+    values.sort((a, b) => b - a);
+    const picks = picksFor(s.flips);
+    const pot = values.slice(0, picks).reduce((n, v) => n + v, 0);
     const kept = ctx.me?.taslik ? Math.floor(pot * (1 - TASLIK_CUT_PCT)) : pot;
+    const rest = values.length > picks ? ` · ${values.length - picks} pazara` : "";
     let sub: string;
     if (s.flips === 0) sub = "Önce kart çevir";
     else if (ctx.me?.taslik && pot > 0) sub = `${money(kept, true)} · yarısı borca`;
-    else sub = `${money(kept, true)} kasaya`;
-    setText(this.cashSub, sub);
+    else sub = `${money(kept, true)}${rest}`;
+    // (the row isn't held back while a card turns over: keep the old line until it has landed)
+    if (!s.busy || s.flips === 0) setText(this.cashSub, sub);
     toggle(this.cashBtn, "ks-hud-btn--zero", s.flips === 0 || pot <= 0);
     toggle(this.cashBtn, "ks-hud-btn--juicy", can && pot >= 60);
 

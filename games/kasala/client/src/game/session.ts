@@ -1,7 +1,7 @@
 // Room session plumbing: share links, the remembered nickname, an empty state for clearing modules, and
 // a fallback match-end summary built from state (reconnect during the podium). Owner: client-net-game.
 
-import { CODE_LENGTH, NICKNAME_STORAGE_KEY, RECONNECT_STORAGE_KEY } from "../../../shared/constants";
+import { CODE_LENGTH, DEFAULT_DECISION_SEC, NICKNAME_STORAGE_KEY, RECONNECT_STORAGE_KEY } from "../../../shared/constants";
 import type { KasalaStateView, MapLike, MatchEndMsg, PlayerView } from "../../../shared/protocol";
 import { participants } from "./turn";
 
@@ -69,7 +69,7 @@ export function emptyState(): KasalaStateView {
     phase: "lobby",
     code: "",
     hostId: "",
-    settings: { mode: "classic", turns: 0, decisionSec: 8, loans: true, sideBets: true },
+    settings: { mode: "classic", turns: 0, decisionSec: DEFAULT_DECISION_SEC, loans: true, sideBets: false },
     players: emptyMap<PlayerView>(),
     turnOrder: [],
     round: 0,
@@ -84,6 +84,8 @@ export function emptyState(): KasalaStateView {
     raidChance: 0,
     floorBonus: 0,
     turnPot: 0,
+    row: [],
+    marketDone: [],
     flips: 0,
     lawyers: 0,
     curseArmed: false,

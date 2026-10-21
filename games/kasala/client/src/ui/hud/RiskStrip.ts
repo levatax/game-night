@@ -61,7 +61,7 @@ export class RiskStrip {
     } else {
       const { pot, bribe } = raidCost(s, ctx.active);
       setText(this.cost, `Baskında ${money(-(pot + bribe), true)}`);
-      setAttr(this.cost, "title", `Pot ${money(pot)} kumbaraya + rüşvet ${money(bribe)} kasadan`);
+      setAttr(this.cost, "title", `Vitrin ${money(pot)} kumbaraya + rüşvet ${money(bribe)} kasadan`);
       toggle(this.cost, "ks-hud-risk__cost--safe", false);
     }
 

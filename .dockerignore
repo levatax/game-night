@@ -1,9 +1,11 @@
 node_modules
 **/dist
 .git
+.github
 .claude
 .DS_Store
 *.log
+*.zip
 .vite
 Dockerfile
 .dockerignore

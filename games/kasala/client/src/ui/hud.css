@@ -1096,6 +1096,33 @@
   100% { transform: none; }
 }
 
+/* Pazar: the row cards on sale, one button each (bet-box look, solid rarity border), my secret pick gold. */
+.ks-hud-shop__cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(calc(var(--u) * 104), 1fr));
+  gap: calc(var(--u) * 8);
+  padding-top: calc(var(--u) * 2);
+}
+.ks-hud-shop__card { border-style: solid; padding-top: calc(var(--u) * 14); }
+.ks-hud-shop__card[data-rarity="common"] { border-color: #c9874b; }
+.ks-hud-shop__card[data-rarity="uncommon"] { border-color: #c7d0da; }
+.ks-hud-shop__card[data-rarity="rare"] { border-color: var(--gold); }
+.ks-hud-shop__icon { font-size: max(20px, calc(var(--u) * 26)); line-height: 1; }
+.ks-hud-shop__name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; font-size: var(--fs-s); }
+.ks-hud-shop__value {
+  font-weight: 700;
+  font-size: max(15px, calc(var(--u) * 19));
+  color: var(--money);
+  text-shadow: 0 calc(var(--u) * 2) 0 #000;
+  font-variant-numeric: tabular-nums;
+}
+.ks-hud-shop__fee { font-weight: 600; font-size: var(--fs-s); color: var(--lamp); white-space: nowrap; }
+.ks-hud-shop__card:disabled { cursor: default; }
+.ks-hud-shop--window .ks-hud-shop__card:hover,
+.ks-hud-shop__card:disabled:hover { transform: none; background: rgba(0, 0, 0, 0.22); }
+.ks-hud-shop__card--short { opacity: 0.45; }
+.ks-hud-shop .ks-hud-tray__pass:not(.ks-hud-on) { display: none; }
+.ks-hud-shop__pass--mine { box-shadow: 0 calc(var(--u) * 3) 0 #000, inset 0 0 0 calc(var(--u) * 2) var(--gold); }
 .ks-hud-tray__foot { display: flex; align-items: center; justify-content: space-between; gap: calc(var(--u) * 10); flex-wrap: wrap; }
 .ks-hud-tray__chips { display: flex; align-items: center; gap: calc(var(--u) * 9); }
 .ks-hud-tray__chiplabel { font-weight: 600; font-size: var(--fs-s); opacity: 0.85; }

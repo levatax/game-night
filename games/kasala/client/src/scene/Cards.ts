@@ -16,6 +16,10 @@
 // - Lawyer card (Avukat): stands up between the row and the deck while lawyers > 0 (setLawyers).
 // - clearTurn(): all of this turn's cards slide back and vanish into the deck (≈0.6 s), or fly to a point
 //   (the player's stack on KASALA) when one is given.
+// - Vitrin (the row is the turn's goods): setRowValue() repaints a row card's value line ("+100$" after Kara
+//   Para Aklama, a Haraç's take), sendRow() flies chosen cards off the row (KASALA picks → the stack, Pazar
+//   sales → the buyer, leftovers → the kumbara, other cards → the deck) and the rest close ranks, markRow()
+//   lifts and rings my Pazar choice in gold, rowCardAt() finds the row card under the pointer.
 // - Deck tower: a neat stack of face-down cards at anchors.deck that subtly lowers as cards are dealt and is
 //   restacked by clearTurn().
 //
@@ -32,6 +36,7 @@ import * as THREE from "three";
 import { CARD_BY_ID, PALETTE, RARITIES, type CardId, type Rarity } from "../../../shared/constants";
 import type { CardMsg } from "../../../shared/protocol";
 import { settings } from "../app/settings";
+import { money } from "../app/ui";
 import { TABLE_TOP_Y, type SeatPose, type Stage } from "./Stage";
 import { addOutlines, fontsReady, toonRamp } from "./toon";
 import { backTexture, cardTextures, deckEdgeTexture, faceTexture, valueText, warmCardTextures } from "./fx/cardArt";
@@ -401,6 +406,8 @@ type LiveState = "flip" | "row" | "torn" | "sweep";
 
 interface Live {
   card: CardMesh;
+  /** CardMsg.flipNo (row cards are looked up by it). */
+  flipNo: number;
   id: CardId;
   rarity: Rarity;
   state: LiveState;
@@ -410,6 +417,8 @@ interface Live {
   raid: boolean;
   /** Big showcase toward the viewer (false in attract mode: a small hover over the table). */
   hero: boolean;
+  /** My Pazar choice: lifted a little with a pulsing gold rim. */
+  marked: boolean;
   color: THREE.Color;
   from: THREE.Vector3;
   /** Attract-mode hover pose (fixed at flip start). */
@@ -613,6 +622,7 @@ export class Cards {
     const from = this.deckTop(new THREE.Vector3());
     const live: Live = {
       card,
+      flipNo: msg.flipNo,
       id: msg.card,
       rarity: def.rarity,
       state: "flip",
@@ -621,6 +631,7 @@ export class Cards {
       saved: msg.saved,
       raid: def.kind === "raid",
       hero,
+      marked: false,
       color: new THREE.Color(RARITIES[def.rarity].color),
       from,
       hover: new THREE.Vector3(),
@@ -717,6 +728,89 @@ export class Cards {
     out.multiplyScalar(1 / n);
     out.y = TABLE_TOP_Y + 0.02;
     return true;
+  }
+
+  /** Repaint a row card's value line ("+100$"); no-op when it already says that or the card is gone. */
+  setRowValue(flipNo: number, value: number): void {
+    const live = this.row.find((l) => l.flipNo === flipNo);
+    if (!live || live.curse) return;
+    const map = faceTexture(live.id, money(value, true));
+    const c = live.card;
+    if (c.faceMat.map === map) return;
+    c.faceMat.map = map;
+    c.faceMat.emissiveMap = map;
+    c.faceMat.needsUpdate = true;
+    c.faceMat.emissiveIntensity = FACE_EMISSIVE + 0.35;
+  }
+
+  /**
+   * Fly these row cards away (staggered): to `to` (a stack, the kumbara; they shrink into it with a sparkle) or
+   * back into the deck (null). The cards left in the row close ranks.
+   */
+  sendRow(flipNos: readonly number[], to: THREE.Vector3 | null): void {
+    const going = this.row.filter((l) => flipNos.includes(l.flipNo));
+    if (!going.length) return;
+    this.row = this.row.filter((l) => !going.includes(l));
+    const stagger = going.length > 1 ? Math.min(0.08, 0.3 / (going.length - 1)) : 0;
+    const target = to ? to.clone() : null;
+    going.forEach((live, k) => {
+      live.marked = false;
+      this.settle(live);
+      this.startSweep(live, k * stagger, target);
+    });
+    if (this.glowCard && going.includes(this.glowCard)) this.glowCard = null;
+    if (!target) this.restackIn = 0.35 + going.length * stagger;
+    if (this.row.length === 0) this.rowSeat = null;
+  }
+
+  /** Row cards (flip numbers) still lying in the row. */
+  rowFlips(): number[] {
+    return this.row.map((l) => l.flipNo);
+  }
+
+  /** My Pazar choice (null = none): it rises a little and its rim pulses gold. */
+  markRow(flipNo: number | null): void {
+    for (const live of this.row) {
+      const marked = live.flipNo === flipNo;
+      if (live.marked && !marked) live.card.rimMat.color.copy(live.color);
+      live.marked = marked;
+    }
+  }
+
+  /** Where a row card lies (false when it isn't in the row). */
+  rowPoint(flipNo: number, out: THREE.Vector3): boolean {
+    const live = this.row.find((l) => l.flipNo === flipNo);
+    if (!live) return false;
+    out.copy(live.pos);
+    return true;
+  }
+
+  /** The row card under a screen point (client px), among `among` flip numbers; null = none close enough. */
+  rowCardAt(clientX: number, clientY: number, among: readonly number[]): number | null {
+    const cam = this.stage.camera;
+    const rect = this.stage.renderer.domElement.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    const toPx = (v: THREE.Vector3, out: THREE.Vector2) => {
+      _v4.copy(v).project(cam);
+      return out.set(rect.left + ((_v4.x + 1) / 2) * rect.width, rect.top + ((1 - _v4.y) / 2) * rect.height);
+    };
+    const a = new THREE.Vector2();
+    const b = new THREE.Vector2();
+    let best: number | null = null;
+    let bestD = Infinity;
+    for (const live of this.row) {
+      if (!among.includes(live.flipNo) || live.state !== "row") continue;
+      toPx(live.pos, a);
+      // half the card's screen height is the hit radius
+      _v3.copy(live.pos).addScaledVector(this.camUp, (CARD_H / 2) * live.scale);
+      const r = Math.max(18, toPx(_v3, b).distanceTo(a));
+      const d = Math.hypot(clientX - a.x, clientY - a.y);
+      if (d < r * 1.15 && d < bestD) {
+        bestD = d;
+        best = live.flipNo;
+      }
+    }
+    return best;
   }
 
   /** Standing lawyer cards in front of `seat` (count 0 / seat null = none). */
@@ -920,7 +1014,7 @@ export class Cards {
 
   private stepRow(live: Live, dt: number): void {
     live.pos.x = damp(live.pos.x, live.slotPos.x, 14, dt);
-    live.pos.y = damp(live.pos.y, live.slotPos.y, 14, dt);
+    live.pos.y = damp(live.pos.y, live.slotPos.y + (live.marked ? 0.035 : 0), 14, dt);
     live.pos.z = damp(live.pos.z, live.slotPos.z, 14, dt);
     live.quat.slerp(live.slotQuat, 1 - Math.exp(-12 * dt));
     live.flipAngle = 0;
@@ -1000,6 +1094,9 @@ export class Cards {
     if (live.state === "sweep") {
       c.sheenMat.uniforms.uAlpha!.value = 0;
       c.rimMat.opacity = Math.max(0, c.rimMat.opacity - dt * 4);
+    } else if (live.marked && live.state === "row") {
+      c.rimMat.color.set(PALETTE.gold);
+      c.rimMat.opacity = 0.55 + 0.25 * Math.sin(this.clock * 6);
     } else if (live.revealed && SHIMMER.has(live.rarity)) {
       live.sheenT += dt;
       const cyc = live.sheenT % 2.4;

@@ -24,6 +24,7 @@ import type {
   GhostReturnMsg,
   KasalaStateView,
   LoanMsg,
+  MarketResultMsg,
   RaidedMsg,
   RoundEndMsg,
   SavedMsg,
@@ -203,7 +204,7 @@ export function wheelLine(s: State, m: WheelResultMsg, myId: string): FeedLine {
     case "kumbara":
       return ["🎰", `${name} KUMBARAYI ${me ? "PATLATTIN" : "PATLATTI"} (${pos(mine)})`];
     case "x10":
-      return ["🎰", `${me ? "Potun" : `${who(s, m.playerId, myId, "gen")} potu`} ON KATINA çıktı! (pot ${b(money(m.pot))})`];
+      return ["🎰", `${me ? "Vitrinin" : `${who(s, m.playerId, myId, "gen")} vitrini`} ON KATINA çıktı! (${b(money(m.pot))})`];
     case "herkese100":
       return ["🎰", `Patron cömert: herkese ${pos(WHEEL_EVERYONE_GAIN)}!`];
     case "karistir":
@@ -233,6 +234,25 @@ export function cashLine(s: State, m: CashedMsg, myId: string): FeedLine {
   }
   if (m.pot <= 0) return ["🫥", `${name} eli boş ${me ? "kasaladın" : "kasaladı"}.`];
   return ["💰", `${me ? b("KASALADIN!") : `${name} ${b("KASALADI!")}`} ${pos(m.pot)} (${cards})${cut}`];
+}
+
+/** The Pazar from my side: what I sold, bought or lost in a clash (null when I wasn't part of it). */
+export function marketLine(s: State, m: MarketResultMsg, myId: string): FeedLine | null {
+  if (isMe(m.sellerId, myId)) {
+    const kumbara = m.toKumbara > 0 ? ` · ${esc(money(m.toKumbara))} kumbaraya` : "";
+    if (!m.sales.length) return ["🛒", m.toKumbara > 0 ? `Vitrininden kimse almadı: ${esc(money(m.toKumbara))} kumbaraya.` : "Pazar kapandı."];
+    return ["💰", `Pazar: ${m.sales.length} kart sattın ${pos(m.feesKept)}${kumbara}`];
+  }
+  const bought = m.sales.find((x) => isMe(x.buyerId, myId));
+  if (bought) {
+    return ["🛒", `${b(accName(cardName(bought.card)))} ${esc(money(bought.fee))}'a aldın: ${pos(bought.value - bought.fee)} kâr`];
+  }
+  const lost = m.clashes.find((x) => x.loserIds.includes(myId));
+  if (lost) {
+    const card = m.sales.find((x) => x.flipNo === lost.flipNo)?.card ?? "";
+    return ["😤", `${b(accName(cardName(card)))} ${who(s, lost.winnerId, myId)} kaptı: kasası seninkinden az.`];
+  }
+  return null;
 }
 
 export function raidLine(s: State, m: RaidedMsg, myId: string): FeedLine {

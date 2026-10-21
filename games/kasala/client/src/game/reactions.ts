@@ -56,6 +56,7 @@ import type {
   KasalaStateView,
   LastChanceMsg,
   LoanMsg,
+  MarketResultMsg,
   MatchEndMsg,
   RaidedMsg,
   RoundEndMsg,
@@ -307,7 +308,22 @@ export class Show {
     this.sirenTier = 0;
     c.cards.clearTurn();
     const lc = s.lastCard;
-    if (lc.flipNo > 0 && lc.id && lc.rarity) {
+    // The vitrin comes back quietly (small hovers, no showcase), then the last card as it was.
+    const rowPose = this.spots.pose(s.activeId);
+    if (rowPose) {
+      s.row.forEach((card) => {
+        if (card.ownerId || card.flipNo === lc.flipNo) return;
+        const rarity = CARD_BY_ID[card.id].rarity;
+        const msg: CardMsg = { playerId: s.activeId, flipNo: card.flipNo, card: card.id, rarity, value: card.value, pot: 0, sirenLevel: 0, raidChance: 0, curseHit: false, saved: false, needsTarget: false };
+        void c.cards.flip(msg, rowPose, { hero: false });
+      });
+      this.syncRowFaces();
+    }
+    let taken = false;
+    s.row.forEach((card) => {
+      if (card.flipNo === lc.flipNo && card.ownerId) taken = true;
+    });
+    if (lc.flipNo > 0 && lc.id && lc.rarity && !taken) {
       const pose = this.spots.pose(s.activeId);
       if (pose) {
         const msg: CardMsg = {
@@ -455,6 +471,7 @@ export class Show {
         }
         break;
       case "multiplier":
+        this.syncRowFaces();
         this.float(at, `×2 ${money(m.value, true)}`, GOLD);
         c.audio.sfx("kaching");
         c.stage.punch(0.1);
@@ -609,6 +626,7 @@ export class Show {
         c.characters.react(from, "laugh");
         c.later.after(c.fx.chips(targetAt, fromAt, chipCount(m.amount, 10, 3, 14), feed.colorOf(s, target)), 1500, () => {
           c.display.release(token);
+          this.syncRowFaces();
           this.float(fromAt, money(m.amount, true), GREEN);
           c.audio.sfx("coins");
           this.voices.say("hah", from);
@@ -631,6 +649,7 @@ export class Show {
         c.characters.react(from, "laugh");
         c.later.after(Promise.all(flights), 1600, () => {
           c.display.release(token);
+          this.syncRowFaces();
           if (m.amount > 0) this.float(fromAt, money(m.amount, true), GREEN);
           c.audio.sfx("coins");
           this.voices.say("laugh", from, { volume: 0.6 });
@@ -751,7 +770,8 @@ export class Show {
         break;
       }
       case "x10":
-        c.hud.banner("POT ×10!", PURPLE, `${who} · tur potu ${money(m.pot)}`);
+        this.syncRowFaces();
+        c.hud.banner("POT ×10!", PURPLE, `${who} · vitrin ${money(m.pot)}`);
         c.fx.moneyRain(at, m.pot);
         c.audio.sfx("kaching");
         c.audio.sfx("choir", { volume: 0.7 });
@@ -875,10 +895,17 @@ export class Show {
     } else if (m.pot > 0) {
       c.audio.sfx("kaching");
       c.later.run(160, () => c.audio.sfx("coins"));
-      // §14: the turn's cards turn into chips that fly from the row onto the stack.
+      // §14: the turn's cards turn into chips that fly from the row onto the stack. With a vitrin, only KASALA's
+      // picks go; the other flipped cards (attacks, protection, …) go back into the deck and the rest of the
+      // vitrin stays on the table for the Pazar.
       const row = this.rowAt;
       if (c.cards.rowCenter(row)) void c.fx.chips(row, at, chipCount(m.pot, 10, 4, 20), feed.colorOf(s, id));
-      c.cards.clearTurn(at);
+      if (m.taken.length) {
+        const goods = new Set<number>();
+        s?.row.forEach((card) => goods.add(card.flipNo));
+        c.cards.sendRow(c.cards.rowFlips().filter((f) => !goods.has(f)), null);
+        c.cards.sendRow(m.taken, at);
+      } else c.cards.clearTurn(at);
       c.fx.moneyRain(at, m.pot);
       if (m.pot >= SMALL_CASH) c.fx.confetti(clamp(m.pot / 300, 0.25, 1));
       c.fx.slam("KASALA!", GREEN, `${who} · ${money(m.pot, true)}${m.auto ? " · süre doldu" : ""}`);
@@ -1007,6 +1034,73 @@ export class Show {
     });
   }
 
+  // ===================================================================== pazar
+  /** The row's faces show what each card is worth now (Kara Para Aklama, a Haraç's take, POT ×10). */
+  private syncRowFaces(): void {
+    this.s?.row.forEach((card) => {
+      if (!card.ownerId) this.ctx.cards.setRowValue(card.flipNo, card.value);
+    });
+  }
+
+  /** The Pazar reveal: sold cards fly to their buyers and the fees to the seller, the leftovers to the kumbara. */
+  marketResult(m: MarketResultMsg): void {
+    const c = this.ctx;
+    const s = this.s;
+    const myId = this.myId;
+    const seller = m.sellerId;
+    const sellerAt = this.stackOr(seller);
+    c.cards.markRow(null);
+    m.sales.forEach((sale, i) => {
+      c.later.run(i * 260, () => {
+        const buyerAt = this.stackOr(sale.buyerId);
+        c.cards.sendRow([sale.flipNo], buyerAt);
+        void c.fx.chips(buyerAt, sellerAt, chipCount(sale.fee, 10, 2, 8), feed.colorOf(s, sale.buyerId));
+        c.audio.sfx("chips", { volume: 0.6, pan: this.spots.pan(sale.buyerId) });
+        c.characters.gesture(sale.buyerId, "push");
+        c.later.run(450, () => {
+          this.float(buyerAt, `🛒 ${money(sale.value - sale.fee, true)}`, GREEN);
+          c.characters.react(sale.buyerId, "cheer");
+          if (sale.buyerId === myId) c.audio.sfx("kaching", { volume: 0.7 });
+        });
+        c.later.run(750, () => this.float(sellerAt, money(sale.fee, true), GOLD));
+      });
+    });
+    // A clash: the poorer one got it, the others are furious.
+    for (const cl of m.clashes) {
+      c.later.run(350, () => {
+        for (const id of cl.loserIds) {
+          this.float(this.spots.head(id) ?? this.stackOr(id), "😤 Kaptırdı!", RED);
+          c.characters.react(id, "angry");
+        }
+        c.characters.react(cl.winnerId, "laugh");
+        this.voices.say("hah", cl.winnerId);
+      });
+    }
+    const after = m.sales.length * 260 + 250;
+    if (m.leftovers.length) {
+      c.later.run(after, () => {
+        c.cards.sendRow(
+          m.leftovers.map((x) => x.flipNo),
+          this.spots.kumbara(),
+        );
+        c.audio.sfx("coins", { volume: 0.5 });
+        c.later.run(500, () => c.stage.pulseKumbara("in"));
+      });
+    }
+    // Taşlık: half the fees go straight to the creditors.
+    m.taslikCut.forEach((cut, i) => {
+      if (cut.amount <= 0) return;
+      c.later.run(after + 300 + i * 150, () => {
+        const to = this.stackOr(cut.lenderId);
+        void c.fx.chips(sellerAt, to, chipCount(cut.amount, 10, 2, 6), feed.colorOf(s, seller));
+        this.float(to, `⛓ ${money(cut.amount, true)}`, GREEN);
+      });
+    });
+    if (m.sales.length) c.later.run(900, () => c.characters.react(seller, "happy"));
+    else if (m.toKumbara > 0) c.characters.react(seller, "sad");
+    this.line(feed.marketLine(s, m, myId));
+  }
+
   // ====================================================================== bets
   betsSettled(m: BetsSettledMsg): void {
     const c = this.ctx;
@@ -1118,8 +1212,10 @@ export class Show {
     const c = this.ctx;
     for (const l of feed.roundEndLines(this.s, m, this.myId)) c.hud.feed(l[0], l[1]);
     if (m.interest.some((i) => i.after > i.before)) c.audio.sfx("tick", { volume: 0.5 });
+    if (this.s && m.pauseSec > 0) c.overlays.roundSummary(m, this.s, this.myId);
     if (m.finalTableNext) {
-      c.later.run(400, () => {
+      // After the summary card, just behind the next turn's banner (the card already says SON MASA is next).
+      c.later.run(m.pauseSec * 1000 + 400, () => {
         c.hud.banner("SON MASA", RED, "Her şey ×2: kazanç da, ceza da!");
         c.audio.sfx("cymbal");
         c.audio.sfx("drumroll", { volume: 0.6 });

@@ -61,7 +61,10 @@
 //   lawyerNext = true · topluBaskin → every non-ghost player pays floor(kasa × WHEEL_RAID_PCT) to the kumbara ·
 //   birDaha → spin again. Broadcast WHEEL_RESULT + ANNOUNCER wheel_<slice>; hold WHEEL_HOLD_SEC; again → new
 //   WHEEL_START with descendMs 0; else busy WHEEL_ASCEND_SEC → flipping.
-// - CASH (or decision timer end → auto): Taşlık → TASLIK_CUT_PCT of the pot repays creditors (largest debt first),
+// - Vitrin: money cards, Haraç and Haraç Turu money land in state.row (one card each, value > 0); turnPot is the
+//   row value still on the table. Kara Para Aklama doubles every row card, the wheel's POT ×10 multiplies them.
+// - CASH (or decision timer end → auto): KASALA takes the picksFor(flips) most valuable row cards (bestPicks);
+//   their value is the "pot" below. Taşlık → TASLIK_CUT_PCT of the pot repays creditors (largest debt first),
 //   the rest to the kasa. Stats cashes / earlyCashes (1..EARLY_CASH_FLIPS cards) / biggestCash. CASHED, ANNOUNCER
 //   cashSmall (0 < pot < SMALL_CASH after ≤ EARLY_CASH_FLIPS cards) / cashBig (pot ≥ BIG_CASH) → result for CASH_RESULT_SEC (CASH_RESULT_BIG_SEC
 //   when pot ≥ BIG_CASH), sent as CashedMsg.resultSec.
@@ -69,6 +72,12 @@
 //   round × ROYALE_BRIBE_PER_ROUND) → kumbara. stats.raids. RAIDED (anim = random RAID_ANIMS), ANNOUNCER raidFirst
 //   (flip 1) / raidLate (flip ≥ 4) / raid → result for RAID_RESULT_SEC when the raid is "long" (pot + bribe ≥
 //   60$, flip ≥ 4 or the player's first raid of the match: full door sequence), else RAID_RESULT_SHORT_SEC.
+// - Pazar (after the KASALA result phase, when row cards are left): every other non-ghost player who can pay for
+//   at least one card is a buyer (disconnected humans sit it out). MARKET (row card or 0 = pas, changeable, secret)
+//   → state.marketDone; everyone chose → closes after T.marketCloseGrace. resolveMarket: the poorer buyer wins a
+//   clash; each sale moves value − fee to the buyer and the fee to the seller (Taşlık cut applies), unsold cards
+//   go to the kumbara. MARKET_RESULT, busy for MARKET_REVEAL_SEC, then settle. Leftovers with no buyer at all
+//   skip the phase (MARKET_RESULT with leftovers only). A raid sends the whole row to the kumbara (no Pazar).
 // - Settle (§8): boxWins(box, outcome) → winner gets floor(amount × payout × (finalTable ? 2 : 1)) back;
 //   losing real stakes: floor(total × HOUSE_CUT_PCT) to the active player, the rest to the kumbara. Ghost wins →
 //   ghostWins += 1; at GHOST_WINS_TO_RETURN (and !ghostReturned) → ghost = false, ghostReturned = true, kasa =
@@ -83,8 +92,10 @@
 //   Son Şans is short when nobody (or only one player) can lend, or the broke player is disconnected (a drop
 //   mid-Son Şans cuts it short, a return / bot takeover restores it). One non-ghost player left → matchEnd.
 // - Round end (all turnsPerRound turns done): interest on every debt (owed = ceil(owed × (1 + rate/100))),
-//   royale floorBonus += ROYALE_FLOOR_STEP, ROUND_END. Classic: round === totalRounds → matchEnd. Royale: round
-//   === ROYALE_MAX_ROUNDS → matchEnd (richest non-ghost wins). Next round finalTable → ANNOUNCER finalTable.
+//   royale floorBonus += ROYALE_FLOOR_STEP, ROUND_END (with standings and each player's kasa change since the
+//   round began). Classic: round === totalRounds → matchEnd. Royale: round === ROYALE_MAX_ROUNDS → matchEnd
+//   (richest non-ghost wins). Otherwise busy for ROUND_SUMMARY_SEC (the clients' round summary), then the next
+//   round. Next round finalTable → ANNOUNCER finalTable.
 // - Loans (§9, settings.loans, any phase except lobby / intro / matchEnd, ghosts and spectators excluded):
 //   LOAN_PROPOSE (rate-limited per player) → offers map (one outgoing pending per player, LOAN_OFFER_SEC,
 //   LOAN "proposed"; the same offer again only restarts its clock);
@@ -155,7 +166,10 @@ import {
   TIMER_QUANTUM_SEC,
   TRAP_LEVEL,
   TURN_OPTIONS,
+  WHEEL_POT_MULT,
   classicRounds,
+  marketFee,
+  picksFor,
   raidChance,
 } from "../shared/constants.js";
 import type { Animal, BetBox, CardId, EmoteId, TurnOutcome, WheelSliceId } from "../shared/constants.js";
@@ -173,6 +187,7 @@ import type {
   LastChanceMsg,
   LoanMsg,
   LoanProposeMsg,
+  MarketResultMsg,
   MatchEndMsg,
   NoticeMsg,
   Phase,
@@ -190,6 +205,7 @@ import { getRoomCodes } from "./hub.js";
 import {
   MAX_WHEEL_SPINS,
   applyWheel,
+  bestPicks,
   betsLineEvent,
   createRng,
   ghostAfterWin,
@@ -204,8 +220,10 @@ import {
   raidBribe,
   randInt,
   randomTarget,
+  resolveMarket,
   rollFlip,
   rollWheel,
+  rowValue,
   settleBets,
   shameTitles,
   sirenAfter,
@@ -218,7 +236,7 @@ import { LoanDesk, type LoanHost } from "./room/loans.js";
 import { readKnobs, type TestKnobs } from "./room/testing.js";
 import { botNickname, cleanNickname, defaultNickname, say, uniqueNickname } from "./room/text.js";
 import { FAST_TIMINGS, NORMAL_TIMINGS, type Timings } from "./room/timings.js";
-import { BetState, KasalaState, PlayerState, StatsState } from "./schema.js";
+import { BetState, KasalaState, PlayerState, RowCardState, StatsState } from "./schema.js";
 
 /** A match is running (turn bookkeeping applies). */
 const IN_MATCH: ReadonlySet<Phase> = new Set<Phase>([
@@ -228,6 +246,7 @@ const IN_MATCH: ReadonlySet<Phase> = new Set<Phase>([
   "targeting",
   "wheel",
   "result",
+  "market",
   "settle",
   "lastChance",
   "elimination",
@@ -239,6 +258,7 @@ const LOAN_PHASES: ReadonlySet<Phase> = new Set<Phase>([
   "targeting",
   "wheel",
   "result",
+  "market",
   "settle",
   "lastChance",
   "elimination",
@@ -298,6 +318,8 @@ export class KasalaRoom extends Room<KasalaState> {
   private afterLock: (() => void) | null = null;
 
   // --- round / turn
+  /** Each match player's kasa when the current round began (round summary deltas). */
+  private readonly roundStartKasa = new Map<string, number>();
   /** This round's turns (non-ghost match players when the round started); index = state.turnInRound. */
   private schedule: string[] = [];
   /** Each match starts this many seats round the table (rotates per match in the room). */
@@ -326,6 +348,9 @@ export class KasalaRoom extends Room<KasalaState> {
   private wheelSpin = 0;
   private wheelNext: WheelSliceId = "kumbara";
   private wheelAgain = false;
+  /** Pazar buyers of this market (turn order after the seller) and their secret choices (flipNo, 0 = pas). */
+  private marketBuyers: string[] = [];
+  private marketChoice = new Map<string, number>();
   private elimSeq = 0;
   private elimIndex = new Map<string, number>();
 
@@ -361,6 +386,7 @@ export class KasalaRoom extends Room<KasalaState> {
     this.handle(MSG.CASH, (c) => this.actCash(c.sessionId));
     this.handle(MSG.TARGET, (c, m) => this.actTarget(c.sessionId, obj(m)?.targetId));
     this.handle(MSG.BET, (c, m) => this.actBet(c.sessionId, obj(m)?.box, obj(m)?.amount));
+    this.handle(MSG.MARKET, (c, m) => this.actMarket(c.sessionId, obj(m)?.flipNo));
     this.handle(MSG.LOAN_PROPOSE, (c, m) => this.actLoanPropose(c.sessionId, m));
     this.handle(MSG.LOAN_RESPOND, (c, m) => this.actLoanRespond(c.sessionId, m));
     this.handle(MSG.LOAN_CANCEL, (c, m) => this.loans.cancel(c.sessionId, m));
@@ -418,6 +444,7 @@ export class KasalaRoom extends Room<KasalaState> {
     }
     this.notice(say.reconnecting(p.nickname));
     this.maybeCloseBets();
+    this.maybeCloseMarket();
     this.lastChanceConnection(id);
     this.scheduleDisposeIfEmpty();
     try {
@@ -502,6 +529,9 @@ export class KasalaRoom extends Room<KasalaState> {
         break;
       case "result":
         if (over) this.afterResult();
+        break;
+      case "market":
+        if (over) this.closeMarket();
         break;
       case "settle":
         if (over) this.afterTurn();
@@ -755,6 +785,11 @@ export class KasalaRoom extends Room<KasalaState> {
     });
     s.turnsPerRound = this.schedule.length;
     s.turnInRound = 0;
+    this.roundStartKasa.clear();
+    for (const id of s.turnOrder) {
+      const p = s.players.get(id);
+      if (p) this.roundStartKasa.set(id, p.kasa);
+    }
     s.finalTable = s.settings.mode === "classic" && s.round === s.totalRounds;
     this.finalLinePending = s.finalTable;
     this.beginTurn();
@@ -820,6 +855,10 @@ export class KasalaRoom extends Room<KasalaState> {
     s.sirenLevel = 0;
     s.raidChance = 0;
     s.turnPot = 0;
+    s.row.clear();
+    s.marketDone.clear();
+    this.marketBuyers = [];
+    this.marketChoice.clear();
     s.flips = 0;
     s.lawyers = 0;
     s.curseArmed = false;
@@ -898,15 +937,28 @@ export class KasalaRoom extends Room<KasalaState> {
     const interest = this.loans.interest((id) => !!s.players.get(id)?.ghost);
     if (!classic) s.floorBonus = Math.round((s.floorBonus + ROYALE_FLOOR_STEP) * 1000) / 1000;
     const last = s.round >= s.totalRounds;
+    const pauseSec = last ? 0 : this.T.roundSummary;
     this.broadcast(MSG.ROUND_END, {
       round: s.round,
       interest,
       floorBonus: s.floorBonus,
       finalTableNext: classic && !last && s.round + 1 === s.totalRounds,
+      standings: this.roundStandings(),
+      pauseSec,
     } satisfies RoundEndMsg);
     this.updateTaslik();
     if (last) this.endMatch();
-    else this.beginRound();
+    else this.busyFor(pauseSec, () => this.beginRound());
+  }
+
+  /** Match players richest first (ghosts last), with their kasa change since the round began. */
+  private roundStandings(): RoundEndMsg["standings"] {
+    const s = this.state;
+    return [...s.turnOrder]
+      .map((id) => s.players.get(id))
+      .filter((p): p is PlayerState => !!p && !p.spectator)
+      .sort((a, b) => Number(a.ghost) - Number(b.ghost) || b.kasa - a.kasa || a.seat - b.seat)
+      .map((p) => ({ playerId: p.id, kasa: p.kasa, delta: p.kasa - (this.roundStartKasa.get(p.id) ?? p.kasa) }));
   }
 
   // ======================================================================= flips
@@ -965,14 +1017,14 @@ export class KasalaRoom extends Room<KasalaState> {
           line = "curseHit";
         } else {
           value = moneyValue(card, s.finalTable);
-          s.turnPot += value;
+          this.addToRow(flipNo, card, value);
           // Small change (Bozukluk / Tomar) isn't worth a line; Çanta and Külçe are.
           if (card === "canta" || card === "kulce") line = card;
         }
         break;
       case "multiplier":
         value = s.turnPot;
-        s.turnPot += value;
+        this.scaleRow(def.value);
         line = "aklama";
         break;
       case "protection":
@@ -1140,7 +1192,7 @@ export class KasalaRoom extends Room<KasalaState> {
     if (card === "harac") {
       amount = Math.min(target.kasa, haracAmount(target.kasa));
       target.kasa -= amount;
-      s.turnPot += amount;
+      this.addToRow(s.lastCard.flipNo, "harac", amount);
     } else if (card === "lanet") {
       target.cursed = true;
     } else if (card === "takas") {
@@ -1184,7 +1236,7 @@ export class KasalaRoom extends Room<KasalaState> {
         p.kasa -= pay.amount;
         total += pay.amount;
       }
-      s.turnPot += total;
+      this.addToRow(s.lastCard.flipNo, "haracTuru", total);
       this.broadcast(MSG.ATTACK, { card, fromId: id, targetId: "", amount: total, payers, pot: s.turnPot, random: false } satisfies AttackMsg);
       this.announce("haracTuru", id);
     }
@@ -1233,7 +1285,7 @@ export class KasalaRoom extends Room<KasalaState> {
     });
     for (const p of players) p.kasa = out.kasas[p.id] ?? p.kasa;
     s.kumbara = out.kumbara;
-    s.turnPot = out.pot;
+    if (slice === "x10") this.scaleRow(WHEEL_POT_MULT);
     if (out.lawyer) {
       s.lawyers += 1;
       const me = s.players.get(id);
@@ -1265,13 +1317,19 @@ export class KasalaRoom extends Room<KasalaState> {
   }
 
   // ===================================================================== results
-  /** KASALA! (auto = the decision timer ran out). */
+  /** KASALA! (auto = the decision timer ran out): the best picksFor(flips) row cards go to the kasa. */
   private cash(auto: boolean): void {
     const s = this.state;
     const p = s.players.get(s.activeId);
     if (!p) return;
-    const pot = Math.max(0, s.turnPot);
     const flips = s.flips;
+    const taken = bestPicks([...s.row], picksFor(flips));
+    let pot = 0;
+    for (const c of s.row) {
+      if (!taken.includes(c.flipNo)) continue;
+      c.ownerId = p.id;
+      pot += c.value;
+    }
     let kept = pot;
     let cut: CashedMsg["taslikCut"] = [];
     if (pot > 0 && isTaslik(p.kasa, this.loans.totalOwed(p.id))) {
@@ -1280,7 +1338,8 @@ export class KasalaRoom extends Room<KasalaState> {
       cut = r.cut;
     }
     p.kasa += kept;
-    s.turnPot = 0;
+    s.turnPot = rowValue([...s.row]);
+    const rowLeft = [...s.row].filter((c) => !c.ownerId).length;
     if (pot > 0) {
       p.stats.cashes += 1;
       p.stats.biggestCash = Math.max(p.stats.biggestCash, pot);
@@ -1292,7 +1351,7 @@ export class KasalaRoom extends Room<KasalaState> {
     s.phase = "result";
     const resultSec = pot >= BIG_CASH ? this.T.cashResultBig : this.T.cashResult;
     this.setTimer(resultSec);
-    this.broadcast(MSG.CASHED, { playerId: p.id, pot, flips, kept, taslikCut: cut, auto, skipped: false, resultSec } satisfies CashedMsg);
+    this.broadcast(MSG.CASHED, { playerId: p.id, pot, flips, kept, taslikCut: cut, taken, rowLeft, auto, skipped: false, resultSec } satisfies CashedMsg);
     // Big hauls always get a line; a small one only when it was a timid early KASALA (that's what the lines tease).
     if (pot >= BIG_CASH) this.announce("cashBig", p.id);
     else if (pot > 0 && pot < SMALL_CASH && flips <= EARLY_CASH_FLIPS) this.announce("cashSmall", p.id);
@@ -1316,6 +1375,8 @@ export class KasalaRoom extends Room<KasalaState> {
       flips: 0,
       kept: 0,
       taslikCut: [],
+      taken: [],
+      rowLeft: 0,
       auto: true,
       skipped: true,
       resultSec,
@@ -1330,6 +1391,7 @@ export class KasalaRoom extends Room<KasalaState> {
     if (!p) return;
     const potLost = Math.max(0, s.turnPot);
     s.turnPot = 0;
+    s.row.clear();
     const bribe = raidBribe(s.settings.mode, p.kasa, s.round, s.finalTable);
     p.kasa -= bribe;
     s.kumbara += potLost + bribe;
@@ -1358,6 +1420,13 @@ export class KasalaRoom extends Room<KasalaState> {
 
   private afterResult(): void {
     const s = this.state;
+    if (!this.outcome.raided && [...s.row].some((c) => !c.ownerId)) return this.openMarket();
+    this.finishTurn();
+  }
+
+  /** The turn's money is settled (KASALA / raid / market): side bets, then the end of the turn. */
+  private finishTurn(): void {
+    const s = this.state;
     if (s.bets.size === 0) return this.afterTurn();
     if (this.refundBets) {
       this.refundAllBets();
@@ -1366,6 +1435,135 @@ export class KasalaRoom extends Room<KasalaState> {
       return this.afterTurn();
     }
     this.settle();
+  }
+
+  // ================================================================ vitrin & pazar
+  /** Money that lands in the vitrin as one row card (nothing for 0$). */
+  private addToRow(flipNo: number, id: CardId, value: number): void {
+    const s = this.state;
+    if (value > 0) {
+      const c = new RowCardState();
+      c.flipNo = flipNo;
+      c.id = id;
+      c.value = value;
+      s.row.push(c);
+    }
+    s.turnPot = rowValue([...s.row]);
+  }
+
+  /** Kara Para Aklama ×2 / the wheel's POT ×10: every row card on the table is worth `mult` times more. */
+  private scaleRow(mult: number): void {
+    const s = this.state;
+    for (const c of s.row) if (!c.ownerId) c.value = Math.floor(c.value * mult);
+    s.turnPot = rowValue([...s.row]);
+  }
+
+  /** Row cards still on the table, in flip order. */
+  private rowLeft(): RowCardState[] {
+    return [...this.state.row].filter((c) => !c.ownerId);
+  }
+
+  /** Pazar after a KASALA with cards left: buyers are the others still in the game who can pay for something. */
+  private openMarket(): void {
+    const s = this.state;
+    const left = this.rowLeft();
+    const cheapest = Math.min(...left.map((c) => marketFee(c.value)));
+    const order = [...s.turnOrder];
+    const start = Math.max(0, order.indexOf(s.activeId));
+    const after = [...order.slice(start + 1), ...order.slice(0, start)];
+    this.marketBuyers = after.filter((id) => {
+      const p = s.players.get(id);
+      return !!p && !p.ghost && !p.spectator && (p.connected || p.bot) && p.kasa >= cheapest;
+    });
+    this.marketChoice.clear();
+    s.marketDone.clear();
+    if (!this.marketBuyers.length) return this.closeMarket();
+    s.phase = "market";
+    this.setTimer(this.T.market);
+  }
+
+  /** MARKET: a row card (flipNo) or 0 = pas. Changeable until the market closes; secret until then. */
+  private actMarket(id: string, flipNo: unknown): boolean {
+    const s = this.state;
+    if (s.phase !== "market" || s.busy || !this.marketBuyers.includes(id)) return false;
+    if (typeof flipNo !== "number" || !Number.isInteger(flipNo) || flipNo < 0) return false;
+    if (flipNo > 0) {
+      const card = this.rowLeft().find((c) => c.flipNo === flipNo);
+      const p = s.players.get(id);
+      if (!card || !p) return false;
+      if (p.kasa < marketFee(card.value)) {
+        this.tell(id, say.marketBroke());
+        return false;
+      }
+    }
+    this.marketChoice.set(id, flipNo);
+    if (s.marketDone.indexOf(id) < 0) s.marketDone.push(id);
+    this.maybeCloseMarket();
+    return true;
+  }
+
+  /** Every buyer who can still answer has chosen: close shortly after the last answer. */
+  private maybeCloseMarket(): void {
+    const s = this.state;
+    if (s.phase !== "market" || s.busy || this.timerTotal <= 0) return;
+    const waiting = this.marketBuyers.some((id) => {
+      const p = s.players.get(id);
+      return !!p && (p.connected || p.bot) && !this.marketChoice.has(id);
+    });
+    if (waiting) return;
+    this.t = Math.max(this.t, this.timerTotal - this.T.marketCloseGrace);
+  }
+
+  /** The reveal: sales, clashes, the seller's fees, leftovers to the kumbara. Then the bets / the next turn. */
+  private closeMarket(): void {
+    const s = this.state;
+    const seller = s.players.get(s.activeId);
+    const left = this.rowLeft();
+    const buyers = this.marketBuyers
+      .map((id) => s.players.get(id))
+      .filter((p): p is PlayerState => !!p)
+      .map((p) => ({ id: p.id, kasa: p.kasa, choice: this.marketChoice.get(p.id) ?? 0 }));
+    const out = resolveMarket(left, buyers);
+    let fees = 0;
+    const sales: MarketResultMsg["sales"] = [];
+    for (const sale of out.sales) {
+      const buyer = s.players.get(sale.buyerId);
+      const card = left.find((c) => c.flipNo === sale.flipNo);
+      if (!buyer || !card) continue;
+      buyer.kasa += sale.value - sale.fee;
+      card.ownerId = buyer.id;
+      fees += sale.fee;
+      sales.push({ ...sale, card: card.id });
+    }
+    let feesKept = fees;
+    let cut: MarketResultMsg["taslikCut"] = [];
+    if (seller && fees > 0) {
+      if (isTaslik(seller.kasa, this.loans.totalOwed(seller.id))) {
+        const r = this.loans.applyTaslikCut(seller.id, fees);
+        feesKept = r.kept;
+        cut = r.cut;
+      }
+      seller.kasa += feesKept;
+    } else if (fees > 0) {
+      s.kumbara += fees;
+    }
+    const leftovers = this.rowLeft().map((c) => ({ flipNo: c.flipNo, value: c.value }));
+    const toKumbara = leftovers.reduce((n, c) => n + c.value, 0);
+    s.kumbara += toKumbara;
+    const rows = [...s.row];
+    for (let i = rows.length - 1; i >= 0; i--) if (!rows[i]!.ownerId) s.row.splice(i, 1);
+    s.turnPot = 0;
+    this.broadcast(MSG.MARKET_RESULT, {
+      sellerId: s.activeId,
+      sales,
+      clashes: out.clashes,
+      leftovers,
+      toKumbara,
+      feesKept,
+      taslikCut: cut,
+    } satisfies MarketResultMsg);
+    this.moneyChanged();
+    this.busyFor(this.T.marketReveal, () => this.finishTurn());
   }
 
   private refundAllBets(): void {
@@ -1963,6 +2161,11 @@ export class KasalaRoom extends Room<KasalaState> {
       bet: (id, box, amount) => this.actBet(id, box, amount),
       canBet: (id) => this.betsOpen && this.canBet(id),
       betDecided: (id) => this.betDone.has(id),
+      canShop: (id) => this.state.phase === "market" && !this.state.busy && this.marketBuyers.includes(id),
+      shopped: (id) => this.marketChoice.has(id),
+      marketCards: () => this.rowLeft().map((c) => ({ flipNo: c.flipNo, value: c.value })),
+      marketRivals: (id) => this.marketBuyers.filter((x) => x !== id).map((x) => this.state.players.get(x)?.kasa ?? 0),
+      market: (id, flipNo) => this.actMarket(id, flipNo),
       targetCandidates: () => this.targetCandidates(),
       bribeFor: (id) => {
         const s = this.state;

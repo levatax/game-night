@@ -5,14 +5,14 @@ import { RAID_BRIBE_PCT } from "../../../../shared/constants";
 const BRIBE = `%${Math.round(RAID_BRIBE_PCT * 100)}`;
 
 export const TAGLINES = [
-  "Kart çevir, potu büyüt, polis gelmeden KASALA de!",
+  "Kart çevir, vitrini doldur, polis gelmeden KASALA de!",
   "Bir kart daha… ne olabilir ki?",
   "Bu masada dostluk yok, faiz var.",
   "Kasala ya da kelepçe. Seçim senin.",
   "Komiser Rıfat bu gece nöbette.",
   "Cemil Abi kartları karıyor. Purosu da yanıyor.",
   "Siren çalınca kimse kimseyi tanımaz.",
-  "Arkadaşın 5+ kutusuna basmış. Haberin olsun.",
+  "Vitrinindeki Külçe'ye herkes göz dikti. Haberin olsun.",
 ] as const;
 
 /** Nickname placeholders / dice rolls. Each fits NICKNAME_MAX (14). */
@@ -55,20 +55,20 @@ export const MODE_INFO = {
 
 /** Home "Nasıl oynanır?" fold-out: the rule in one breath, then the keys. */
 export const HOW_TO_RULE =
-  `Kart çevir, pot büyüsün. Her kart sireni doldurur; baskında pot gider, kasandan da ${BRIBE} rüşvet kesilir. Polis gelmeden KASALA! de.`;
+  `Kart çevir, para vitrine düşsün. Her kart sireni doldurur; baskında vitrin gider, kasandan da ${BRIBE} rüşvet kesilir. KASALA! deyince vitrinin en iyi kartı senin, kalanını rakipler Pazar'da sana ödeyip alır.`;
 export const HOW_TO = [
-  ["Space", "Kart çevir: tur potu büyür, siren dolar."],
-  ["Enter", "KASALA! Tur potu kasana girer."],
-  ["1–4", "Sıran değilken bahis kutusu seç (0: pas)."],
+  ["Space", "Kart çevir: para vitrine düşer, siren dolar."],
+  ["Enter", "KASALA! En iyi kart(lar) kasana: 4. karttan sonra 2, 7.'den sonra 3."],
+  ["1–9", "Pazar: rakibin vitrininden yarı fiyata kart seç (0: pas)."],
   ["B", "Borç ver, borç iste, faizini say."],
   ["V", "Görünüm: koltuğun ya da masanın üstü."],
 ] as const;
 
 /** Lobby "Nasıl oynanır" strip: three steps, open by default. */
 export const LOBBY_STEPS = [
-  { icon: "🃏", key: "Space", title: "Kart çevir → pot büyür", text: "Sıran gelince kart aç. Her kart tur potuna para ekler." },
-  { icon: "🚨", key: "", title: "Her kart sireni doldurur", text: `Baskında pot gider, kasandan da ${BRIBE} rüşvet kesilir.` },
-  { icon: "💰", key: "Enter", title: "KASALA! de, potu cebe at", text: "Sıran değilken bahis koy (1–4): kaçıncı kartta yanar, yoksa kasalar mı?" },
+  { icon: "🃏", key: "Space", title: "Kart çevir → vitrin dolar", text: "Sıran gelince kart aç. Para kartları önündeki vitrine dizilir." },
+  { icon: "🚨", key: "", title: "Her kart sireni doldurur", text: `Baskında vitrin gider, kasandan da ${BRIBE} rüşvet kesilir.` },
+  { icon: "🛒", key: "Enter", title: "KASALA! de, Pazar açılsın", text: "En iyi kart senin; kalanları rakipler yarı fiyata alır (1–9), parası sana. Aynı kartı isteyen olursa kasası az olan kapar." },
 ] as const;
 
 /** Home + lobby: you can always fill the table with bots. */

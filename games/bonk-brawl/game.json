@@ -6,6 +6,7 @@
   "players": { "min": 2, "max": 8 },
   "duration": "~5 min",
   "input": "Keyboard + mouse",
+  "desktopOnly": true,
   "tags": ["Free-for-all", "3D", "Aim & timing"],
   "accent": "#FF5A5F",
   "cover": "cover.svg",

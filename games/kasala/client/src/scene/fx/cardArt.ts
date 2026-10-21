@@ -47,7 +47,7 @@ export function valueText(id: CardId, value: number): string {
     case "kulce":
       return money(value > 0 ? value : def.value, true);
     case "aklama":
-      return `POT ×${def.value}`;
+      return `VİTRİN ×${def.value}`;
     case "harac":
       return `%${Math.round(def.value * 100)} HARAÇ`;
     case "haracTuru":

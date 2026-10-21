@@ -5,7 +5,7 @@
 
 import { h, setText, show, toggle } from "./dom";
 
-export type TipId = "flip" | "cash" | "bet" | "target" | "siren";
+export type TipId = "flip" | "cash" | "bet" | "target" | "siren" | "market";
 
 const STORAGE_KEY = "kasala:coach:v1";
 const TIP_SEC = 6;

@@ -9,9 +9,14 @@
 //    circle; turns red + shakes in the last 3 s) + "Next up" piece (PiecePreview canvas from ../scene/Pieces,
 //    piece name + quip) + controls hint for the active player ("Move mouse • Q/E or scroll rotate • W/S tilt •
 //    Click drop"), and "Press SPACE to open the case!" (pulsing) when it's my spin.
-//  - Bottom right (not my turn, side bets on, before the drop): bet panel: amount chips 0/10/25/50 (keys 1–4),
-//    STAND 🏰 / FALL 💥 buttons (F/G), "Bet locked: 25 on FALL" after betting; disabled when unaffordable.
-//  - Left: tower height meter (vertical ruler with a cartoon cake at the bottom, cm) + "Survive payout: 🪙 34".
+//  - Bottom right (not my turn, side bets on, before the drop): guess panel "Will it stay up?" with two big
+//    buttons 👍 Stays up / 👎 Falls (F/G), one fixed stake (BET_STAKE); one click places the guess, the other
+//    button switches it; "You guessed: Stays up ✔" after. Hidden when I can't afford the stake.
+//  - Left: tower height meter (vertical ruler with a cartoon cake at the bottom, cm) + "If it stands: +34 🪙" /
+//    "If it falls: −5 🪙".
+//  - First-turn coach (my first 2 placing turns / my first spin): a big friendly bubble above the bottom row
+//    plus a bouncing arrow over my hovering piece (pointAt). Someone else's first turn: a one-liner above the
+//    guess panel.
 //  - Saboteur only: small 😈 badge with "Rig ready (R)" / "Rig used" / "Wait for someone's spin".
 //  - Feed (left-bottom): last 6 lines, slide in, fade out after 8 s. Game calls feed() with HTML.
 //  - Status banner (top under pips): big short text like "Deniz's turn!", "YOUR TURN!", "Settling…" with a
@@ -25,7 +30,7 @@
 
 import "./hud.css";
 import {
-  BET_AMOUNTS,
+  BET_STAKE,
   CARD_BY_ID,
   PIECES,
   PLAYER_COLORS,
@@ -51,8 +56,8 @@ export interface HudExtra {
   rig: { available: boolean; used: boolean };
   /** My current bet this turn (local echo). */
   myBet: { side: BetSide; amount: number } | null;
-  /** Selected bet amount chip. */
-  betAmount: number;
+  /** First-turn coach hints (Game decides when). */
+  coach: { place: boolean; spin: boolean; watch: boolean };
 }
 
 /** Escape text for the HTML that Game passes to feed(). */
@@ -183,14 +188,23 @@ export class Hud {
   private readonly hint: HTMLDivElement;
   private readonly spinBtn: HTMLButtonElement;
 
+  // first-turn coach
+  private readonly coachEl: HTMLDivElement;
+  private readonly coachMain: HTMLDivElement;
+  private readonly coachSub: HTMLDivElement;
+  private readonly arrow: HTMLDivElement;
+  private coachMode: "" | "aim" | "drop" | "spin" = "";
+  private coachMoved = 0;
+  private coachAge = 0;
+  private lastPointer: { x: number; y: number } | null = null;
+  private readonly touch = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
+
   // bet panel
   private readonly betPanel: HTMLDivElement;
-  private readonly betChips: HTMLButtonElement[] = [];
+  private readonly betCoach: HTMLDivElement;
   private readonly betStand: HTMLButtonElement;
   private readonly betFall: HTMLButtonElement;
   private readonly betStatus: HTMLDivElement;
-  private selectedAmount: number = BET_AMOUNTS[1];
-  private lastExtraAmount = -1;
 
   // height meter
   private readonly meter: HTMLDivElement;
@@ -311,27 +325,32 @@ export class Hud {
 
     this.hint = el("div", "jjh-hint", this.bottom);
 
+    // ---- first-turn coach (bubble above the bottom row + arrow over my piece)
+    this.coachEl = el("div", "jjh-coach", this.root);
+    this.coachMain = el("div", "jjh-coach__main", this.coachEl);
+    this.coachSub = el("div", "jjh-coach__sub", this.coachEl);
+    this.arrow = el("div", "jjh-arrow", this.root);
+    el("span", "jjh-arrow__icon", this.arrow, "👇");
+    window.addEventListener("pointermove", (e) => {
+      if (this.coachMode !== "aim") return;
+      if (this.lastPointer) this.coachMoved += Math.hypot(e.clientX - this.lastPointer.x, e.clientY - this.lastPointer.y);
+      this.lastPointer = { x: e.clientX, y: e.clientY };
+    });
+
     // ---- bottom right: bet panel
     this.betPanel = el("div", "jjh-bet jjh-box", this.root);
-    el("div", "jjh-bet__title", this.betPanel, t("hud.sideBet"));
-    const chips = el("div", "jjh-bet__chips", this.betPanel);
-    BET_AMOUNTS.forEach((amount, i) => {
-      const b = el("button", "jjh-chip", chips);
-      b.type = "button";
-      b.innerHTML = `<span class="jjh-chip__key">${i + 1}</span><span class="jjh-chip__amt">${amount === 0 ? "✖" : fmtNum(amount)}</span>`;
-      b.title = amount === 0 ? t("hud.noBetTitle") : t("hud.betTitle", { amount: fmtNum(amount) });
-      this.wireButton(b, () => this.pickAmount(amount));
-      this.betChips.push(b);
-    });
+    this.betCoach = el("div", "jjh-bet__coach", this.betPanel, t("hud.betCoach"));
+    el("div", "jjh-bet__title", this.betPanel, t("hud.betTitle"));
     const sides = el("div", "jjh-bet__sides", this.betPanel);
     this.betStand = el("button", "jj-btn jj-btn--green jjh-side", sides);
     this.betStand.type = "button";
-    this.betStand.textContent = upper(t("hud.stand"));
+    el("span", "jjh-side__label", this.betStand, t("hud.stand"));
     el("small", "", this.betStand, "F");
     this.betFall = el("button", "jj-btn jj-btn--red jjh-side", sides);
     this.betFall.type = "button";
-    this.betFall.textContent = upper(t("hud.fall"));
+    el("span", "jjh-side__label", this.betFall, t("hud.fall"));
     el("small", "", this.betFall, "G");
+    el("div", "jjh-bet__rules", this.betPanel, t("hud.betRules", { n: fmtNum(BET_STAKE) }));
     this.wireButton(this.betStand, () => this.placeBet("stand"));
     this.wireButton(this.betFall, () => this.placeBet("fall"));
     this.betStatus = el("div", "jjh-bet__status", this.betPanel);
@@ -359,6 +378,7 @@ export class Hud {
   hide(): void {
     this.visible = false;
     toggle(this.root, "jjh--hidden", true);
+    if (this.coachMode) this.setCoach("");
     this.setScoreboard(false);
   }
 
@@ -380,7 +400,8 @@ export class Hud {
     this.updateCard(state, inTurn);
     this.updateTimer(state);
     this.updateNext(state, myTurn);
-    this.updateHint(state, myTurn);
+    this.updateHint(state, myTurn, extra.coach.place);
+    this.updateCoach(state, extra);
     this.updateBet(state, extra, me, myTurn);
     this.updateMeter(state, inTurn);
     this.updateSaboteur(state, extra);
@@ -439,6 +460,12 @@ export class Hud {
       toggle(this.ant, "jjh-ant--down", d < -0.5);
     }
     this.ant.style.bottom = `${this.antPos.toFixed(2)}%`;
+
+    // coach: aim → drop once the mouse has moved a bit (or after a few seconds)
+    if (this.coachMode === "aim" || this.coachMode === "drop") {
+      this.coachAge += dt;
+      if (this.coachMode === "aim" && (this.coachMoved > 220 || this.coachAge > 3.5)) this.setCoach("drop");
+    }
 
     // next-up preview
     if (this.preview && this.previewType) {
@@ -616,11 +643,15 @@ export class Hud {
     const rarity = (state.card.rarity || def.rarity) as Rarity;
     this.cardChip.style.setProperty("--rc", RARITY_COLORS[rarity] ?? RARITY_COLORS.common);
     this.cardChip.dataset.rarity = rarity;
+    const mult = state.card.multiplier || def.multiplier;
+    const plain = id === "plain";
     setText(this.cardEmoji, def.emoji);
-    setText(this.cardName, cardName(id));
-    this.cardName.title = cardName(id);
-    setText(this.cardText, cardText(id));
-    setText(this.cardMult, fmtMult(state.card.multiplier || def.multiplier));
+    const rule = plain ? t("hud.cardPlain") : t("hud.cardRule", { name: cardName(id), mult: fmtMult(mult) });
+    setText(this.cardName, rule);
+    this.cardName.title = rule;
+    setText(this.cardText, plain ? "" : cardText(id));
+    toggle(this.cardChip, "jjh-card--plain", plain);
+    setText(this.cardMult, fmtMult(mult));
     replay(this.cardChip, "jjh-card--pop");
   }
 
@@ -705,12 +736,13 @@ export class Hud {
     }
   }
 
-  private updateHint(state: JellyStateView, myTurn: boolean): void {
+  private updateHint(state: JellyStateView, myTurn: boolean, coaching: boolean): void {
     const spin = myTurn && state.phase === "spinning" && state.spinStage === "idle";
     toggle(this.spinBtn, "jjh-on", spin);
     this.spinBtn.disabled = !spin;
     const placing = myTurn && state.phase === "placing";
-    toggle(this.hint, "jjh-on", placing);
+    // while the big coach bubble is up, the compact hint stays out of the way
+    toggle(this.hint, "jjh-on", placing && !coaching);
     if (!placing) return;
     const card = state.card.id;
     const rot = t(card === "tiedHands" ? "hud.hintTied" : "hud.hintRotate");
@@ -721,39 +753,74 @@ export class Hud {
   }
 
   private updateBet(state: JellyStateView, extra: HudExtra, me: PlayerView | undefined, myTurn: boolean): void {
+    const bet = extra.myBet && extra.myBet.amount > 0 ? extra.myBet : null;
     const open =
       state.settings.sideBets &&
       !!me &&
       !me.spectator &&
       !myTurn &&
       state.activeId !== "" &&
-      (state.phase === "spinning" || state.phase === "placing");
+      (state.phase === "spinning" || state.phase === "placing") &&
+      // can't afford the stake (and haven't guessed yet): don't tease
+      (!!bet || me.coins >= BET_STAKE);
     toggle(this.betPanel, "jjh-on", open);
-    if (extra.betAmount !== this.lastExtraAmount) {
-      this.lastExtraAmount = extra.betAmount;
-      this.selectedAmount = extra.betAmount;
-    }
+    toggle(this.betCoach, "jjh-on", open && extra.coach.watch && !bet);
     if (!open || !me) return;
-    const bet = extra.myBet && extra.myBet.amount > 0 ? extra.myBet : null;
-    this.betChips.forEach((b, i) => {
-      const amount = BET_AMOUNTS[i];
-      b.disabled = amount > me.coins;
-      toggle(b, "jjh-chip--sel", amount === this.selectedAmount);
-    });
-    const amt = this.selectedAmount;
-    const broke = amt <= 0 || amt > me.coins;
-    this.betStand.disabled = broke && !(bet && amt === 0);
-    this.betFall.disabled = broke && !(bet && amt === 0);
     toggle(this.betStand, "jjh-side--picked", bet?.side === "stand");
     toggle(this.betFall, "jjh-side--picked", bet?.side === "fall");
+    toggle(this.betStand, "jjh-side--dim", bet?.side === "fall");
+    toggle(this.betFall, "jjh-side--dim", bet?.side === "stand");
     toggle(this.betPanel, "jjh-bet--locked", !!bet);
-    const who = state.players.get(state.activeId)?.nickname ?? t("hud.betWhoFallback");
     if (bet) {
-      const side = upper(t(bet.side === "stand" ? "hud.stand" : "hud.fall"));
-      setText(this.betStatus, t("hud.betLocked", { amount: fmtNum(bet.amount), side }));
-    } else if (me.coins <= 0) setText(this.betStatus, t("hud.betBroke"));
-    else if (amt <= 0) setText(this.betStatus, t("hud.betPick"));
-    else setText(this.betStatus, t("hud.betAsk", { who, win: fmtNum(amt * 2) }));
+      const side = t(bet.side === "stand" ? "hud.stand" : "hud.fall");
+      setText(this.betStatus, t("hud.betGuessed", { side }));
+      this.betStatus.title = t("hud.betSwitch");
+    } else {
+      setText(this.betStatus, "");
+      this.betStatus.title = "";
+    }
+  }
+
+  /** The big first-turn bubble: aim → drop while placing, a bonus note on my first spin. */
+  private updateCoach(state: JellyStateView, extra: HudExtra): void {
+    const c = extra.coach;
+    const spin = c.spin && state.phase === "spinning";
+    const want: typeof this.coachMode = c.place ? (this.coachMode === "drop" ? "drop" : "aim") : spin ? "spin" : "";
+    if (want !== this.coachMode) this.setCoach(want);
+  }
+
+  private setCoach(mode: typeof this.coachMode): void {
+    const prev = this.coachMode;
+    this.coachMode = mode;
+    toggle(this.coachEl, "jjh-on", mode !== "");
+    if (mode !== "aim" && mode !== "drop") this.pointAt(null);
+    if (!mode) return;
+    if (mode === "aim" && prev !== "aim") {
+      this.coachMoved = 0;
+      this.coachAge = 0;
+      this.lastPointer = null;
+    }
+    toggle(this.coachEl, "jjh-coach--spin", mode === "spin");
+    toggle(this.coachEl, "jjh-coach--drop", mode === "drop");
+    if (mode === "spin") {
+      setText(this.coachMain, t("hud.coachSpin"));
+      setText(this.coachSub, t("hud.coachSpinSub"));
+    } else {
+      const touch = this.touch;
+      setText(this.coachMain, t(mode === "aim" ? (touch ? "hud.coachAimTouch" : "hud.coachAim") : touch ? "hud.coachDropTouch" : "hud.coachDrop"));
+      setText(this.coachSub, t(touch ? "hud.coachRotateTouch" : "hud.coachRotate"));
+    }
+    replay(this.coachEl, "jjh-coach--pop");
+    this.handlers.onUiSound("pop");
+  }
+
+  /** Per frame from Game: screen point of my hovering piece during the coach (null hides the arrow). */
+  pointAt(p: { x: number; y: number } | null): void {
+    const on = !!p && this.visible && (this.coachMode === "aim" || this.coachMode === "drop");
+    toggle(this.arrow, "jjh-on", on);
+    if (!on || !p) return;
+    const r = this.root.getBoundingClientRect();
+    this.arrow.style.transform = `translate(${(p.x - r.left).toFixed(1)}px, ${(p.y - r.top).toFixed(1)}px)`;
   }
 
   private updateMeter(state: JellyStateView, inTurn: boolean): void {
@@ -855,7 +922,7 @@ export class Hud {
   // ========================================================================= helpers
 
   private hideAllDynamic(): void {
-    for (const e of [this.cardChip, this.timer, this.next, this.hint, this.spinBtn, this.betPanel, this.meter, this.sab, this.board]) {
+    for (const e of [this.cardChip, this.timer, this.next, this.hint, this.spinBtn, this.betPanel, this.meter, this.sab, this.board, this.coachEl, this.arrow]) {
       e.classList.remove("jjh-on");
     }
   }
@@ -873,16 +940,9 @@ export class Hud {
     });
   }
 
-  private pickAmount(amount: number): void {
-    this.selectedAmount = amount;
-    const bet = this.extra?.myBet;
-    // re-sending replaces the bet; 0 cancels it
-    if (bet && bet.amount > 0 && bet.amount !== amount) this.handlers.onBet(bet.side, amount);
-    if (this.state && this.extra) this.updateBet(this.state, this.extra, this.state.players.get(this.extra.myId), this.state.activeId === this.extra.myId);
-  }
-
   private placeBet(side: BetSide): void {
-    this.handlers.onBet(side, this.selectedAmount);
+    if (this.extra?.myBet?.side === side) return; // already guessed that
+    this.handlers.onBet(side, BET_STAKE);
     replay(side === "stand" ? this.betStand : this.betFall, "jjh-side--boing");
   }
 }

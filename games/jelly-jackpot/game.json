@@ -1,10 +1,10 @@
 {
   "id": "jelly-jackpot",
   "title": "Jelly Jackpot",
-  "tagline": "Stack wobbly kitchen junk on a spinning cake. Gamble. Catch the cheater.",
-  "description": "Open a case every turn to see which ridiculous rule you got, then drop a rubber chicken, a toaster or a jiggling jelly onto a shared cake tower. Bet on whether your friends' pieces stand or fall. One of you is secretly the Saboteur, rigging cases with cursed cards. Vote them out at the end.",
+  "tagline": "Drop silly kitchen junk on a wobbly cake. Don't be the one who topples it.",
+  "description": "Each turn you open a case for a bonus, then drop a rubber chicken, a toaster or a jiggly jelly onto one shared cake tower. If it stands, you get coins. If it falls, everyone laughs at you. Guess on your friends' drops for extra coins.",
   "players": { "min": 2, "max": 6 },
-  "duration": "~10 min",
+  "duration": "~4 min",
   "input": "Keyboard + mouse",
   "tags": ["Party", "3D", "Physics", "Bluffing"],
   "accent": "#FFB7D5",
@@ -12,21 +12,19 @@
   "status": "live",
   "badge": "NEW",
   "howToPlay": [
-    "On your turn, press Space to open a case: a reel lands on a rule and a multiplier for this turn.",
-    "Move the mouse to hover your piece over the cake, rotate it, then click to drop it.",
-    "If the tower stands you earn coins × the multiplier. If anything falls off, you lose coins × the multiplier.",
-    "When it's not your turn, bet STAND or FALL on the other players' drops.",
-    "One player is the secret Saboteur who can rig a case once per round. Vote them out at the end!"
+    "On your turn, press Space to open a case and get a bonus (like ×2 coins).",
+    "Move the mouse over the cake and click to drop your piece.",
+    "Tower stands: you win coins. Tower falls: you lose 5.",
+    "On other players' turns, press F or G to guess if it stands (+10 if you're right)."
   ],
   "controls": [
     { "keys": "Space", "action": "Open the case" },
     { "keys": "Mouse", "action": "Move the piece" },
     { "keys": "Scroll / Q E", "action": "Rotate" },
-    { "keys": "W S", "action": "Tilt" },
     { "keys": "Left click", "action": "Drop" },
     { "keys": "Right-drag / A D", "action": "Orbit camera" },
-    { "keys": "1–4, F / G", "action": "Bet amount, bet STAND / FALL" },
-    { "keys": "R", "action": "Rig a case (Saboteur only)" },
+    { "keys": "F / G", "action": "Guess STAND / FALL" },
+    { "keys": "R", "action": "Curse a case (optional Saboteur mode)" },
     { "keys": "T", "action": "Emote" },
     { "keys": "Tab", "action": "Scoreboard" }
   ],

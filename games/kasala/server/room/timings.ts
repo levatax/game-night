@@ -18,9 +18,12 @@ import {
   LAST_CHANCE_SEC,
   LAWYER_ANIM_SEC,
   LOAN_OFFER_SEC,
+  MARKET_REVEAL_SEC,
+  MARKET_SEC,
   RAID_RESULT_SEC,
   RAID_RESULT_SHORT_SEC,
   RECONNECT_GRACE_SEC,
+  ROUND_SUMMARY_SEC,
   SETTLE_SEC,
   TARGET_SEC,
   TIME_LOW_SEC,
@@ -67,7 +70,14 @@ export interface Timings {
   raidResultShort: number;
   /** Result phase of a skipped (disconnected) turn. */
   skipResult: number;
+  /** Pazar: secret picks, then the reveal animation (busy). */
+  market: number;
+  marketReveal: number;
+  /** Once every buyer chose, the market closes this long after the last answer. */
+  marketCloseGrace: number;
   settle: number;
+  /** Pause after ROUND_END (not after the last round) while clients show the round summary. */
+  roundSummary: number;
   lastChance: number;
   /** Son Şans when only one player could lend (2-player Battle Royale endgame). */
   lastChanceOneLender: number;
@@ -111,7 +121,11 @@ export const NORMAL_TIMINGS: Timings = {
   raidResult: RAID_RESULT_SEC,
   raidResultShort: RAID_RESULT_SHORT_SEC,
   skipResult: 1.4,
+  market: MARKET_SEC,
+  marketReveal: MARKET_REVEAL_SEC,
+  marketCloseGrace: 0.8,
   settle: SETTLE_SEC,
+  roundSummary: ROUND_SUMMARY_SEC,
   lastChance: LAST_CHANCE_SEC,
   lastChanceOneLender: 8,
   lastChanceNoLender: 3,
@@ -151,7 +165,11 @@ export const FAST_TIMINGS: Timings = {
   raidResult: 0.2,
   raidResultShort: 0.15,
   skipResult: 0.15,
+  market: 0.4,
+  marketReveal: 0.15,
+  marketCloseGrace: 0.05,
   settle: 0.15,
+  roundSummary: 0.15,
   lastChance: 1.2,
   lastChanceOneLender: 0.8,
   lastChanceNoLender: 0.2,

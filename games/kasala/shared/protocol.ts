@@ -26,14 +26,22 @@ export { ROOM_NAME } from "./constants.js";
  * flipping    → decision timer (settings.decisionSec). Active player: FLIP or CASH. After each FLIP the server
  *               broadcasts CARD and sets busy = true for FLIP_ANIM_SEC, then restarts the timer. Timer end →
  *               automatic CASH. A raid card (not cancelled by a lawyer) → result. A "pick" attack card →
- *               targeting. The wheel card → wheel.
+ *               targeting. The wheel card → wheel. Money (money cards, Haraç, Haraç Turu) lands in state.row.
  * targeting   → TARGET_SEC; the active player sends TARGET (click a character), else a random target. Then
  *               ATTACK broadcast, busy for ATTACK_ANIM_SEC, back to flipping.
  * wheel       → WHEEL_START (descend + spin), WHEEL_RESULT exactly when it lands, hold WHEEL_HOLD_SEC; "BİR DAHA!"
  *               spins again (descendMs 0). Then WHEEL_ASCEND_SEC (busy) and back to flipping.
- * result      → CASHED (CASH_RESULT_SEC) or RAIDED (RAID_RESULT_SEC) broadcast at entry.
+ * result      → CASHED (CASH_RESULT_SEC) or RAIDED (RAID_RESULT_SEC) broadcast at entry. KASALA takes the
+ *               picksFor(flips) most valuable row cards at once (CashedMsg.taken); the rest stays on the table.
+ * market      → Pazar: only when row cards are left and someone can buy. MARKET_SEC; every other player still
+ *               in the game sends MARKET once (a row card or 0 = pas, secret until the reveal; state.marketDone
+ *               lists who chose). Closes early once everyone chose. Then MARKET_RESULT (sales, clashes,
+ *               leftovers to the kumbara) and busy for MARKET_REVEAL_SEC. Leftovers with no market (nobody can
+ *               buy) go to the kumbara with a MARKET_RESULT too, without this phase.
  * settle      → SETTLE_SEC; BETS_SETTLED at entry (skipped when nobody bet). Then the next turn, or ROUND_END
- *               (interest, Battle Royale floor) when the full round is over, or lastChance / matchEnd.
+ *               (interest, Battle Royale floor, standings) when the full round is over, or lastChance / matchEnd.
+ *               After ROUND_END (unless the match ends) the room holds busy for ROUND_SUMMARY_SEC while
+ *               clients show the round summary, then the next round's first turn starts.
  * lastChance  → Battle Royale: state.lastChanceId has 0$; LAST_CHANCE_SEC for someone to lend them money.
  *               Saved (kasa > 0 through an accepted loan) → SAVED, continue. Else → elimination.
  * elimination → ELIMINATION_SEC cement-shoes scene (ELIMINATED broadcast at entry); the player becomes a ghost.
@@ -47,6 +55,7 @@ export type Phase =
   | "targeting"
   | "wheel"
   | "result"
+  | "market"
   | "settle"
   | "lastChance"
   | "elimination"
@@ -142,7 +151,7 @@ export interface SettingsView {
   decisionSec: number;
   /** Loans & loan sharking on/off. */
   loans: boolean;
-  /** Spectator side bets on/off. */
+  /** Spectator side bets on/off (off by default: the Pazar gives the others their say). */
   sideBets: boolean;
 }
 
@@ -176,6 +185,18 @@ export interface OfferView {
   ratePct: number;
   /** Seconds until it expires (LOAN_OFFER_SEC). */
   timeLeft: number;
+}
+
+/** A card in this turn's vitrin (row): money waiting for KASALA picks and the Pazar. */
+export interface RowCardView {
+  /** The flip that put it there (1-based, matches CardMsg.flipNo). */
+  flipNo: number;
+  /** bozukluk / tomar / canta / kulce, or harac / haracTuru (the money they collected). */
+  id: CardId;
+  /** Current $ value (after SON MASA, Kara Para Aklama, POT ×10). */
+  value: number;
+  /** "" while it lies on the table; the active player (picked) or a buyer once taken. */
+  ownerId: string;
 }
 
 /** The last flipped card of the current turn. */
@@ -222,8 +243,12 @@ export interface KasalaStateView {
   raidChance: number;
   /** Battle Royale siren floor bonus (0..1) added to raidChance. */
   floorBonus: number;
-  /** Money collected this turn (goes to the kasa on KASALA, to the kumbara on a raid). */
+  /** Value of the row cards still on the table (KASALA picks from it, a raid sends it to the kumbara). */
   turnPot: number;
+  /** This turn's vitrin, in flip order. */
+  row: ArrayLike2<RowCardView>;
+  /** During market: players who already chose (or passed). Their choices stay secret until the reveal. */
+  marketDone: ArrayLike2<string>;
   /** Cards flipped this turn. */
   flips: number;
   /** Lawyers protecting the active player this turn (each cancels one raid). */
@@ -263,6 +288,8 @@ export const MSG = {
   CASH: "cash",
   TARGET: "target",
   BET: "bet",
+  /** Pazar choice (MarketMsg). */
+  MARKET: "market",
   LOAN_PROPOSE: "loanPropose",
   LOAN_RESPOND: "loanRespond",
   LOAN_CANCEL: "loanCancel",
@@ -284,6 +311,7 @@ export const MSG = {
   CASHED: "cashed",
   RAIDED: "raided",
   BETS_SETTLED: "betsSettled",
+  MARKET_RESULT: "marketResult",
   LOAN: "loan",
   TASLIK: "taslik",
   ROUND_END: "roundEnd",
@@ -339,6 +367,13 @@ export interface TargetMsg {
 export interface BetMsg {
   box: BetBox;
   amount: number;
+}
+/**
+ * Phase market, a match player still in the game other than the active one. flipNo of a row card still on the
+ * table with marketFee(value) ≤ kasa, or 0 = pas. Re-sending changes the choice until the market closes.
+ */
+export interface MarketMsg {
+  flipNo: number;
 }
 /**
  * settings.loans, any in-match phase. One pending outgoing offer per player. amount ≥ LOAN_MIN, ratePct one of
@@ -400,9 +435,9 @@ export interface CardMsg {
   flipNo: number;
   card: CardId;
   rarity: Rarity;
-  /** Change to the turn pot ($): money value (0 when the curse hit), the ×2 gain for aklama, 0 otherwise. */
+  /** Money added to the row ($): money value (0 when the curse hit), the ×2 gain for aklama, 0 otherwise. */
   value: number;
-  /** Turn pot after this card. */
+  /** Row value on the table after this card. */
   pot: number;
   /** Siren level and next-card raid chance after this card. */
   sirenLevel: number;
@@ -424,7 +459,7 @@ export interface AttackMsg {
   amount: number;
   /** haracTuru: who paid what. */
   payers: { playerId: string; amount: number }[];
-  /** Turn pot after the attack. */
+  /** Row value after the attack (Haraç / Haraç Turu money lies in the row as the attack card). */
   pot: number;
   /** The target was chosen randomly because the timer ran out. */
   random: boolean;
@@ -450,20 +485,24 @@ export interface WheelResultMsg {
   deltas: { playerId: string; delta: number }[];
   /** Kumbara change ($). */
   kumbaraDelta: number;
-  /** Turn pot after the effect. */
+  /** Row value after the effect (POT ×10 multiplies every row card). */
   pot: number;
   /** Another spin follows. */
   again: boolean;
 }
 export interface CashedMsg {
   playerId: string;
-  /** The pot banked. */
+  /** What the KASALA picks were worth (the taken row cards). */
   pot: number;
   flips: number;
   /** What actually reached the kasa (pot minus the Taşlık cut). */
   kept: number;
   /** Taşlık: half of the pot paid straight to creditors (reduces the debt). */
   taslikCut: { lenderId: string; amount: number }[];
+  /** Row cards the KASALA took (flip numbers, most valuable first). */
+  taken: number[];
+  /** Row cards left on the table for the Pazar (or the kumbara when nobody can buy). */
+  rowLeft: number;
   /** The decision timer ran out. */
   auto: boolean;
   /** Skipped because the player was disconnected at turn start (0 cards). */
@@ -508,6 +547,20 @@ export interface BetsSettledMsg {
   /** The rest of the losing stakes, to the kumbara. */
   toKumbara: number;
 }
+/** The Pazar closed (or the row had leftovers nobody could buy): who got what. */
+export interface MarketResultMsg {
+  sellerId: string;
+  /** Each sale: the buyer paid `fee` to the seller and got the card's `value`. */
+  sales: { buyerId: string; flipNo: number; card: CardId; value: number; fee: number }[];
+  /** Cards more than one player wanted: the poorer one got it, the others got nothing. */
+  clashes: { flipNo: number; winnerId: string; loserIds: string[] }[];
+  /** Unsold row cards, to the kumbara. */
+  leftovers: { flipNo: number; value: number }[];
+  toKumbara: number;
+  /** Fees that reached the seller's kasa (after a Taşlık cut). */
+  feesKept: number;
+  taslikCut: { lenderId: string; amount: number }[];
+}
 export type LoanEvent = "proposed" | "accepted" | "declined" | "expired" | "canceled" | "repaid" | "paidOff";
 export interface LoanMsg {
   event: LoanEvent;
@@ -532,6 +585,10 @@ export interface RoundEndMsg {
   floorBonus: number;
   /** The next round is the Classic SON MASA. */
   finalTableNext: boolean;
+  /** Every match player (ghosts included), richest first: kasa now and its change over the round. */
+  standings: { playerId: string; kasa: number; delta: number }[];
+  /** How long the room pauses for the round summary; 0 when the match ends right after this round. */
+  pauseSec: number;
 }
 export interface LastChanceMsg {
   playerId: string;

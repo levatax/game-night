@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Raft Rush · UI harness</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #102a4a;
+        color: #2d2a32;
+        font-family: "Fredoka", system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        user-select: none;
+      }
+      /* A fake first-person view behind the HUD: sky, sea, sand, a palm. */
+      #game {
+        position: fixed;
+        inset: 0;
+        background:
+          radial-gradient(ellipse 30% 18% at 70% 58%, rgba(255, 255, 255, 0.25), transparent 70%),
+          linear-gradient(180deg, var(--sky1, #7fd3f5) 0%, var(--sky2, #d8f1ff) 52%, var(--sea1, #3fb7d9) 52.5%, var(--sea2, #2a8fb4) 70%, #f4e4b0 70.5%, #e6d7a8 100%);
+        transition: filter 0.4s ease;
+      }
+      #game[data-tod="dusk"] {
+        --sky1: #ff9a5a;
+        --sky2: #ffd166;
+        --sea1: #3a8fb0;
+        --sea2: #26607d;
+      }
+      #game[data-tod="night"] {
+        --sky1: #0b1a33;
+        --sky2: #1f3560;
+        --sea1: #102a4a;
+        --sea2: #0b1a33;
+        filter: brightness(0.75);
+      }
+      #game::after {
+        content: "🌴";
+        position: absolute;
+        left: 12%;
+        top: 30%;
+        font-size: 220px;
+        filter: drop-shadow(0 8px 0 rgba(0, 0, 0, 0.2));
+      }
+      #game[data-scene="lobby"]::after {
+        content: "🏝️";
+        left: 50%;
+        top: 38%;
+        transform: translate(-50%, -50%);
+        font-size: 260px;
+      }
+      #ui {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+      }
+      #dev {
+        position: fixed;
+        z-index: 100;
+        top: 8px;
+        left: 8px;
+        width: 250px;
+        max-height: calc(100% - 16px);
+        overflow-y: auto;
+        background: rgba(255, 244, 220, 0.95);
+        border: 3px solid #2d2a32;
+        border-radius: 14px;
+        padding: 6px 10px 8px;
+        font-size: 12px;
+        box-shadow: 0 4px 0 #2d2a32;
+      }
+      #dev.min {
+        width: auto;
+      }
+      #dev.min > :not(.bar) {
+        display: none;
+      }
+      #dev .bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 6px;
+        font-weight: 700;
+      }
+      #dev h2 {
+        margin: 8px 0 3px;
+        font-size: 13px;
+      }
+      #dev button {
+        font: inherit;
+        font-size: 11.5px;
+        margin: 2px;
+        padding: 2px 6px;
+        border: 2px solid #2d2a32;
+        border-radius: 8px;
+        background: #ffd166;
+        cursor: pointer;
+      }
+      #dev button.on {
+        background: #7ccb6b;
+      }
+      #dev label {
+        display: block;
+        margin: 2px 0;
+      }
+      #log {
+        margin-top: 6px;
+        max-height: 140px;
+        overflow-y: auto;
+        font: 11px/1.3 ui-monospace, monospace;
+        background: #fff;
+        border: 2px solid #2d2a32;
+        border-radius: 8px;
+        padding: 4px;
+        white-space: pre-wrap;
+        user-select: text;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="game" aria-hidden="true"></div>
+    <div id="ui"></div>
+    <div id="dev"></div>
+    <script type="module" src="./ui.ts"></script>
+  </body>
+</html>

@@ -452,6 +452,22 @@ h3 {
 .card__title {
   font-size: 1.5rem;
 }
+/* "BETA" pill after a beta game's title (card and details panel), behind a plain space. */
+.beta {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 9px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.5;
+  letter-spacing: 0.08em;
+  vertical-align: 0.3em;
+  color: var(--ink);
+  background: var(--blue);
+  border: 2px solid var(--line);
+  border-radius: 999px;
+  cursor: help;
+}
 .card__tagline {
   margin: 0;
   color: var(--text-muted);
@@ -526,6 +542,27 @@ h3 {
   margin: 0;
   font-size: 0.85rem;
   color: var(--text-muted);
+}
+/* Shown only on touch-only devices, for games marked desktopOnly. */
+.desktop-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 6px 12px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--yellow) 35%, var(--surface));
+  border: 2px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.desktop-hint svg {
+  width: 20px;
+  height: 20px;
+  flex: none;
+}
+.details__body .desktop-hint {
+  margin-top: 14px;
 }
 
 .card--soon {

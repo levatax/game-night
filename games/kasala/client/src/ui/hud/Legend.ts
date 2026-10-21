@@ -46,10 +46,10 @@ export class Legend {
       return node;
     };
     row(["Space"], "ÇEVİR", "Kart çevir");
-    row(["Enter"], "KASALA!", "Turu kasala, potu kasana at");
-    row(["1–4"], "Bahis kutusu", "Bahis kutusuna fiş koy");
-    row(["Q", "W", "E"], "Fiş seç", "Fiş seç: 10$ / 25$ / 50$");
-    row(["0"], "Bahis yok", "Bu tur bahis yok (PAS)");
+    row(["Enter"], "KASALA!", "Turu kasala, vitrinin en iyi kartlarını al");
+    row(["1–9"], "Pazar kartı", "Pazarda vitrinden kart seç (ya da karta tıkla). Seyirci bahsi açıksa 1–4 bahis kutusu");
+    row(["0"], "Pas", "Pazarda (ya da bahiste) pas geç");
+    row(["Q", "W", "E"], "Bahis fişi", "Seyirci bahsi açıksa fiş seç: 10$ / 25$ / 50$");
     row(["Z", "X"], "Bağır", "Z: «ÇEVİR!» · X: «KASALA!» diye bağır");
     row(["T"], "Emote", "Emote seç", () => cb.onEmotePicker());
     row(["Y"], "Laf at", "Laf sok", () => cb.onTauntPicker());

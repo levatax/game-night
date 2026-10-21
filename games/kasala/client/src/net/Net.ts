@@ -28,6 +28,7 @@ import type {
   LastChanceMsg,
   LoanKind,
   LoanMsg,
+  MarketResultMsg,
   MatchEndMsg,
   NoticeMsg,
   Phase,
@@ -67,6 +68,7 @@ export interface NetEvents {
   cashed: CashedMsg;
   raided: RaidedMsg;
   betsSettled: BetsSettledMsg;
+  marketResult: MarketResultMsg;
   loan: LoanMsg;
   taslik: TaslikMsg;
   roundEnd: RoundEndMsg;
@@ -97,6 +99,7 @@ const RELAYED = [
   MSG.CASHED,
   MSG.RAIDED,
   MSG.BETS_SETTLED,
+  MSG.MARKET_RESULT,
   MSG.LOAN,
   MSG.TASLIK,
   MSG.ROUND_END,
@@ -316,6 +319,10 @@ export class Net {
   /** amount 0 = take my bet back, or PAS when I have no bet yet (the box is ignored then). */
   bet(box: BetBox, amount: number): void {
     this.send(MSG.BET, { box, amount });
+  }
+  /** Pazar: a row card (flipNo), or 0 = pas. */
+  market(flipNo: number): void {
+    this.send(MSG.MARKET, { flipNo });
   }
   propose(toId: string, kind: LoanKind, amount: number, ratePct: number): void {
     this.send(MSG.LOAN_PROPOSE, { toId, kind, amount, ratePct });

@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Raft Rush · Characters harness</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #7fd3f5;
+        color: #2d2a32;
+        font-family: "Fredoka", system-ui, sans-serif;
+        user-select: none;
+      }
+      #game {
+        position: fixed;
+        inset: 0;
+      }
+      #game canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+      #panel {
+        position: fixed;
+        top: 8px;
+        left: 8px;
+        width: 300px;
+        max-height: calc(100% - 16px);
+        overflow-y: auto;
+        background: rgba(255, 244, 220, 0.92);
+        border: 3px solid #2d2a32;
+        border-radius: 14px;
+        padding: 6px 10px;
+        font-size: 13px;
+        box-shadow: 0 4px 0 #2d2a32;
+      }
+      #panel h2 {
+        margin: 8px 0 3px;
+        font-size: 14px;
+      }
+      #panel button {
+        font: inherit;
+        font-size: 12px;
+        margin: 2px;
+        padding: 2px 7px;
+        border: 2px solid #2d2a32;
+        border-radius: 8px;
+        background: #ffd166;
+        cursor: pointer;
+      }
+      #panel button.on {
+        background: #7ccb6b;
+      }
+      #panel button:active {
+        transform: translateY(1px);
+      }
+      #panel select {
+        font: inherit;
+      }
+      #stats {
+        position: fixed;
+        right: 8px;
+        top: 8px;
+        background: rgba(45, 42, 50, 0.82);
+        color: #fff;
+        padding: 6px 10px;
+        border-radius: 10px;
+        font-size: 12px;
+        white-space: pre;
+        font-family: ui-monospace, Menlo, monospace;
+      }
+      #portraits {
+        position: fixed;
+        right: 8px;
+        bottom: 8px;
+        display: flex;
+        gap: 6px;
+        padding: 6px;
+        background: rgba(255, 244, 220, 0.92);
+        border: 3px solid #2d2a32;
+        border-radius: 12px;
+      }
+      #portraits img {
+        width: 84px;
+        height: 84px;
+        border-radius: 50%;
+        border: 3px solid #2d2a32;
+        background: radial-gradient(circle at 50% 35%, #fff4dc, #ffb347);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="game"></div>
+    <div id="panel"></div>
+    <div id="stats"></div>
+    <div id="portraits"></div>
+    <script type="module" src="./characters.ts"></script>
+  </body>
+</html>

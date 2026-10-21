@@ -3,6 +3,8 @@
 
 const CODE_RE = /^[A-HJ-NP-Z]{4}$/; // no I or O, same alphabet as the server
 const REFRESH_MS = 15_000;
+// No mouse or trackpad at all (phones, most tablets): games marked desktopOnly get a hint.
+const finePointer = matchMedia("(any-pointer: fine)");
 
 const grid = document.getElementById("game-grid");
 const gamesMeta = document.getElementById("games-meta");
@@ -20,6 +22,8 @@ const ICONS = {
   time: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9.5 2.5h5"/></svg>',
   input:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2.5" width="12" height="19" rx="6"/><path d="M12 2.5v6"/></svg>',
+  keyboard:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="13" rx="3"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 15h10"/></svg>',
 };
 
 const esc = (value) =>
@@ -35,6 +39,22 @@ function liveLabel(live) {
 }
 
 // --------------------------------------------------------------------- render
+/**
+ * "BETA" pill next to the title of games that are playable but still being tuned. The leading space keeps the
+ * heading text (and the details dialog's accessible name) "Raft Rush BETA", not "Raft RushBETA".
+ */
+const betaTag = (game) =>
+  game.status === "beta" ? ' <span class="beta" title="Playable, still being tested and tuned">BETA</span>' : "";
+
+/** Games marked desktopOnly can't be played on this device (no mouse or trackpad). */
+const needsKeyboardHere = (game) => game.desktopOnly && !finePointer.matches;
+
+/** Keyboard + mouse reminder, only on devices without a fine pointer. */
+function desktopHint(game, text) {
+  if (!needsKeyboardHere(game)) return "";
+  return `<p class="desktop-hint">${ICONS.keyboard}<span>${esc(text)}</span></p>`;
+}
+
 function metaList(game) {
   return `<ul class="meta">
     <li>${ICONS.players}${esc(playersLabel(game.players))}</li>
@@ -47,7 +67,7 @@ function playButton(game, extraClass = "") {
   if (game.playable) {
     return `<a class="btn btn--accent ${extraClass}" href="${esc(game.url)}">Play ${esc(game.title)}</a>`;
   }
-  const why = game.status === "soon" ? "Coming soon" : "Not built yet";
+  const why = game.status === "soon" ? "Coming soon" : game.serverDown ? "Unavailable right now" : "Not built yet";
   return `<span class="btn btn--accent ${extraClass}" aria-disabled="true">${why}</span>`;
 }
 
@@ -59,15 +79,16 @@ function cardHtml(game) {
     </button>
     ${game.badge ? `<span class="card__badge">${esc(game.badge)}</span>` : ""}
     <div class="card__body">
-      <h3 class="card__title">${esc(game.title)}</h3>
+      <h3 class="card__title">${esc(game.title)}${betaTag(game)}</h3>
       <p class="card__tagline">${esc(game.tagline)}</p>
       ${metaList(game)}
+      ${desktopHint(game, "Needs a keyboard and mouse: play this one on a computer.")}
       <p class="live ${live.on ? "live--on" : ""}" data-live><span class="live__dot"></span><span>${esc(live.text)}</span></p>
       <div class="card__actions">
         ${playButton(game)}
         <button class="btn btn--ghost" type="button" data-details="${esc(game.id)}">How to play</button>
       </div>
-      ${!game.playable && game.status !== "soon" ? '<p class="card__note">Run <code>npm run build</code> to build this game.</p>' : ""}
+      ${!game.playable && game.status !== "soon" && !game.serverDown ? '<p class="card__note">Run <code>npm run build</code> to build this game.</p>' : ""}
     </div>
   </article>`;
 }
@@ -79,15 +100,17 @@ const soonCard = `<div class="card card--soon">
 </div>`;
 
 function renderFeatured() {
-  const game = games.find((g) => g.playable) ?? games[0];
+  // On a touch-only device, feature a game it can actually play rather than a keyboard-only one.
+  const game = games.find((g) => g.playable && !needsKeyboardHere(g)) ?? games.find((g) => g.playable) ?? games[0];
   if (!game) return;
+  const keyboard = needsKeyboardHere(game) ? " · Needs a keyboard and mouse" : "";
   featured.innerHTML = `<a class="featured" href="${game.playable ? esc(game.url) : "#games"}" style="--accent:${esc(game.accent)}">
     <span class="sticker">${game.playable ? "PLAY NOW" : "FEATURED"}</span>
     ${game.cover ? `<img src="${esc(game.cover)}" alt="${esc(game.title)} cover art" />` : ""}
     <span class="featured__body">
       <span>
         <span class="featured__title">${esc(game.title)}</span><br />
-        <span class="featured__tag">${esc(playersLabel(game.players))} · ${esc(game.duration)}</span>
+        <span class="featured__tag">${esc(playersLabel(game.players))} · ${esc(game.duration)}${keyboard}</span>
       </span>
       <span class="btn btn--small btn--primary" aria-hidden="true">Play</span>
     </span>
@@ -138,9 +161,10 @@ function openDetails(id) {
   detailsContent.innerHTML = `
     ${game.cover ? `<img class="details__cover" src="${esc(game.cover)}" alt="" />` : ""}
     <div class="details__body" style="--accent:${esc(game.accent)}">
-      <h2 id="details-title">${esc(game.title)}</h2>
+      <h2 id="details-title">${esc(game.title)}${betaTag(game)}</h2>
       <p>${esc(game.description)}</p>
       ${metaList(game)}
+      ${desktopHint(game, "This game has no touch controls. Open it on a computer with a keyboard and mouse to play.")}
       <div class="details__cols">
         ${steps ? `<section><h3>How to play</h3><ol>${steps}</ol></section>` : ""}
         ${controls ? `<section><h3>Controls</h3><table class="controls"><tbody>${controls}</tbody></table></section>` : ""}
@@ -237,6 +261,13 @@ grid.addEventListener("click", (event) => {
 });
 details.addEventListener("click", (event) => {
   if (event.target === details) details.close(); // click on the backdrop
+});
+// A mouse plugged into (or pulled out of) a tablet changes which cards need the keyboard hint and which game
+// the hero features.
+finePointer.addEventListener("change", () => {
+  if (!games.length) return;
+  renderGrid();
+  renderFeatured();
 });
 
 const missing = new URLSearchParams(location.search).get("missing");

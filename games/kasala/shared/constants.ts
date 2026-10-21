@@ -30,14 +30,14 @@ export const BET_WINDOW_SEC = 5;
 export const BET_WINDOW_FIRST_ROUND_SEC = 7;
 /** Turn start when nobody can bet (side bets off / no bettor): just "Sıra sende". */
 export const TURN_INTRO_SEC = 1.5;
-/** Decision timer after each card (§4): ÇEVİR or KASALA!, auto KASALA at 0. */
-export const DECISION_SEC_OPTIONS = [5, 8, 12] as const;
-export const DEFAULT_DECISION_SEC = 8;
+/** Decision timer after each card (§4): ÇEVİR or KASALA!, auto KASALA at 0. Roomy on purpose: time to think and talk. */
+export const DECISION_SEC_OPTIONS = [10, 15, 25] as const;
+export const DEFAULT_DECISION_SEC = 15;
 /**
- * Time to flip the FIRST card of a turn (the decision timer only runs after a card, §4). KASALA is not
- * allowed before the first card; when this runs out Cemil Abi flips the first card for you.
+ * AFK guard for the FIRST card of a turn (the decision timer only runs after a card, §4). KASALA is not
+ * allowed before the first card; only when a player sits idle this long does Cemil Abi flip it for them.
  */
-export const FIRST_CARD_SEC = 10;
+export const FIRST_CARD_SEC = 25;
 /** state.timeLeft is rounded up to this step (clients interpolate between patches). */
 export const TIMER_QUANTUM_SEC = 0.25;
 /** "Karar ver" warning (announcer sure_azaldi) when this much decision time is left. */
@@ -65,8 +65,14 @@ export const CASH_RESULT_BIG_SEC = 3.2;
 /** Raid result: full door sequence (big or late raid, a player's first raid) / quick at-the-seat raid. */
 export const RAID_RESULT_SEC = 5.5;
 export const RAID_RESULT_SHORT_SEC = 3.6;
+/** Pazar (§Vitrin): the other players secretly pick one row card each. Closes early once everyone chose. */
+export const MARKET_SEC = 10;
+/** After the market reveal: bought cards fly to their buyers, the leftovers to the kumbara. */
+export const MARKET_REVEAL_SEC = 2.6;
 /** Bet payout phase (skipped when there were no bets). */
 export const SETTLE_SEC = 1.4;
+/** Round summary between full rounds: standings and this round's gains, a breather before the next turn. */
+export const ROUND_SUMMARY_SEC = 4.5;
 /** Battle Royale: a broke player waits this long for a loan (§10). */
 export const LAST_CHANCE_SEC = 15;
 /** Battle Royale: the cement shoes scene. */
@@ -114,6 +120,21 @@ export const BRIBE_ENVELOPE_DROP = 2;
 export const HARAC_PCT = 0.2;
 /** Haraç Turu: everyone else pays this (as much as they have) into the turn pot. */
 export const HARAC_TURU_FEE = 10;
+/**
+ * Vitrin (the row): money flipped this turn lies on the table as cards. KASALA takes picksFor(flips) of them
+ * (the most valuable ones), the other players may buy the rest in the Pazar at marketFee(value), paid to the
+ * active player. Whatever nobody bought goes to the kumbara. A raid sends the whole row to the kumbara.
+ */
+export const PICK_BONUS_FLIPS = [4, 7] as const;
+export function picksFor(flips: number): number {
+  return 1 + PICK_BONUS_FLIPS.filter((f) => flips >= f).length;
+}
+/** Market price of a row card: this share of its value, rounded up to MARKET_FEE_STEP (at least one step). */
+export const MARKET_FEE_PCT = 0.5;
+export const MARKET_FEE_STEP = 5;
+export function marketFee(value: number): number {
+  return Math.max(MARKET_FEE_STEP, Math.ceil((Math.max(0, value) * MARKET_FEE_PCT) / MARKET_FEE_STEP) * MARKET_FEE_STEP);
+}
 /** Classic SON MASA (last full round): money cards, penalties and bet payouts are doubled. */
 export const FINAL_TABLE_MULT = 2;
 
@@ -202,20 +223,20 @@ export interface CardDef {
 }
 
 export const CARDS: readonly CardDef[] = [
-  { id: "bozukluk", name: "Bozukluk", kind: "money", rarity: "common", weight: 25, value: 10, target: "none", icon: "🪙", desc: "+10$ tur potuna" },
-  { id: "tomar", name: "Tomar", kind: "money", rarity: "common", weight: 18, value: 25, target: "none", icon: "💵", desc: "+25$ tur potuna" },
-  { id: "canta", name: "Çanta", kind: "money", rarity: "uncommon", weight: 12, value: 50, target: "none", icon: "💼", desc: "+50$ tur potuna" },
-  { id: "kulce", name: "Külçe", kind: "money", rarity: "rare", weight: 5, value: 100, target: "none", icon: "💰", desc: "+100$ tur potuna" },
-  { id: "aklama", name: "Kara Para Aklama", kind: "multiplier", rarity: "uncommon", weight: 8, value: 2, target: "none", icon: "🧼", desc: "Tur potu ×2" },
-  { id: "harac", name: "Haraç", kind: "attack", rarity: "uncommon", weight: 6, value: HARAC_PCT, target: "pick", icon: "💸", desc: "Hedefin kasasının %20'si tur potuna geçer" },
-  { id: "haracTuru", name: "Haraç Turu", kind: "attack", rarity: "uncommon", weight: 4, value: HARAC_TURU_FEE, target: "all", icon: "🎩", desc: "Herkes 10$ öder, para tur potuna girer" },
+  { id: "bozukluk", name: "Bozukluk", kind: "money", rarity: "common", weight: 25, value: 10, target: "none", icon: "🪙", desc: "+10$ vitrine" },
+  { id: "tomar", name: "Tomar", kind: "money", rarity: "common", weight: 18, value: 25, target: "none", icon: "💵", desc: "+25$ vitrine" },
+  { id: "canta", name: "Çanta", kind: "money", rarity: "uncommon", weight: 12, value: 50, target: "none", icon: "💼", desc: "+50$ vitrine" },
+  { id: "kulce", name: "Külçe", kind: "money", rarity: "rare", weight: 5, value: 100, target: "none", icon: "💰", desc: "+100$ vitrine" },
+  { id: "aklama", name: "Kara Para Aklama", kind: "multiplier", rarity: "uncommon", weight: 8, value: 2, target: "none", icon: "🧼", desc: "Vitrindeki para ×2" },
+  { id: "harac", name: "Haraç", kind: "attack", rarity: "uncommon", weight: 6, value: HARAC_PCT, target: "pick", icon: "💸", desc: "Hedefin kasasının %20'si vitrine düşer" },
+  { id: "haracTuru", name: "Haraç Turu", kind: "attack", rarity: "uncommon", weight: 4, value: HARAC_TURU_FEE, target: "all", icon: "🎩", desc: "Herkes 10$ öder, para vitrine düşer" },
   { id: "tuzak", name: "Tuzak", kind: "attack", rarity: "uncommon", weight: 4, value: TRAP_LEVEL, target: "next", icon: "🪤", desc: "Sıradakinin sireni 2'den başlar" },
   { id: "lanet", name: "Lanet", kind: "attack", rarity: "rare", weight: 3, value: 0, target: "pick", icon: "🧿", desc: "Hedefin sonraki turundaki ilk para kartı 0$" },
   { id: "takas", name: "Takas", kind: "attack", rarity: "legendary", weight: 1, value: 0, target: "pick", icon: "🔄", desc: "Kasan hedefin kasasıyla yer değiştirir" },
   { id: "avukat", name: "Avukat", kind: "protection", rarity: "rare", weight: 4, value: 1, target: "none", icon: "⚖️", desc: "Bu turdaki ilk baskını iptal eder" },
   { id: "rusvet", name: "Rüşvet Zarfı", kind: "protection", rarity: "uncommon", weight: 6, value: BRIBE_ENVELOPE_DROP, target: "none", icon: "✉️", desc: "Siren seviyesi 2 düşer" },
   { id: "cark", name: "Patronun Çarkı", kind: "special", rarity: "legendary", weight: 4, value: 0, target: "none", icon: "🎡", desc: "Patronun Çarkı iner!" },
-  { id: "baskin", name: "Polis Baskını", kind: "raid", rarity: "trouble", weight: 0, value: 0, target: "none", icon: "🚨", desc: "Tur potu kumbaraya, kasadan rüşvet" },
+  { id: "baskin", name: "Polis Baskını", kind: "raid", rarity: "trouble", weight: 0, value: 0, target: "none", icon: "🚨", desc: "Vitrin kumbaraya, kasadan rüşvet" },
 ];
 
 export const CARD_BY_ID: Record<CardId, CardDef> = Object.fromEntries(CARDS.map((c) => [c.id, c])) as Record<CardId, CardDef>;
@@ -236,7 +257,7 @@ export const WHEEL_SLICES: readonly WheelSliceDef[] = [
   { id: "kumbara", label: "KUMBARAYI PATLAT", weight: 10, color: "#FFC93C", desc: "Kumbaradaki her şey kasana" },
   { id: "herkese100", label: "HERKESE 100$", weight: 15, color: "#7BD389", desc: "Masadaki herkes 100$ alır" },
   { id: "topluBaskin", label: "TOPLU BASKIN", weight: 13, color: "#E5383B", desc: "Herkes kasasının %10'unu kumbaraya öder" },
-  { id: "x10", label: "POT ×10", weight: 8, color: "#B05CFF", desc: "Tur potu on katına çıkar" },
+  { id: "x10", label: "POT ×10", weight: 8, color: "#B05CFF", desc: "Vitrindeki para on katına çıkar" },
   { id: "herkeseOde", label: "HERKESE 50$ ÖDE", weight: 14, color: "#FF8A3D", desc: "Kasandan her oyuncuya 50$" },
   { id: "avukat", label: "BEDAVA AVUKAT", weight: 15, color: "#3FA7FF", desc: "Bu tur ve sonraki turun için avukat" },
   { id: "karistir", label: "KASALARI KARIŞTIR", weight: 10, color: "#FF3C8E", desc: "Bütün kasalar rastgele dağıtılır" },
@@ -348,8 +369,8 @@ export const BOT_NAMES = [
   "Kambur Necmi", "Tombik Selim", "Sinsi Nuri", "Çakal Cemal", "Kumarbaz Raci", "Pala Hayri", "Fiyakalı Rıza",
 ] as const;
 /** Bots "think" this long (random in range) before each action, so they read like people. */
-export const BOT_THINK_MIN_SEC = 0.8;
-export const BOT_THINK_MAX_SEC = 2.2;
+export const BOT_THINK_MIN_SEC = 1.5;
+export const BOT_THINK_MAX_SEC = 3.5;
 
 /** Raid penalty animation, chosen by the server so every client plays the same one (§11). */
 export type RaidAnim = "kelepce" | "cuval" | "bosCuzdan" | "sabika";

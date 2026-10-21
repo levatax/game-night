@@ -1,0 +1,41 @@
+{
+  "id": "raft-rush",
+  "title": "Raft Rush",
+  "tagline": "Shipwrecked tourists, three nights, one raft. Build it before the storm.",
+  "description": "The cruise ship MS Neşe hit a rock and you washed up on a 60 m island with up to five friends. By day you chop wood, shake palms, fish and craft at the campfire; at dusk you feed the fire; at night glowing-eyed crabs crawl out of the surf to gnaw your raft. Build the hull, the mast and the provisions, get everyone aboard and sail off before the Great Storm hits. Every island is generated from a seed and every cast of the fishing rod is a lottery: no two matches feel the same. Play solo with helper bots or co-op with friends.",
+  "players": { "min": 1, "max": 6 },
+  "duration": "~8 min",
+  "input": "Keyboard + mouse",
+  "desktopOnly": true,
+  "tags": ["Co-op", "3D", "First person", "Survival", "Türkçe"],
+  "accent": "#FFD166",
+  "cover": "cover.svg",
+  "status": "beta",
+  "badge": "NEW",
+  "howToPlay": [
+    "Hold E on trees, rocks and bushes to gather wood, stone and rope. Left-click palms to drop coconuts.",
+    "Press E at the campfire to craft spears, a fishing rod, torches, an axe, fences and raft parts. Recipes also use what's in the shared camp chest.",
+    "Keep your hunger, thirst and warmth up: eat with F, drink at the spring, stay near the fire at night.",
+    "Deliver wood, rope, food and water to the raft on the beach (E). Three stages: hull, mast, provisions.",
+    "At night crabs come out of the sea. They won't enter light. Hold left-click to charge a throw, release to throw.",
+    "When the raft is ready, everyone presses E on it to board and sail away before the storm after night 3."
+  ],
+  "controls": [
+    { "keys": "W A S D", "action": "Move" },
+    { "keys": "Mouse", "action": "Look" },
+    { "keys": "Space / Shift", "action": "Jump / Sprint" },
+    { "keys": "Left click", "action": "Use: hold to charge a throw, hit palms, cast the rod" },
+    { "keys": "Right click", "action": "Catch" },
+    { "keys": "E (hold)", "action": "Gather, interact, revive, board" },
+    { "keys": "F", "action": "Eat / drink" },
+    { "keys": "Q", "action": "Toss / pass the held item" },
+    { "keys": "1–4 / wheel", "action": "Inventory slot" },
+    { "keys": "V", "action": "Ping wheel" },
+    { "keys": "T + 1–6", "action": "Emote" },
+    { "keys": "H / Tab / Esc", "action": "Legend / stats / menu" }
+  ],
+  "rooms": ["raft_rush"],
+  "server": "server/index.ts",
+  "clientDist": "client/dist",
+  "viteConfig": "client/vite.config.ts"
+}

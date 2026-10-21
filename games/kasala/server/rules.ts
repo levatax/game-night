@@ -29,6 +29,7 @@ import {
   WHEEL_SLICES,
   boxAlive,
   boxWins,
+  marketFee,
 } from "../shared/constants.js";
 import type { BetBox, CardId, TitleId, TurnOutcome, WheelSliceId } from "../shared/constants.js";
 import type { AnnouncerEvent } from "../shared/announcer.js";
@@ -125,6 +126,63 @@ export function haracAmount(kasa: number): number {
 /** Haraç Turu: everyone else pays HARAC_TURU_FEE (as much as they have). */
 export function haracTuruPayments(others: readonly { id: string; kasa: number }[]): { playerId: string; amount: number }[] {
   return others.map((o) => ({ playerId: o.id, amount: Math.max(0, Math.min(HARAC_TURU_FEE, Math.floor(o.kasa))) }));
+}
+
+// ------------------------------------------------------------------ vitrin & pazar
+export interface RowCard {
+  flipNo: number;
+  value: number;
+  /** "" while the card lies on the table. */
+  ownerId: string;
+}
+
+/** Value of the row cards still on the table. */
+export function rowValue(row: readonly RowCard[]): number {
+  let n = 0;
+  for (const c of row) if (!c.ownerId) n += Math.max(0, c.value);
+  return n;
+}
+
+/** KASALA's picks: the `n` most valuable cards still on the table (ties → the earlier flip), as flip numbers. */
+export function bestPicks(row: readonly RowCard[], n: number): number[] {
+  return row
+    .filter((c) => !c.ownerId && c.value > 0)
+    .sort((a, b) => b.value - a.value || a.flipNo - b.flipNo)
+    .slice(0, Math.max(0, n))
+    .map((c) => c.flipNo);
+}
+
+export interface MarketBuyer {
+  id: string;
+  kasa: number;
+  /** Flip number of the wanted row card, 0 = pas. */
+  choice: number;
+}
+
+export interface MarketOutcome {
+  sales: { buyerId: string; flipNo: number; value: number; fee: number }[];
+  /** Cards several buyers wanted: who got it and who went home empty-handed. */
+  clashes: { flipNo: number; winnerId: string; loserIds: string[] }[];
+}
+
+/**
+ * The Pazar reveal. A card wanted by several buyers goes to the one with the smallest kasa (the catch-up rule);
+ * on a tie, the one listed first (`buyers` is in turn order after the seller). A buyer who can't pay the fee
+ * drops out. Cards nobody got stay unsold.
+ */
+export function resolveMarket(cards: readonly RowCard[], buyers: readonly MarketBuyer[]): MarketOutcome {
+  const out: MarketOutcome = { sales: [], clashes: [] };
+  for (const card of cards) {
+    if (card.ownerId || card.value <= 0) continue;
+    const fee = marketFee(card.value);
+    const wants = buyers.filter((b) => b.choice === card.flipNo && b.kasa >= fee);
+    if (!wants.length) continue;
+    let winner = wants[0]!;
+    for (const b of wants) if (b.kasa < winner.kasa) winner = b;
+    out.sales.push({ buyerId: winner.id, flipNo: card.flipNo, value: card.value, fee });
+    if (wants.length > 1) out.clashes.push({ flipNo: card.flipNo, winnerId: winner.id, loserIds: wants.filter((b) => b !== winner).map((b) => b.id) });
+  }
+  return out;
 }
 
 /** The first id after `activeId` in `order` (cyclic) that passes `eligible`; "" when nobody does. */
@@ -579,6 +637,32 @@ export function botTarget(rng: Rng, card: CardId, cands: readonly { id: string; 
   for (const c of cands) if (c.kasa > richest.kasa) richest = c;
   if (card === "lanet" && rng() < 0.3) return cands[0]!.id;
   return richest.id;
+}
+
+export interface BotMarketInput {
+  personality: BotPersonality;
+  kasa: number;
+  /** Row cards still on the table. */
+  cards: readonly { flipNo: number; value: number }[];
+  /** Kasas of the other players who may buy. */
+  rivals: readonly number[];
+}
+
+/** How often a bot with a poorer rival (who would win a clash) settles for the second-best card. */
+const BOT_MARKET_DODGE: Record<BotPersonality, number> = { korkak: 0.6, dengeli: 0.35, gozuKara: 0 };
+
+/**
+ * A bot's Pazar pick (flip number, 0 = pas): the most valuable card worth more than its fee that it can pay
+ * for. A poorer rival wins a clash, so a richer bot sometimes goes for the second best instead.
+ */
+export function botMarketChoice(rng: Rng, v: BotMarketInput): number {
+  const ok = v.cards
+    .filter((c) => c.value > marketFee(c.value) && marketFee(c.value) <= v.kasa)
+    .sort((a, b) => b.value - a.value || a.flipNo - b.flipNo);
+  if (!ok.length) return 0;
+  const poorerRival = v.rivals.some((k) => k < v.kasa);
+  if (ok.length > 1 && poorerRival && rng() < BOT_MARKET_DODGE[v.personality]) return ok[1]!.flipNo;
+  return ok[0]!.flipNo;
 }
 
 export interface BotLoanInput {

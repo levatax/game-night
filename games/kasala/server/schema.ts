@@ -14,6 +14,7 @@ import type {
   OfferView,
   Phase,
   PlayerView,
+  RowCardView,
   SettingsView,
   StatsView,
 } from "../shared/protocol.js";
@@ -36,7 +37,7 @@ export class SettingsState extends Schema implements SettingsView {
   @type("uint8") turns = 0;
   @type("uint8") decisionSec = DEFAULT_DECISION_SEC;
   @type("boolean") loans = true;
-  @type("boolean") sideBets = true;
+  @type("boolean") sideBets = false;
 }
 
 export class PlayerState extends Schema implements PlayerView {
@@ -96,6 +97,13 @@ export class CardState extends Schema implements CardView {
   @type("string") targetId = "";
 }
 
+export class RowCardState extends Schema implements RowCardView {
+  @type("uint8") flipNo = 0;
+  @type("string") id: CardId = "bozukluk";
+  @type("int32") value = 0;
+  @type("string") ownerId = "";
+}
+
 export class KasalaState extends Schema {
   @type("string") phase: Phase = "lobby";
   @type("string") code = "";
@@ -115,6 +123,8 @@ export class KasalaState extends Schema {
   @type("float32") raidChance = 0;
   @type("float32") floorBonus = 0;
   @type("int32") turnPot = 0;
+  @type([RowCardState]) row = new ArraySchema<RowCardState>();
+  @type(["string"]) marketDone = new ArraySchema<string>();
   @type("uint8") flips = 0;
   @type("uint8") lawyers = 0;
   @type("boolean") curseArmed = false;

@@ -39,13 +39,24 @@ Bazen çevirdiğin kart altın yaldızlı **Patronun Çarkı** olur. Işıklar s
 ## 4. Oyun döngüsü
 1. **Lobi:** Hayvan karakter + renk seçilir, Hazır'a basılır. Host modu (Klasik / Battle Royale), tur sayısını ve karar süresini seçer.
 2. **Masa kurulumu:** Herkes **200$** ile başlar (Battle Royale: 150$). Patronun Kumbarası'nda **100$** vardır.
-3. **Tur (~20 sn):**
-   1. **Bahis (5 sn):** "Bahisler açıldı!" Seyirciler fişlerini kutulara koyar. Aktif oyuncu bahisleri canlı görür.
-   2. **Çevirme:** Aktif oyuncu Space ile kart çevirir. Her karttan sonra **8 sn** içinde seçim yapar: **ÇEVİR** ya da **KASALA!** Süre dolarsa otomatik KASALA.
-   3. **Sonuç:** KASALA → tur potu kasaya girer, para yağmuru. BASKIN → tur potu kumbaraya gider, kasadan %10 rüşvet kesilir, kelepçe animasyonu oynar.
+3. **Tur (~30–45 sn):**
+   1. **Bahis (5 sn, lobide açılırsa):** "Bahisler açıldı!" Seyirciler fişlerini kutulara koyar. Aktif oyuncu bahisleri canlı görür. Varsayılan olarak kapalıdır: seyircinin sözü artık Pazar'dadır (§4b).
+   2. **Çevirme:** Aktif oyuncu Space ile kart çevirir. Her karttan sonra **15 sn** içinde seçim yapar: **ÇEVİR** ya da **KASALA!** Süre dolarsa otomatik KASALA. İlk kart zorunludur; oyuncu 25 sn hiçbir şey yapmazsa Cemil Abi onun yerine çevirir.
+   3. **Sonuç:** KASALA → vitrinin en değerli kart(lar)ı kasaya girer, para yağmuru (§4b). BASKIN → bütün vitrin kumbaraya gider, kasadan %10 rüşvet kesilir, kelepçe animasyonu oynar.
+   4. **Pazar (§4b):** KASALA'dan sonra vitrinde kart kaldıysa diğer oyuncular gizlice birer kart seçer.
    4. **Bahis ödemesi:** Kazanan kutular parlar, kaybeden fişler aktif oyuncuya doğru kayar (ev payı) ve kumbaraya akar.
 4. **Sıra** saat yönünde döner. Her tam tur sonunda borç faizleri işler.
 5. **Maç sonu:** Borçlar tahsil edilir → utanç unvanları → podyum → "Rövanş".
+
+## 4b. Vitrin & Pazar (v3)
+Eski hâlinde sıra sende değilken izliyordun ve tek karar "çevir mi, dur mu" idi. Vitrin ile her tur masadaki herkesin kararı olur.
+
+- **Vitrin:** Para kartları (ve Haraç / Haraç Turu ile alınan para) potta toplanmaz; aktif oyuncunun önüne kart kart dizilir. Kara Para Aklama vitrindeki her kartı ×2, çarkın POT ×10'u ×10 yapar. HUD'daki "VİTRİN" sayısı masadaki kartların toplamıdır.
+- **KASALA:** Vitrinin en değerli **1** kartı kasana girer; **4. karttan sonra 2**, **7. karttan sonra 3** kart (`picksFor`). Bir kart daha çevirmek hem vitrini büyütür hem seçim hakkını artırır ("Bir kart daha: KASALA'da 2 kart alırsın!").
+- **Pazar (10 sn):** Kalan kartları diğer oyuncular **aynı anda ve gizlice** seçer (1–9, karta tıklama, 0 = pas). Kartın fiyatı değerinin **yarısı** (5$'a yuvarlanır, en az 5$) ve para **vitrinin sahibine** gider. Alan kişi değerin tamamını alır. Aynı kartı iki kişi isterse **kasası az olan** kapar (eşitlikte sırada önce gelen), diğeri eli boş döner. Satılmayan kartlar kumbaraya gider. Herkes seçince pazar erken kapanır.
+- **Baskın:** Bütün vitrin kumbaraya gider; Pazar olmaz.
+- **Neden:** Seyirciler büyük bir vitrin ister (alacak bir şey çıksın) ama liderin baskın yemesini de ister. Aktif oyuncu satışlardan pay aldığı için vitrini büyütmek ister, ama her kart rakiplerine de mal demektir. Fakir oyuncular çakışmaları kazanır, yani bu bir yetişme mekaniğidir.
+- Sıradaki fikirler (plan Faz 2–4): vitrine düşen **eleman** (kalıcı ekip) ve **koz** (elde tutulan) kartları, Arka Kapı kaçışı ve Patronun Kasası beceri anları.
 
 ## 5. Siren sayacı (risk motoru)
 Destede sabit sayıda bomba **yoktur**. Baskın ihtimalini sunucudaki bir **siren seviyesi** belirler; böylece ihtimal her çevirmede gözle görülür şekilde artar ve bahis oranları hesaplanabilir.
@@ -434,9 +445,12 @@ games/kasala/
 | Çark ağırlıkları | Kumbara 10, ×10 8, Herkese 100 15, Karıştır 10, Herkese 50 Öde 14, Avukat 15, Toplu Baskın 13, Bir Daha 15 |
 | Bahis penceresi | 5 sn |
 | Fişler | 10 / 25 / 50$ |
-| Bahis ödemeleri | 1–2: ×4 · 3–4: ×4 · 5+: ×10 · Kasalar: ×1.8 |
+| Bahis ödemeleri | 1–2: ×4 · 3–4: ×4 · 5+: ×10 · Kasalar: ×1.5 (seyirci bahsi varsayılan olarak kapalı) |
+| KASALA seçimi | 1 kart; 4. karttan sonra 2, 7. karttan sonra 3 (en değerliler) |
+| Pazar | 10 sn, fiyat = değerin %50'si (5$'a yuvarlı, en az 5$), satıcıya; çakışmada kasası az olan alır; satılmayan → kumbara |
 | Ev payı | Kaybeden bahislerin %10'u aktif oyuncuya, %90'ı kumbaraya |
-| Karar süresi | 8 sn, süre dolunca otomatik KASALA |
+| Karar süresi | 15 sn (lobide 10 / 15 / 25), süre dolunca otomatik KASALA. İlk kart için 25 sn AFK koruması |
+| Tur özeti | Her tam tur sonunda 4.5 sn: sıralama ve turun kazancı/kaybı |
 | Saldırı hedef seçimi | 6 sn, süre dolunca rastgele |
 | Borç limiti | Verenin kasasının %50'si |
 | Faiz seçenekleri | Tam tur başına %10 / %20 / %30 |

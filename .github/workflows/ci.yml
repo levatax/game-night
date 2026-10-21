@@ -1,0 +1,33 @@
+# Every push and pull request: typecheck, every game's tests, every game client's build and the compiled hub
+# (the Docker image runs dist/, see tsconfig.server.json), booted once by scripts/smoke-hub.mjs. The nightly
+# Raft Rush balance report is balance.yml.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      # The room tests drive a live in-process Colyseus server on wall-clock time: a lone timed-out room test on a
+      # busy runner is usually a flake, so re-run the job before digging in.
+      - run: npx vitest run
+      - run: npm run build
+      - run: npm run build:server
+      # Boot the compiled hub on this runner's Node (what the image runs): an import that only breaks under plain
+      # Node ESM makes a game fail to register, which turns /healthz into a 503 and fails this step.
+      - run: node scripts/smoke-hub.mjs

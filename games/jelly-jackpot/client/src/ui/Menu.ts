@@ -5,7 +5,8 @@
 // (localStorage[NICKNAME_STORAGE_KEY]), Create Room / Join Room (+ 4-letter code), "← Game Night" link.
 // Lobby (§13.2): sticker room code + Copy link, 6 chef cards, hat color picker, Ready toggle, host settings
 // (read-only for guests), host Start with a reason while disabled, Leave.
-// Role reveal (§13.3): a private card that flips over to Baker (cream) or Saboteur (red).
+// Role reveal phase: a "How to play" card everyone sees (3 big steps + Got it!). The Saboteur gets a red
+// secret badge on top; Bakers in a Saboteur match get a one-line "someone is a Saboteur" hint.
 //
 // All user text (nicknames) goes in through textContent only. The lobby is built once and updated in place,
 // so focus and open <select>s survive the 20 Hz state patches.
@@ -19,13 +20,15 @@ import {
   NICKNAME_MAX,
   NICKNAME_STORAGE_KEY,
   PLAYER_COLORS,
+  BET_STAKE,
   ROUND_OPTIONS,
   SABOTEUR_MIN_PLAYERS,
+  TOPPLE_PENALTY,
   TURN_TIMER_OPTIONS,
   autoRounds,
 } from "../../../shared/constants";
 import type { JellyStateView, PlayerView, Role, SettingsMsg } from "../../../shared/protocol";
-import { LANGS, lang, setLanguage, t, upper } from "../i18n";
+import { LANGS, lang, setLanguage, t } from "../i18n";
 
 export interface MenuHandlers {
   onCreate(nickname: string): void;
@@ -46,8 +49,6 @@ const COLOR_NAMES = lines("color", 6);
 const SILLY_NAMES = lines("silly", 12);
 const TAGLINES = lines("tagline", 5);
 const EMPTY_SEATS = lines("emptySeat", 6);
-const BAKER_QUIPS = lines("bakerQuip", 3);
-const SABOTEUR_QUIPS = lines("sabQuip", 3);
 
 const pick = <T>(arr: readonly T[]): T => arr[Math.floor(Math.random() * arr.length)]!;
 
@@ -154,7 +155,8 @@ export class Menu {
 
   // role
   private readonly roleWrap: HTMLElement;
-  private roleTimer = 0;
+  /** Last known lobby setting, so the how-to card only mentions guessing when side bets are on. */
+  private sideBetsOn = true;
 
   constructor(root: HTMLElement, handlers: MenuHandlers) {
     this.handlers = handlers;
@@ -352,13 +354,14 @@ export class Menu {
       return f;
     };
     this.sabNote = h("span", "jjm-note");
-    const sabField = field("jjm-sab", t("menu.setSaboteur"), this.sabBox);
-    sabField.appendChild(this.sabNote);
+    const sabField = field("jjm-sab", t("menu.setSaboteur", { n: SABOTEUR_MIN_PLAYERS }), this.sabBox);
+    sabField.classList.add("jjm-field--advanced");
+    sabField.append(h("span", "jjm-explain", undefined, t("menu.sabExplain")), this.sabNote);
     settings.append(
       field("jjm-rounds", t("menu.setRounds"), this.roundsSel),
       field("jjm-timer", t("menu.setTimer"), this.timerSel),
-      sabField,
       field("jjm-bets", t("menu.setBets"), this.betsBox),
+      sabField,
     );
     this.roundsSel.addEventListener("change", () => this.sendSetting({ rounds: Number(this.roundsSel.value) }));
     this.timerSel.addEventListener("change", () => this.sendSetting({ turnTimer: Number(this.timerSel.value) }));
@@ -386,7 +389,7 @@ export class Menu {
     this.lobby.appendChild(lcard);
 
     // ================================================================== ROLE
-    this.roleWrap = h("section", "jjm-screen jjm-role", { "aria-label": t("menu.roleAria"), "aria-live": "polite" });
+    this.roleWrap = h("section", "jjm-screen jjm-role", { "aria-label": t("menu.howAria"), "aria-live": "polite" });
 
     this.el.append(this.home, this.lobby, this.roleWrap);
 
@@ -562,6 +565,7 @@ export class Menu {
     this.syncSelect(this.timerSel, String(s.turnTimer));
     if (this.sabBox.checked !== s.saboteur) this.sabBox.checked = s.saboteur;
     if (this.betsBox.checked !== s.sideBets) this.betsBox.checked = s.sideBets;
+    this.sideBetsOn = s.sideBets;
     for (const ctl of [this.roundsSel, this.timerSel, this.sabBox, this.betsBox]) {
       if (ctl.disabled !== !isHost) ctl.disabled = !isHost;
     }
@@ -592,47 +596,53 @@ export class Menu {
     setText(this.startReason, reason);
   }
 
-  /** Flip the role card; `solo` = 2-player match (no Saboteur). Auto-hides when hide() is called. */
+  /**
+   * The how-to-play card for the roleReveal phase. `solo` = no Saboteur this match (setting off or too few
+   * players): roles are not mentioned at all. "Got it!" just hides the card locally.
+   */
   showRole(role: Role, solo: boolean): void {
     this.showOnly(this.roleWrap);
-    window.clearTimeout(this.roleTimer);
     const sab = role === "saboteur" && !solo;
 
-    const scene = h("div", "jjm-flip");
-    const inner = h("div", "jjm-flip-inner");
-    const back = h("div", "jjm-face jjm-face--back", { "aria-hidden": "true" });
-    back.append(h("span", "jjm-face-q", undefined, "?"), h("span", "jjm-face-hint", undefined, t("menu.roleBackHint")));
-    const front = h("div", `jjm-face jjm-face--front ${sab ? "jjm-face--sab" : "jjm-face--baker"}`);
-    front.appendChild(h("span", "jjm-face-kicker", undefined, t("menu.roleKicker")));
-    front.appendChild(h("span", "jjm-face-emoji", { "aria-hidden": "true" }, sab ? "😈" : "🧑‍🍳"));
-    const title = h("span", "jjm-face-title");
-    const rk = sab ? "roleSab" : "roleBaker";
-    title.append(t(`menu.${rk}Pre`), h("strong", undefined, undefined, upper(t(`menu.${rk}`))), t(`menu.${rk}Post`));
-    front.appendChild(title);
-    let body: string;
-    if (sab) {
-      body = t("menu.roleSabBody");
-    } else if (solo) {
-      body = t("menu.roleSoloBody");
-    } else {
-      body = t("menu.roleBakerBody");
-    }
-    front.appendChild(h("span", "jjm-face-body", undefined, body));
-    if (sab) front.appendChild(h("kbd", "jjm-key", { "aria-hidden": "true" }, "R"));
-    front.appendChild(h("span", "jjm-face-quip", undefined, pick(sab ? SABOTEUR_QUIPS : BAKER_QUIPS)));
-    inner.append(back, front);
-    scene.appendChild(inner);
-    this.roleWrap.replaceChildren(scene);
-    this.roleWrap.setAttribute("aria-label", sab ? t("menu.roleSabAria") : t("menu.roleBakerAria"));
+    const card = h("div", `jj-panel jjm-how${sab ? " jjm-how--sab" : ""}`);
+    if (sab) card.appendChild(h("p", "jjm-how-secret", { role: "note" }, t("menu.howSabBadge")));
+    const titleId = "jjm-how-title";
+    card.append(
+      h("h2", "jjm-how-title", { id: titleId }, t("menu.howTitle")),
+      h("p", "jjm-how-sub", undefined, t("menu.howSub")),
+    );
 
-    this.roleTimer = window.setTimeout(() => {
-      scene.classList.add("jjm-flipped");
-      this.handlers.onUiSound("pop");
-    }, 650);
+    const list = h("ol", "jjm-how-steps");
+    const step3 = t("menu.howStep3Text", { penalty: TOPPLE_PENALTY });
+    const steps: [string, string, string][] = [
+      ["🎰", t("menu.howStep1Title"), t("menu.howStep1Text")],
+      ["🖱️", t("menu.howStep2Title"), t("menu.howStep2Text")],
+      ["🏰", t("menu.howStep3Title"), this.sideBetsOn ? `${step3} ${t("menu.howStep3Guess", { stake: BET_STAKE })}` : step3],
+    ];
+    steps.forEach(([emoji, title, text], i) => {
+      const li = h("li", "jjm-how-step");
+      li.style.setProperty("--i", String(i));
+      const art = h("span", "jjm-how-art", { "aria-hidden": "true" });
+      art.append(h("span", "jjm-how-num", undefined, String(i + 1)), h("span", "jjm-how-emoji", undefined, emoji));
+      const copy = h("span", "jjm-how-copy");
+      copy.append(h("strong", "jjm-how-step-title", undefined, title), h("span", "jjm-how-step-text", undefined, text));
+      li.append(art, copy);
+      list.appendChild(li);
+    });
+    card.appendChild(list);
+
+    if (!solo && !sab) card.appendChild(h("p", "jjm-how-spy", undefined, t("menu.howSpyLine")));
+
+    const ok = h("button", "jj-btn jj-btn--green jjm-big jjm-how-ok", { type: "button" }, t("menu.howGotIt"));
+    ok.addEventListener("click", () => this.hide());
+    card.appendChild(ok);
+
+    this.roleWrap.replaceChildren(card);
+    this.roleWrap.setAttribute("aria-labelledby", titleId);
+    this.roleWrap.removeAttribute("aria-label");
   }
 
   hide(): void {
-    window.clearTimeout(this.roleTimer);
     this.roleWrap.replaceChildren();
     this.showOnly(null);
   }

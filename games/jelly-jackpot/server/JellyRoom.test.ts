@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Server } from "@colyseus/core";
 import { WebSocketTransport } from "@colyseus/ws-transport";
 import { Client, type Room } from "colyseus.js";
-import { CARD_BY_ID, ROOM_NAME, START_COINS } from "../shared/constants.js";
+import { CARD_BY_ID, ROOM_NAME, START_COINS, turnsPerRound } from "../shared/constants.js";
 import { MSG } from "../shared/protocol.js";
 import type {
   BetsMsg,
@@ -182,6 +182,12 @@ function watchCoins(observer: Bot) {
   return checks;
 }
 
+/** Host turns the Saboteur on/off in the lobby and waits for it to sync. */
+async function setSaboteur(bots: Bot[], on: boolean) {
+  bots[0]!.room.send(MSG.SETTINGS, { saboteur: on });
+  await waitFor(() => bots.every((b) => b.room.state.settings.saboteur === on), 3000, `saboteur=${on}`);
+}
+
 async function startMatch(bots: Bot[]) {
   const [host, ...rest] = bots;
   for (const b of rest) b.room.send(MSG.READY, { ready: true });
@@ -209,6 +215,13 @@ describe("JellyRoom e2e", () => {
       if (phases[phases.length - 1] !== s.phase) phases.push(s.phase);
     });
 
+    // The Saboteur is off by default; only the host can turn it on.
+    expect(host!.room.state.settings.saboteur).toBe(false);
+    bots[1]!.room.send(MSG.SETTINGS, { saboteur: true }); // not the host: ignored
+    await sleep(150);
+    expect(host!.room.state.settings.saboteur).toBe(false);
+    await setSaboteur(bots, true);
+
     await startMatch(bots);
     await waitFor(() => bots.every((b) => b.roleCount === 1), 3000, "roles");
     expect(bots.filter((b) => b.role === "saboteur")).toHaveLength(1);
@@ -224,11 +237,17 @@ describe("JellyRoom e2e", () => {
       expect(phases).toContain(p);
     }
 
-    // Every turn: one SPIN_START, one SPIN_RESULT with a consistent reel; 2 rounds × 4 turns.
+    // Every turn: one SPIN_START, one SPIN_RESULT with a consistent reel; 2 rounds × 3 turns (one each).
+    const turns = 2 * turnsPerRound(3);
+    expect(turns).toBe(6);
     const starts = msgs<SpinStartMsg>(host!, MSG.SPIN_START);
     const results = msgs<SpinResultMsg>(host!, MSG.SPIN_RESULT);
-    expect(starts).toHaveLength(8);
-    expect(results).toHaveLength(8);
+    expect(starts).toHaveLength(turns);
+    expect(results).toHaveLength(turns);
+    for (const round of [0, 1]) {
+      const who = starts.slice(round * 3, round * 3 + 3).map((m) => m.playerId);
+      expect(new Set(who).size).toBe(3); // everybody exactly once per round
+    }
     for (const r of results) {
       expect(r.strip[r.winIndex]).toBe(r.card);
       expect(CARD_BY_ID[r.card].rarity).toBe(r.rarity);
@@ -252,10 +271,11 @@ describe("JellyRoom e2e", () => {
 
     // Coins moved exactly per RESULT + BETS.
     const resultsMsgs = msgs<ResultMsg>(host!, MSG.RESULT);
-    expect(resultsMsgs).toHaveLength(8);
-    expect(msgs<BetsMsg>(host!, MSG.BETS)).toHaveLength(8);
+    expect(resultsMsgs).toHaveLength(turns);
+    expect(msgs<BetsMsg>(host!, MSG.BETS)).toHaveLength(turns);
     expect(msgs<BetsMsg>(host!, MSG.BETS).some((m) => m.bets.length > 0)).toBe(true);
-    expect(coinChecks.length).toBeGreaterThanOrEqual(8 * 3 - 3);
+    for (const m of msgs<BetsMsg>(host!, MSG.BETS)) for (const b of m.bets) expect(b.amount).toBe(10);
+    expect(coinChecks.length).toBeGreaterThanOrEqual(turns * 3 - 3);
     expect(coinChecks.filter((c) => !c.ok).map((c) => c.info)).toEqual([]);
 
     // Vote: both bakers accused the Saboteur → caught.
@@ -283,13 +303,14 @@ describe("JellyRoom e2e", () => {
     await leaveAll(bots);
   }, 90_000);
 
-  it("a 2-player match has no Saboteur and skips voting", async () => {
+  it("a 2-player match has no Saboteur (even with it switched on) and skips voting", async () => {
     const bots = await makeTable(2, { rounds: 1 });
     autoplay(bots, { rig: true });
     const phases: Phase[] = [];
     bots[0]!.room.onStateChange((s) => {
       if (phases[phases.length - 1] !== s.phase) phases.push(s.phase);
     });
+    await setSaboteur(bots, true);
     await startMatch(bots);
     await waitFor(() => bots.every((b) => b.roleCount === 1), 3000, "roles");
     expect(bots.every((b) => b.role === "baker")).toBe(true);
@@ -302,8 +323,36 @@ describe("JellyRoom e2e", () => {
     expect(reveal[0]!.saboteurId).toBe("");
     expect(reveal[0]!.rigs).toEqual([]);
     expect(msgs(bots[0]!, MSG.VOTES)).toHaveLength(0);
-    expect(msgs<SpinResultMsg>(bots[0]!, MSG.SPIN_RESULT)).toHaveLength(4);
+    expect(phases).toContain("roleReveal");
+    expect(msgs<SpinResultMsg>(bots[0]!, MSG.SPIN_RESULT)).toHaveLength(turnsPerRound(2));
+    // Rig attempts are refused: nobody is the Saboteur.
+    for (const b of bots) expect(msgs<RigStatusMsg>(b, MSG.RIG_STATUS).every((m) => m.accepted !== true)).toBe(true);
     await waitFor(() => [...bots[0]!.room.state.players.values()].map((p) => p.place).sort().join() === "1,2", 2000, "places");
+    await leaveAll(bots);
+  }, 60_000);
+
+  it("with the Saboteur off (default), 3 players still get the intro card, then no voting", async () => {
+    const bots = await makeTable(3, { rounds: 1 });
+    autoplay(bots, { rig: true, vote: (voter) => bots.find((b) => b !== voter)!.id });
+    const phases: Phase[] = [];
+    bots[0]!.room.onStateChange((s) => {
+      if (phases[phases.length - 1] !== s.phase) phases.push(s.phase);
+    });
+    expect(bots[0]!.room.state.settings.saboteur).toBe(false);
+    await startMatch(bots);
+    await waitFor(() => bots.every((b) => b.roleCount === 1), 3000, "roles");
+    expect(bots.every((b) => b.role === "baker")).toBe(true);
+    await waitFor(() => phaseOf(bots[0]!) === "matchEnd", 30_000, "matchEnd");
+    expect(phases.filter((p) => p !== "lobby")[0]).toBe("roleReveal");
+    expect(phases).not.toContain("voting");
+    expect(msgs(bots[0]!, MSG.VOTES)).toHaveLength(0);
+    const reveal = msgs<RevealMsg>(bots[0]!, MSG.REVEAL);
+    expect(reveal).toHaveLength(1);
+    expect(reveal[0]!.saboteurId).toBe("");
+    expect(reveal[0]!.rigs).toEqual([]);
+    expect(reveal[0]!.adjustments).toEqual([]);
+    expect(msgs<SpinResultMsg>(bots[0]!, MSG.SPIN_RESULT)).toHaveLength(3);
+    for (const r of msgs<SpinResultMsg>(bots[0]!, MSG.SPIN_RESULT)) expect(r.card).not.toBe("insurance");
     await leaveAll(bots);
   }, 60_000);
 

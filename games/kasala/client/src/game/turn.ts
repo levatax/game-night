@@ -2,8 +2,8 @@
 // small per-turn trackers. Owner: client-net-game. The server validates everything again; this only
 // decides between "send it" and "deny sound + a short Turkish reason".
 
-import { CHIP_AMOUNTS, GHOST_CHIP, type BetBox } from "../../../shared/constants";
-import type { KasalaStateView, Phase, PlayerView } from "../../../shared/protocol";
+import { CHIP_AMOUNTS, GHOST_CHIP, marketFee, type BetBox } from "../../../shared/constants";
+import type { KasalaStateView, Phase, PlayerView, RowCardView } from "../../../shared/protocol";
 
 /** Phases of a running match (HUD visible). */
 export const MATCH_PHASES: ReadonlySet<Phase> = new Set<Phase>([
@@ -13,12 +13,13 @@ export const MATCH_PHASES: ReadonlySet<Phase> = new Set<Phase>([
   "targeting",
   "wheel",
   "result",
+  "market",
   "settle",
   "lastChance",
   "elimination",
 ]);
 /** Phases that belong to one player's turn (cards on the table, an active seat). */
-export const TURN_PHASES: ReadonlySet<Phase> = new Set<Phase>(["betting", "flipping", "targeting", "wheel", "result", "settle"]);
+export const TURN_PHASES: ReadonlySet<Phase> = new Set<Phase>(["betting", "flipping", "targeting", "wheel", "result", "market", "settle"]);
 /** Phases where the siren matters (lamp, vignette, music tension). */
 export const SIREN_PHASES: ReadonlySet<Phase> = new Set<Phase>(["betting", "flipping", "targeting"]);
 
@@ -161,6 +162,37 @@ export function loanBlockReason(state: KasalaStateView | null, myId: string): st
   const p = me(state, myId);
   if (!p) return "";
   if (p.spectator) return "Seyirciler borç veremez.";
+  return null;
+}
+
+// ------------------------------------------------------------------- pazar
+/** Row cards still on the table (the Pazar's goods), in flip order. */
+export function rowLeft(state: KasalaStateView | null): RowCardView[] {
+  const out: RowCardView[] = [];
+  state?.row.forEach((c) => {
+    if (!c.ownerId) out.push(c);
+  });
+  return out;
+}
+
+/** I may shop in this Pazar: a match player still in the game, not the seller, with money for at least one card. */
+export function canShop(state: KasalaStateView | null, myId: string): boolean {
+  if (!state || !myId || state.phase !== "market" || state.activeId === myId) return false;
+  const p = me(state, myId);
+  if (!p || p.spectator || p.ghost || !isParticipant(state, myId)) return false;
+  return rowLeft(state).some((c) => marketFee(c.value) <= p.kasa);
+}
+
+/** Why my Pazar pick is refused (null = send it). */
+export function marketBlockReason(state: KasalaStateView | null, myId: string, flipNo: number): string | null {
+  if (!state || !myId || state.phase !== "market") return "";
+  if (state.activeId === myId) return "Kendi vitrininden alamazsın: rakipler alışverişte.";
+  if (!canShop(state, myId)) return "Bu pazarda alacak paran yok.";
+  if (state.busy) return "";
+  if (flipNo === 0) return null;
+  const card = rowLeft(state).find((c) => c.flipNo === flipNo);
+  if (!card) return "";
+  if (marketFee(card.value) > (me(state, myId)?.kasa ?? 0)) return "Kasan bu kartın fiyatına yetmiyor.";
   return null;
 }
 

@@ -13,6 +13,8 @@ import {
   WHEEL_SLICES,
   boxAlive,
   boxWins,
+  marketFee,
+  picksFor,
   raidChance,
 } from "../shared/constants.js";
 import type { BetBox, CardId, WheelSliceId } from "../shared/constants.js";
@@ -23,11 +25,13 @@ import {
   applyInterest,
   applyWheel,
   betPayout,
+  bestPicks,
   betsLineEvent,
   botAcceptsLoan,
   botBet,
   botBetBox,
   botHeckle,
+  botMarketChoice,
   botRepayAmount,
   botRescueLoan,
   botRescueRequest,
@@ -47,9 +51,11 @@ import {
   nextInOrder,
   raidBribe,
   randomTarget,
+  resolveMarket,
   rollCard,
   rollFlip,
   rollWheel,
+  rowValue,
   settleBets,
   shameTitles,
   shuffle,
@@ -557,6 +563,66 @@ describe("§10 / §16 standings and titles", () => {
     expect(isEarlyCash(2, false)).toBe(true);
     expect(isEarlyCash(3, false)).toBe(false);
     expect(isEarlyCash(1, true)).toBe(false);
+  });
+});
+
+describe("vitrin & pazar", () => {
+  const row = (...cards: [number, number, string?][]) => cards.map(([flipNo, value, ownerId]) => ({ flipNo, value, ownerId: ownerId ?? "" }));
+
+  it("KASALA picks: 1 card, 2 from the 4th flip, 3 from the 7th", () => {
+    expect([1, 2, 3, 4, 5, 6, 7, 9].map(picksFor)).toEqual([1, 1, 1, 2, 2, 2, 3, 3]);
+  });
+
+  it("market fee: half the value rounded up to 5$, at least 5$", () => {
+    expect([0, 4, 10, 20, 25, 40, 50, 100, 1000].map(marketFee)).toEqual([5, 5, 5, 10, 15, 20, 25, 50, 500]);
+  });
+
+  it("row value counts only the cards on the table; picks take the most valuable (ties → earlier flip)", () => {
+    const r = row([1, 25], [2, 50], [3, 10, "x"], [4, 50], [5, 25]);
+    expect(rowValue(r)).toBe(150);
+    expect(bestPicks(r, 1)).toEqual([2]);
+    expect(bestPicks(r, 3)).toEqual([2, 4, 1]);
+    expect(bestPicks(r, 9)).toEqual([2, 4, 1, 5]);
+    expect(bestPicks(r, 0)).toEqual([]);
+  });
+
+  it("resolves the Pazar: the poorer buyer wins a clash, ties go to the first in line, broke buyers drop out", () => {
+    const cards = row([1, 50], [2, 100], [3, 20]);
+    const out = resolveMarket(cards, [
+      { id: "a", kasa: 300, choice: 2 },
+      { id: "b", kasa: 120, choice: 2 },
+      { id: "c", kasa: 80, choice: 1 },
+      { id: "d", kasa: 80, choice: 1 },
+      { id: "e", kasa: 4, choice: 3 }, // can't pay the 10$ fee
+      { id: "f", kasa: 500, choice: 0 },
+    ]);
+    expect(out.sales).toEqual([
+      { buyerId: "c", flipNo: 1, value: 50, fee: 25 },
+      { buyerId: "b", flipNo: 2, value: 100, fee: 50 },
+    ]);
+    expect(out.clashes).toEqual([
+      { flipNo: 1, winnerId: "c", loserIds: ["d"] },
+      { flipNo: 2, winnerId: "b", loserIds: ["a"] },
+    ]);
+    // A taken card can't be bought.
+    expect(resolveMarket(row([1, 50, "x"]), [{ id: "a", kasa: 100, choice: 1 }]).sales).toEqual([]);
+  });
+
+  it("bots buy the best card worth more than its fee, sometimes dodging a poorer rival", () => {
+    const rng = createRng(3);
+    const cards = [
+      { flipNo: 1, value: 25 },
+      { flipNo: 2, value: 100 },
+      { flipNo: 3, value: 4 },
+    ];
+    expect(botMarketChoice(rng, { personality: "dengeli", kasa: 200, cards, rivals: [] })).toBe(2);
+    expect(botMarketChoice(rng, { personality: "gozuKara", kasa: 200, cards, rivals: [50] })).toBe(2);
+    expect(botMarketChoice(rng, { personality: "dengeli", kasa: 30, cards, rivals: [] })).toBe(1); // 50$ fee too much
+    expect(botMarketChoice(rng, { personality: "dengeli", kasa: 200, cards: [{ flipNo: 3, value: 4 }], rivals: [] })).toBe(0);
+    let dodged = 0;
+    for (let i = 0; i < 200; i++) if (botMarketChoice(rng, { personality: "korkak", kasa: 200, cards, rivals: [50] }) === 1) dodged++;
+    expect(dodged).toBeGreaterThan(80);
+    expect(dodged).toBeLessThan(160);
   });
 });
 

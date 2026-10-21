@@ -109,6 +109,11 @@ titles) lives in `server/rules.ts` with unit tests. The full flow is spelled out
 - `raided` → stage.breakDoor(), stage.setFocus("door"), characters.dealer.hide(true), characters.raid(id, anim),
   sfx doorBreak + siren + cuffs/sack/moths/cameraFlash per anim, fx.flash, sabika → overlays.mugshot; feed
   ("🚨 Domuz BASKIN yedi (−34$)"); others react laugh/shock.
+- Vitrin & Pazar: money lands in `state.row` (one RowCardView per card, `turnPot` = what is still on the
+  table). `cashed` with `taken` → those cards fly to the stack (cards.sendRow), the other flipped cards back into
+  the deck, the rest of the row stays. Phase `market` → hud MarketPanel (buyers pick with 1–9 / a click on the
+  row card via cards.rowCardAt, 0 = pas, Game sends `MARKET`, cards.markRow rings the pick). `marketResult` →
+  sold cards fly to the buyers, fee chips to the seller, clash losers sulk, leftovers to the kumbara, my feed line.
 - `betsSettled` → hud.betsSettled, chips fly to winners, sfx chips/chipCrack, my result banner.
 - `loan`, `taslik`, `roundEnd` (interest feed lines, "SON MASA" slam when finalTableNext), `lastChance`
   (the HUD shows the banner from state; its "Borç ver" button → overlays.toggleLoans(true, lastChanceId)),

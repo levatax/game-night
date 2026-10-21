@@ -4,7 +4,9 @@ import { describe, expect, it } from "vitest";
 import {
   BAG_PIECES,
   BET_PAYOUT,
+  BET_STAKE,
   CARD_BY_ID,
+  CARDS,
   RARITIES,
   RARITY_ODDS,
   RARITY_ODDS_TWO_PLAYERS,
@@ -12,6 +14,7 @@ import {
   REEL_WIN_INDEX,
   SABOTEUR_ESCAPE_BONUS,
   VOTE_CORRECT_REWARD,
+  TOPPLE_PENALTY,
   survivePayout,
   topplePenalty,
 } from "../shared/constants.js";
@@ -71,28 +74,32 @@ describe("rollCard", () => {
     RARITIES.forEach((r, i) => expect(Math.abs(shares[r] - RARITY_ODDS[i]!)).toBeLessThan(0.7));
   });
 
-  it("uses the cursed-heavy 2-player odds", () => {
+  it("uses RARITY_ODDS_TWO_PLAYERS with 2 players", () => {
     const shares = rarityShares(2, 99);
     RARITIES.forEach((r, i) => expect(Math.abs(shares[r] - RARITY_ODDS_TWO_PLAYERS[i]!)).toBeLessThan(0.7));
-    expect(shares.cursed).toBeGreaterThan(5);
+    expect(shares.cursed).toBeGreaterThan(4);
+    expect(shares.cursed).toBeLessThan(6);
   });
 
-  it("can roll every card in the table", () => {
+  it("rolls exactly the active CARDS (every one, never a retired card)", () => {
     const rng = createRng(5);
     const seen = new Set<CardId>();
     for (let i = 0; i < N; i++) seen.add(rollCard(rng, 3));
-    expect(seen.size).toBe(Object.keys(CARD_BY_ID).length);
+    expect([...seen].sort()).toEqual(CARDS.map((c) => c.id).sort());
+    expect(seen.has("insurance")).toBe(false);
   });
 
-  it("rollCursed always gives a cursed card and covers all four", () => {
+  it("rollCursed always gives an active cursed card and covers all of them", () => {
     const rng = createRng(11);
+    const cursed = CARDS.filter((c) => c.rarity === "cursed").map((c) => c.id);
+    expect(cursed).toEqual(["bowlingBall"]);
     const seen = new Set<CardId>();
     for (let i = 0; i < 2000; i++) {
       const c = rollCursed(rng);
       expect(rarityOf(c)).toBe("cursed");
       seen.add(c);
     }
-    expect(seen.size).toBe(4);
+    expect([...seen].sort()).toEqual(cursed.sort());
   });
 });
 
@@ -131,7 +138,7 @@ describe("shuffle", () => {
 });
 
 describe("PieceBag", () => {
-  it("deals all 16 pieces before any repeat, bag after bag", () => {
+  it("deals every bag piece before any repeat, bag after bag", () => {
     const bag = new PieceBag(createRng(2024));
     for (let round = 0; round < 10; round++) {
       const seen = new Set<PieceType>();
@@ -173,13 +180,16 @@ describe("placementDelta", () => {
     expect(placementDelta("stand", 30, 1.5, 0, true)).toBe(20);
   });
 
-  it("charges the multiplied penalty on topple", () => {
-    expect(placementDelta("fall", 50, 1, 100, false)).toBe(-10);
-    expect(placementDelta("fall", 50, 4, 100, false)).toBe(-topplePenalty(4));
+  it("charges the flat penalty on topple, whatever the multiplier", () => {
+    expect(TOPPLE_PENALTY).toBe(5);
+    for (const m of [1, 1.5, 2, 3, 5]) {
+      expect(topplePenalty(m)).toBe(TOPPLE_PENALTY);
+      expect(placementDelta("fall", 50, m, 100, false)).toBe(-TOPPLE_PENALTY);
+    }
   });
 
   it("never takes coins below 0", () => {
-    expect(placementDelta("fall", 50, 4, 7, false)).toBe(-7);
+    expect(placementDelta("fall", 50, 4, 3, false)).toBe(-3);
     expect(placementDelta("fall", 50, 4, 0, false) === 0).toBe(true);
     for (const coins of [0, 1, 5, 15, 39, 40, 41]) expect(coins + placementDelta("fall", 10, 4, coins, false)).toBeGreaterThanOrEqual(0);
   });
@@ -193,25 +203,27 @@ describe("bets", () => {
   it("settles wins and losses with BET_PAYOUT math and drops 0 bets", () => {
     const res = settleBets(
       [
-        { playerId: "a", side: "fall", amount: 25 },
-        { playerId: "b", side: "stand", amount: 50 },
+        { playerId: "a", side: "fall", amount: BET_STAKE },
+        { playerId: "b", side: "stand", amount: BET_STAKE },
         { playerId: "c", side: "stand", amount: 0 },
       ],
       "fall",
     );
     expect(res).toEqual([
-      { playerId: "a", side: "fall", amount: 25, won: true, delta: 25 * (BET_PAYOUT - 1) },
-      { playerId: "b", side: "stand", amount: 50, won: false, delta: -50 },
+      { playerId: "a", side: "fall", amount: BET_STAKE, won: true, delta: BET_STAKE * (BET_PAYOUT - 1) },
+      { playerId: "b", side: "stand", amount: BET_STAKE, won: false, delta: -BET_STAKE },
     ]);
     expect(settleBets([], "stand")).toEqual([]);
   });
 
   it("clamps to the largest legal affordable amount", () => {
-    expect(legalBetAmount(50, 100)).toBe(50);
-    expect(legalBetAmount(50, 30)).toBe(25);
-    expect(legalBetAmount(25, 9)).toBe(0);
-    expect(legalBetAmount(40, 100)).toBe(25);
-    expect(legalBetAmount(999, 100)).toBe(50);
+    expect(BET_STAKE).toBe(10);
+    expect(legalBetAmount(10, 100)).toBe(10);
+    expect(legalBetAmount(10, 10)).toBe(10);
+    expect(legalBetAmount(10, 9)).toBe(0);
+    expect(legalBetAmount(9, 100)).toBe(0);
+    expect(legalBetAmount(25, 100)).toBe(10);
+    expect(legalBetAmount(999, 100)).toBe(10);
     expect(legalBetAmount(-5, 100)).toBe(0);
     expect(legalBetAmount(Number.NaN, 100)).toBe(0);
   });

@@ -1,0 +1,543 @@
+/* "What did I get?" reels: the big fish / treasure strip (top center, above the crosshair) and teammates' small
+   reels on the right edge. Adapted from games/jelly-jackpot/client/src/ui/reel.css (strip, marker, rarity rays,
+   winner pop, tease wobble). Owner: client-ui. Tokens from ui.css (.rr-ui). Rarity color = --rc. */
+
+.rr-ui .rr-reels {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+/* ================================================================ big reel */
+
+.rr-ui .rr-reel {
+  --card: calc(var(--u) * 100);
+  --card-h: calc(var(--card) * 1.12);
+  --rc: var(--hud);
+  position: absolute;
+  left: 50%;
+  top: calc(var(--u) * 148);
+  width: min(calc(var(--card) * 5.6 + var(--u) * 40), calc(100vw - 32px));
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--u) * 8);
+  animation: rr-reel-in 0.42s cubic-bezier(0.3, 1.7, 0.5, 1) both;
+}
+.rr-ui .rr-reel.is-calm {
+  animation-duration: 0.2s;
+}
+.rr-ui .rr-reel.is-leaving {
+  animation: rr-reel-out 0.32s cubic-bezier(0.6, -0.4, 0.8, 0.6) forwards;
+}
+@keyframes rr-reel-in {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) scale(0.4, 0.2) rotate(-4deg);
+  }
+  60% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1.05, 0.95) rotate(1deg);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+  }
+}
+@keyframes rr-reel-out {
+  to {
+    opacity: 0;
+    transform: translateX(-50%) translateY(calc(var(--u) * -40)) scale(0.3) rotate(-10deg);
+  }
+}
+.rr-ui .rr-reel__title {
+  padding: calc(var(--u) * 4) calc(var(--u) * 18);
+  font-size: max(17px, calc(var(--u) * 22));
+  font-weight: 700;
+  color: var(--cream);
+  background: var(--sea-night);
+  border: var(--line);
+  border-radius: 999px;
+  box-shadow: 0 calc(var(--u) * 4) 0 var(--ink);
+  transform: rotate(-1.5deg);
+  animation: rr-title-wobble 0.5s ease-in-out infinite alternate;
+}
+.rr-ui .rr-reel.is-calm .rr-reel__title {
+  animation: none;
+}
+@keyframes rr-title-wobble {
+  from {
+    transform: rotate(-2deg) scale(1);
+  }
+  to {
+    transform: rotate(2deg) scale(1.04);
+  }
+}
+.rr-ui .rr-reel.is-landed .rr-reel__title {
+  display: none;
+}
+.rr-ui .rr-reel__housing {
+  --rc: var(--hud);
+  position: relative;
+  width: 100%;
+  padding: calc(var(--u) * 12) calc(var(--u) * 12);
+  background: linear-gradient(180deg, #6fd0ec 0%, var(--sea) 45%, #2a8fb4 100%);
+  border: var(--line);
+  border-radius: calc(var(--u) * 24);
+  box-shadow: 0 calc(var(--u) * 6) 0 var(--ink), inset 0 calc(var(--u) * 5) 0 rgba(255, 255, 255, 0.35), inset 0 calc(var(--u) * -6) 0 rgba(0, 0, 0, 0.18);
+  transition: box-shadow 0.25s ease;
+}
+.rr-ui .rr-reel--treasure .rr-reel__housing {
+  background: linear-gradient(180deg, #d9a66b 0%, #b07a45 45%, #7d5330 100%);
+}
+.rr-ui .rr-reel.is-landed .rr-reel__housing {
+  box-shadow: 0 calc(var(--u) * 6) 0 var(--ink), 0 0 calc(var(--u) * 36) calc(var(--u) * 6) var(--rc), inset 0 calc(var(--u) * 5) 0 rgba(255, 255, 255, 0.35);
+}
+.rr-ui .rr-reel.is-calm.is-landed .rr-reel__housing {
+  box-shadow: 0 calc(var(--u) * 6) 0 var(--ink), 0 0 0 calc(var(--u) * 4) var(--rc);
+}
+/* a fishing float bobbing on the housing */
+.rr-ui .rr-reel__bobber {
+  position: absolute;
+  z-index: 5;
+  top: calc(var(--u) * -18);
+  left: calc(var(--u) * 18);
+  width: calc(var(--u) * 26);
+  height: calc(var(--u) * 26);
+  background: linear-gradient(180deg, var(--crab) 50%, #fff 50%);
+  border: calc(var(--u) * 3) solid var(--ink);
+  border-radius: 50%;
+  animation: rr-bob 1.2s ease-in-out infinite;
+}
+.rr-ui .rr-reel--treasure .rr-reel__bobber {
+  background: radial-gradient(circle at 40% 35%, #fff6d0, var(--hud) 60%);
+}
+
+/* ============================================================ window + strip */
+
+.rr-ui .rr-reel__window {
+  position: relative;
+  height: calc(var(--card-h) + var(--u) * 20);
+  border: var(--line);
+  border-radius: calc(var(--u) * 14);
+  background: repeating-linear-gradient(90deg, #12324f 0 calc(var(--u) * 22), #173c5e calc(var(--u) * 22) calc(var(--u) * 44));
+  box-shadow: inset 0 calc(var(--u) * 8) calc(var(--u) * 16) rgba(0, 0, 0, 0.55);
+  overflow-x: clip;
+  overflow-y: visible;
+}
+@supports not (overflow-x: clip) {
+  .rr-ui .rr-reel__window {
+    overflow: hidden;
+  }
+}
+.rr-ui .rr-reel__strip {
+  position: absolute;
+  left: 0;
+  top: calc(var(--u) * 10);
+  height: var(--card-h);
+  will-change: transform;
+  z-index: 2;
+}
+.rr-ui .rr-reel__strip[data-blur="1"] {
+  filter: blur(0.6px);
+}
+.rr-ui .rr-reel__strip[data-blur="2"] {
+  filter: blur(1.6px) saturate(1.2);
+}
+.rr-ui .rr-reel__vignette {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  background: linear-gradient(90deg, rgba(10, 22, 38, 0.92) 0%, rgba(10, 22, 38, 0) 22%, rgba(10, 22, 38, 0) 78%, rgba(10, 22, 38, 0.92) 100%);
+  border-radius: calc(var(--u) * 11);
+}
+.rr-ui .rr-reel__marker {
+  position: absolute;
+  left: 50%;
+  top: calc(var(--u) * -6);
+  bottom: calc(var(--u) * -6);
+  z-index: 4;
+  width: calc(var(--u) * 4);
+  margin-left: calc(var(--u) * -2);
+  background: var(--hud);
+  border-radius: 2px;
+  box-shadow: 0 0 calc(var(--u) * 10) 2px #ffe680, 0 0 2px 1px var(--ink);
+}
+.rr-ui .rr-reel__marker i {
+  position: absolute;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-left: calc(var(--u) * 12) solid transparent;
+  border-right: calc(var(--u) * 12) solid transparent;
+  transform: translateX(-50%);
+  filter: drop-shadow(0 2px 0 var(--ink)) drop-shadow(0 -2px 0 var(--ink));
+}
+.rr-ui .rr-reel__marker i:first-child {
+  top: calc(var(--u) * -10);
+  border-top: calc(var(--u) * 16) solid var(--hud);
+}
+.rr-ui .rr-reel__marker i:last-child {
+  bottom: calc(var(--u) * -10);
+  border-bottom: calc(var(--u) * 16) solid var(--hud);
+}
+.rr-ui .rr-reel__window.is-tick-a .rr-reel__marker i:first-child {
+  animation: rr-flick-a 0.12s ease-out;
+}
+.rr-ui .rr-reel__window.is-tick-b .rr-reel__marker i:first-child {
+  animation: rr-flick-b 0.12s ease-out;
+}
+@keyframes rr-flick-a {
+  50% {
+    transform: translateX(-50%) rotate(-14deg);
+  }
+}
+@keyframes rr-flick-b {
+  50% {
+    transform: translateX(-50%) rotate(-14deg);
+  }
+}
+
+/* ------------------------------------------------------------------- cards */
+
+.rr-ui .rr-reel__card {
+  --rc: var(--hud);
+  position: absolute;
+  left: calc(var(--u) * 6);
+  top: 0;
+  width: calc(var(--card) - var(--u) * 12);
+  height: var(--card-h);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--u) * 3);
+  text-align: center;
+  border: calc(var(--u) * 3.5) solid var(--ink);
+  border-radius: calc(var(--u) * 13);
+  background: radial-gradient(circle at 50% 35%, rgba(255, 255, 255, 0.55) 0 28%, transparent 60%),
+    linear-gradient(170deg, color-mix(in srgb, var(--rc) 45%, #fff) 0%, var(--rc) 55%, color-mix(in srgb, var(--rc) 60%, #000) 100%);
+  box-shadow: inset 0 0 0 calc(var(--u) * 3) color-mix(in srgb, var(--rc) 70%, #fff), inset 0 calc(var(--u) * -8) 0 rgba(0, 0, 0, 0.18), 0 calc(var(--u) * 3) 0 var(--ink);
+  transition: opacity 0.3s ease, filter 0.3s ease;
+}
+.rr-ui .rr-reel__card::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--u) * 8);
+  right: calc(var(--u) * 8);
+  bottom: calc(var(--u) * 5);
+  height: calc(var(--u) * 5);
+  border-radius: 3px;
+  background: var(--rc);
+  box-shadow: 0 0 calc(var(--u) * 6) var(--rc), 0 0 0 2px var(--ink);
+}
+.rr-ui .rr-reel__card-icon {
+  font-size: calc(var(--card) * 0.42);
+  line-height: 1.1;
+  filter: drop-shadow(0 calc(var(--u) * 3) 0 rgba(0, 0, 0, 0.35));
+}
+.rr-ui .rr-reel__card-name {
+  max-width: 100%;
+  padding: 0 calc(var(--u) * 5);
+  margin-bottom: calc(var(--u) * 8);
+  font-size: max(11px, calc(var(--card) * 0.12));
+  font-weight: 700;
+  line-height: 1.05;
+  color: #fff;
+  -webkit-text-stroke: 1px var(--ink);
+  paint-order: stroke fill;
+  text-shadow: 0 2px 0 var(--ink);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: break-word;
+}
+.rr-ui .rr-reel__card.rr-rarity--junk {
+  background: radial-gradient(circle at 25% 20%, rgba(0, 0, 0, 0.18) 0 12%, transparent 20%), linear-gradient(170deg, #cfcac4 0%, #a8a29e 60%, #7e7873 100%);
+}
+.rr-ui .rr-reel__card.rr-rarity--legendary,
+.rr-ui .rr-reel__card.rr-rarity--mythic {
+  overflow: hidden;
+}
+.rr-ui .rr-reel__card.rr-rarity--legendary::after,
+.rr-ui .rr-reel__card.rr-rarity--mythic::after {
+  content: "";
+  position: absolute;
+  inset: -20%;
+  background: linear-gradient(105deg, transparent 38%, rgba(255, 255, 255, 0.85) 48%, transparent 58%);
+  animation: rr-shimmer 1.6s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes rr-shimmer {
+  0% {
+    transform: translateX(-60%);
+  }
+  60%,
+  100% {
+    transform: translateX(60%);
+  }
+}
+.rr-ui .rr-reel__strip.is-landed .rr-reel__card:not(.is-win) {
+  opacity: 0.35;
+  filter: grayscale(0.7) brightness(0.8);
+}
+.rr-ui .rr-reel__strip.is-landed .rr-reel__card.is-tease {
+  opacity: 0.8;
+  filter: none;
+  animation: rr-tease 0.9s ease-in-out infinite;
+}
+@keyframes rr-tease {
+  50% {
+    rotate: -4deg;
+    scale: 0.96;
+  }
+}
+.rr-ui .rr-reel__card.is-win {
+  z-index: 3;
+  animation: rr-win-pop 0.6s cubic-bezier(0.3, 1.9, 0.5, 1) forwards;
+  box-shadow: inset 0 0 0 calc(var(--u) * 3) color-mix(in srgb, var(--rc) 70%, #fff), 0 calc(var(--u) * 3) 0 var(--ink), 0 0 calc(var(--u) * 24) calc(var(--u) * 8) var(--rc);
+}
+@keyframes rr-win-pop {
+  0% {
+    scale: 1;
+  }
+  35% {
+    scale: 1.26 0.86;
+  }
+  60% {
+    scale: 0.94 1.1;
+  }
+  100% {
+    scale: 1.1;
+  }
+}
+.rr-ui .rr-reel.is-calm .rr-reel__card.is-win,
+.rr-ui .rr-reel.is-calm .rr-reel__card.is-tease {
+  animation: none;
+  scale: 1.06;
+}
+
+/* rays behind the winner */
+.rr-ui .rr-reel__rays {
+  --rc: var(--hud);
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: calc(var(--card) * 3.6);
+  height: calc(var(--card) * 3.6);
+  margin: calc(var(--card) * -1.8) 0 0 calc(var(--card) * -1.8);
+  border-radius: 50%;
+  background: repeating-conic-gradient(from 0deg, color-mix(in srgb, var(--rc) 70%, transparent) 0 10deg, transparent 10deg 24deg);
+  -webkit-mask-image: radial-gradient(circle, #000 20%, transparent 68%);
+  mask-image: radial-gradient(circle, #000 20%, transparent 68%);
+  opacity: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+.rr-ui .rr-reel__rays.is-on {
+  opacity: 0.4;
+  animation: rr-spin 6s linear infinite;
+}
+.rr-ui .rr-reel__rays.is-on:is(.rr-rarity--legendary, .rr-rarity--mythic) {
+  opacity: 0.85;
+  animation-duration: 3s;
+}
+.rr-ui .rr-reel.is-calm .rr-reel__rays.is-on {
+  animation: none;
+  opacity: 0.3;
+}
+
+/* ------------------------------------------------------------ result + quip */
+
+.rr-ui .rr-reel__result {
+  --rc: var(--hud);
+  position: relative;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--u) * 2);
+  max-width: 100%;
+  padding: calc(var(--u) * 8) calc(var(--u) * 22) calc(var(--u) * 9);
+  text-align: center;
+  background: var(--cream);
+  border: var(--line);
+  border-radius: calc(var(--u) * 20);
+  box-shadow: 0 calc(var(--u) * 5) 0 var(--ink), inset 0 0 0 calc(var(--u) * 5) var(--rc);
+}
+.rr-ui .rr-reel__result.is-on {
+  display: flex;
+  animation: rr-result-in 0.5s cubic-bezier(0.3, 1.9, 0.5, 1) both;
+}
+@keyframes rr-result-in {
+  from {
+    opacity: 0;
+    transform: scale(0.3) translateY(calc(var(--u) * 20));
+  }
+}
+.rr-ui .rr-reel__result-tag {
+  position: absolute;
+  top: calc(var(--u) * -13);
+  left: 50%;
+  translate: -50% 0;
+  padding: 0 calc(var(--u) * 11);
+  font-size: max(11px, calc(var(--u) * 13));
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--ink);
+  background: var(--rc);
+  border: calc(var(--u) * 2.5) solid var(--ink);
+  border-radius: 999px;
+  rotate: -3deg;
+}
+.rr-ui .rr-reel__result-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 10);
+  font-size: max(24px, calc(var(--u) * 32));
+  font-weight: 700;
+  line-height: 1.1;
+}
+.rr-ui .rr-reel__result-icon {
+  font-size: 1.2em;
+  filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.3));
+  animation: rr-bob 1.2s ease-in-out infinite;
+}
+.rr-ui .rr-reel__result-desc {
+  max-width: calc(var(--u) * 520);
+  font-size: max(14px, calc(var(--u) * 16));
+  font-weight: 500;
+  line-height: 1.25;
+  text-wrap: balance;
+}
+.rr-ui .rr-reel__result.rr-rarity--legendary,
+.rr-ui .rr-reel__result.rr-rarity--mythic {
+  background: linear-gradient(110deg, #fff6d0 30%, #ffffff 45%, #fff6d0 60%) 0 0 / 300% 100%;
+  animation: rr-result-in 0.5s cubic-bezier(0.3, 1.9, 0.5, 1) both, rr-result-shine 2s linear infinite;
+}
+.rr-ui .rr-reel__result.rr-rarity--junk {
+  background: #e9e6e1;
+}
+@keyframes rr-result-shine {
+  to {
+    background-position: -300% 0;
+  }
+}
+.rr-ui .rr-reel__quip {
+  --rc: var(--hud);
+  opacity: 0;
+  max-width: min(92vw, calc(var(--u) * 520));
+  padding: calc(var(--u) * 3) calc(var(--u) * 12);
+  font-size: max(13px, calc(var(--u) * 15));
+  font-weight: 700;
+  text-align: center;
+  background: var(--cream);
+  border: calc(var(--u) * 3) solid var(--ink);
+  border-radius: calc(var(--u) * 14);
+  box-shadow: 0 calc(var(--u) * 3) 0 var(--ink), 0 0 0 calc(var(--u) * 3) var(--rc) inset;
+  transform: scale(0.3) rotate(-6deg);
+}
+.rr-ui .rr-reel__quip.is-on {
+  animation: rr-quip-in 0.45s cubic-bezier(0.3, 1.9, 0.5, 1) 0.15s forwards;
+}
+.rr-ui .rr-reel__quip.rr-rarity--legendary,
+.rr-ui .rr-reel__quip.rr-rarity--mythic {
+  background: var(--hud);
+}
+@keyframes rr-quip-in {
+  to {
+    opacity: 1;
+    transform: scale(1) rotate(-2deg);
+  }
+}
+
+/* ============================================================ others' reels */
+
+.rr-ui .rr-reel-minis {
+  position: absolute;
+  right: var(--gut);
+  top: 42%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: calc(var(--u) * 8);
+}
+.rr-ui .rr-reel-mini {
+  --card: calc(var(--u) * 44);
+  --card-h: calc(var(--u) * 44);
+  --rc: var(--hud);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 4);
+  width: calc(var(--u) * 240);
+  padding: calc(var(--u) * 6) calc(var(--u) * 8) calc(var(--u) * 7);
+  color: var(--cream);
+  background: var(--glass);
+  border: calc(var(--u) * 2) solid #000;
+  border-radius: calc(var(--u) * 14);
+  animation: rr-feed-in 0.3s ease-out;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.rr-ui .rr-reel-mini.is-leaving {
+  opacity: 0;
+  transform: translateX(calc(var(--u) * 30));
+}
+.rr-ui .rr-reel-mini__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: max(12px, calc(var(--u) * 13));
+  font-weight: 600;
+}
+.rr-ui .rr-reel-mini .rr-reel__window {
+  height: calc(var(--card-h) + var(--u) * 10);
+  border-width: calc(var(--u) * 2);
+}
+.rr-ui .rr-reel-mini .rr-reel__strip {
+  top: calc(var(--u) * 5);
+}
+.rr-ui .rr-reel-mini .rr-reel__card {
+  left: calc(var(--u) * 3);
+  width: calc(var(--card) - var(--u) * 6);
+  border-width: calc(var(--u) * 2);
+  border-radius: calc(var(--u) * 8);
+}
+.rr-ui .rr-reel-mini .rr-reel__card::before {
+  display: none;
+}
+.rr-ui .rr-reel-mini .rr-reel__card-icon {
+  font-size: calc(var(--card) * 0.55);
+}
+.rr-ui .rr-reel-mini .rr-reel__marker i {
+  border-left-width: calc(var(--u) * 6);
+  border-right-width: calc(var(--u) * 6);
+}
+.rr-ui .rr-reel-mini .rr-reel__marker i:first-child {
+  top: calc(var(--u) * -6);
+  border-top-width: calc(var(--u) * 9);
+}
+.rr-ui .rr-reel-mini .rr-reel__marker i:last-child {
+  bottom: calc(var(--u) * -6);
+  border-bottom-width: calc(var(--u) * 9);
+}
+.rr-ui .rr-reel-mini__result {
+  display: none;
+  align-items: center;
+  gap: calc(var(--u) * 6);
+  font-size: max(13px, calc(var(--u) * 14));
+}
+.rr-ui .rr-reel-mini__result b {
+  color: var(--rc);
+}
+.rr-ui .rr-reel-mini.is-landed .rr-reel-mini__result {
+  display: flex;
+}
+.rr-ui .rr-reel-mini.is-landed {
+  border-color: var(--rc, var(--hud));
+}

@@ -3,7 +3,8 @@
 //
 // A horizontal strip of cards slides past a center marker (a golden arrow + glowing line). Each card: big
 // emoji, name, ×multiplier, background gradient and thick border in RARITY_COLORS[rarity]; cursed cards
-// look scorched with a tiny skull, legendary ones shimmer. Above the strip: "🎰 <nickname> opens a case".
+// look scorched with a tiny skull, legendary ones shimmer. Above the strip: "🎰 <nickname>'s bonus case".
+// Filler cards come only from the active CARDS (BY_RARITY is built from CARDS, never the retired ones).
 // The reel lives in a silly slot-machine housing with googly eyes, chasing marquee bulbs and a lever.
 //
 // Flow (see protocol SpinStartMsg / SpinResultMsg):
@@ -15,13 +16,25 @@
 //    The rest point sits a (seeded, same on every client) small offset inside the card for tension.
 //    onTick(speed01) fires every time a card boundary passes the marker. On rest: the winner pops, others
 //    dim, onLanded(msg). Legendary → golden rays + shimmer; cursed → shake + goo drips.
+//    A big plain-language result banner pops under the reel: "{emoji} {name}", what it pays
+//    ("×2 coins if your tower stands!" / "Normal turn — just stack it!") and the card's one-line effect.
 //  - After a short read beat the reel shrinks into a compact "current rule" chip that stays until hide().
 //  - Tension trick: a legendary card adjacent to the winner makes the reel stop a hair away from it.
 // Works at any viewport width (cards ~140 px, ~104 px on phones; the strip is clipped by the window).
 
-import { CARDS, CARD_BY_ID, RARITIES, RARITY_COLORS, RARITY_ODDS, type CardDef, type CardId, type Rarity } from "../../../shared/constants";
+import {
+  CARDS,
+  CARD_BY_ID,
+  CARD_READ_SEC,
+  RARITIES,
+  RARITY_COLORS,
+  RARITY_ODDS,
+  type CardDef,
+  type CardId,
+  type Rarity,
+} from "../../../shared/constants";
 import type { SpinResultMsg } from "../../../shared/protocol";
-import { cardName, cardText, rarityName, t } from "../i18n";
+import { cardName, cardText, locale, rarityName, t } from "../i18n";
 import "./reel.css";
 
 export interface ReelCallbacks {
@@ -36,8 +49,8 @@ const MAX_CARDS_PER_SEC = 22;
 /** Seconds to spin up from 0 to full speed (after a tiny lever "wind-up" lurch backwards). */
 const SPIN_UP_SEC = 0.35;
 const WINDUP_SEC = 0.12;
-/** How long the landed reel stays big before shrinking into the rule chip. */
-const READ_MS = 1500;
+/** How long the landed reel (+ result banner) stays big before shrinking into the rule chip. */
+const READ_MS = CARD_READ_SEC * 1000;
 /** Target deceleration exponent (higher = longer, creepier crawl at the end). */
 const K_NORMAL = 3.4;
 const K_TEASE = 4.4;
@@ -68,7 +81,7 @@ function randomFiller(): CardId {
       break;
     }
   }
-  const pool = BY_RARITY[rarity];
+  const pool = BY_RARITY[rarity].length ? BY_RARITY[rarity] : CARDS;
   return pool[Math.floor(Math.random() * pool.length)].id;
 }
 
@@ -80,7 +93,7 @@ function stripHash(strip: string[], salt: number): number {
 }
 
 function fmtMult(m: number): string {
-  return "×" + (Math.round(m * 100) / 100).toString();
+  return "×" + (Math.round(m * 100) / 100).toLocaleString(locale());
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent?: HTMLElement): HTMLElementTagNameMap[K] {
@@ -113,6 +126,7 @@ export class CaseReel {
   private readonly strip: HTMLDivElement;
   private readonly rays: HTMLDivElement;
   private readonly quip: HTMLDivElement;
+  private readonly result: HTMLDivElement;
   private readonly chip: HTMLDivElement;
   private readonly pupils: HTMLSpanElement[] = [];
 
@@ -194,6 +208,7 @@ export class CaseReel {
     el("span", "jjr-arrow jjr-arrow--top", marker);
     el("span", "jjr-arrow jjr-arrow--bottom", marker);
 
+    this.result = el("div", "jjr-result", this.stage);
     this.quip = el("div", "jjr-quip", this.stage);
     this.chip = el("div", "jjr-chip", this.wrap);
 
@@ -208,7 +223,7 @@ export class CaseReel {
     this.teaseAt = null;
     this.chip.classList.remove("is-on");
     this.title.textContent = "";
-    // Bold the name inside the translated template ("🎰 {name} opens a case").
+    // Bold the name inside the translated template ("🎰 {name}'s bonus case").
     const [before, after = ""] = t("reel.title").split("{name}");
     this.title.append(before);
     const b = el("b", "", this.title);
@@ -237,7 +252,7 @@ export class CaseReel {
     this.msg = msg;
 
     const P = this.pitch;
-    const T = Math.max(0.5, msg.landInMs / 1000);
+    const T = Math.max(0.25, msg.landInMs / 1000);
     let v0 = Math.max(this.v, this.maxSpeed() * 0.35);
     const winId = msg.strip[msg.winIndex] ?? msg.card;
     const prev = msg.strip[msg.winIndex - 1];
@@ -359,6 +374,8 @@ export class CaseReel {
     this.rays.className = "jjr-rays";
     this.quip.className = "jjr-quip";
     this.quip.textContent = "";
+    this.result.className = "jjr-result";
+    this.result.replaceChildren();
     this.housing.classList.remove("is-legendary", "is-cursed", "is-tease");
     // Start a random distance in so successive spins don't begin on the same card.
     this.x = Math.floor(Math.random() * 1000) * this.pitch + this.pitch / 2;
@@ -511,6 +528,7 @@ export class CaseReel {
     this.quip.textContent = lines[Math.floor(Math.random() * lines.length)];
     this.quip.className = `jjr-quip is-on jjr-r-${rarity}`;
     this.quip.style.setProperty("--rc", RARITY_COLORS[rarity]);
+    this.showResult(def, rarity, msg.multiplier || def.multiplier);
 
     this.cb.onLanded(msg);
 
@@ -524,6 +542,32 @@ export class CaseReel {
       }, 320);
       this.showChip(msg.card, rarity, msg.multiplier);
     }, READ_MS);
+  }
+
+  /** The big, plain-language "what did I get" banner under the reel. */
+  private showResult(def: CardDef, rarity: Rarity, multiplier: number): void {
+    const r = this.result;
+    r.replaceChildren();
+    r.className = `jjr-result jjr-r-${rarity}`;
+    r.style.setProperty("--rc", RARITY_COLORS[rarity]);
+    const plain = multiplier <= 1;
+    if (rarity === "cursed") el("div", "jjr-result-tag", r).textContent = t("reel.cursedTag");
+    else if (!plain) el("div", "jjr-result-tag", r).textContent = rarityName(rarity);
+    const head = el("div", "jjr-result-head", r);
+    el("span", "jjr-result-emoji", head).textContent = def.emoji;
+    el("span", "jjr-result-name", head).textContent = cardName(def.id);
+    const mult = fmtMult(multiplier);
+    const pay = el("div", "jjr-result-pay", r);
+    if (plain) pay.textContent = t("reel.resultPlain");
+    else {
+      const [before, after = ""] = t(rarity === "cursed" ? "reel.resultCursed" : "reel.resultWin").split("{mult}");
+      pay.append(before);
+      el("b", "jjr-result-mult", pay).textContent = mult;
+      pay.append(after);
+    }
+    if (!plain) el("div", "jjr-result-text", r).textContent = cardText(def.id);
+    void r.offsetWidth;
+    r.classList.add("is-on");
   }
 
   private showChip(card: CardId, rarity: Rarity, multiplier: number): void {
@@ -541,7 +585,7 @@ export class CaseReel {
     const nameEl = el("span", "jjr-chip-name", top);
     nameEl.textContent = name;
     nameEl.title = name;
-    el("span", "jjr-chip-mult", top).textContent = mult;
+    if ((multiplier || def.multiplier) > 1) el("span", "jjr-chip-mult", top).textContent = mult;
     el("span", "jjr-chip-text", body).textContent = text;
     this.chip.setAttribute("aria-label", t("reel.chipAria", { name, rarity: rarityName(r), mult, text }));
     if (r === "cursed") el("span", "jjr-chip-skull", this.chip).textContent = "💀";

@@ -9,7 +9,9 @@
   },
   "scripts": {
     "build": "node scripts/build-games.mjs",
+    "build:server": "tsc -p tsconfig.server.json",
     "start": "tsx server/index.ts",
+    "start:prod": "node dist/server/index.js",
     "dev": "node scripts/dev.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run"

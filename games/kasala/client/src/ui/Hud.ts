@@ -12,6 +12,7 @@
 //   hud/RiskStrip).
 // - OTHERS' TURN: one pill "🐶 Rakip · %22 · 45$ · 7" + [Z] ÇEVİR! / [X] KASALA! heckles while they flip.
 // - BETTING (I can bet): the bet tray, bottom center; after it closes one line with my bet's fate (hud/BetPanel).
+// - PAZAR (market): the cards left in the active player's vitrin, buyable at half their value (hud/MarketPanel).
 // - CONTEXTUAL: debt chip only with debts, target prompt top center (hud/TargetPrompt), last chance panel.
 //   The wheel phase hides everything that would cover the wheel and docks the banner (the wheel outcome)
 //   just above the bottom stack.
@@ -28,7 +29,7 @@
 // tick() only animates.
 
 import "./hud.css";
-import { CHIP_AMOUNTS, type BetBox, type CardId } from "../../../shared/constants";
+import { CHIP_AMOUNTS, picksFor, type BetBox, type CardId } from "../../../shared/constants";
 import type { BetsSettledMsg, KasalaStateView, Phase, PlayerView } from "../../../shared/protocol";
 import { settings, type ViewMode } from "../app/settings";
 import { pct, type UiSound } from "../app/ui";
@@ -37,6 +38,7 @@ import { Banner } from "./hud/Banner";
 import { BetPanel } from "./hud/BetPanel";
 import { Coach } from "./hud/Coach";
 import { LIVE_PHASES, TURN_PHASES, type HudCtx } from "./hud/ctx";
+import { MarketPanel } from "./hud/MarketPanel";
 import { h, show, toggle } from "./hud/dom";
 import { Feed } from "./hud/Feed";
 import { Legend, type LegendMode } from "./hud/Legend";
@@ -60,6 +62,8 @@ export interface HudCallbacks {
   onUiSound(kind: UiSound): void;
   /** PAS: no side bet this turn (bet amount 0 with no bet yet). */
   onBetPass(): void;
+  /** Pazar: a row card (flipNo) or 0 = pas. */
+  onMarket(flipNo: number): void;
   /** One-tap heckle while someone else flips (sent as TAUNT HECKLE_FLIP_TAUNT / HECKLE_CASH_TAUNT). */
   onHeckle(kind: "flip" | "cash"): void;
   /** Toggle the camera view (legend "V"). */
@@ -82,6 +86,7 @@ export class Hud {
   private readonly feedEl: Feed;
   private readonly mine: MyChips;
   private readonly bets: BetPanel;
+  private readonly market: MarketPanel;
   private readonly action: ActionBar;
   private readonly coach: Coach;
   private readonly cross: HTMLDivElement;
@@ -159,6 +164,7 @@ export class Hud {
       onUiSound: sound,
       onLocalChange: () => this.refresh(),
     });
+    this.market = new MarketPanel(bottom, { onPick: (flipNo) => cb.onMarket(flipNo), onUiSound: sound });
 
     this.coach = new Coach(this.root);
     this.cross = h("div", "ks-hud-cross", this.root);
@@ -233,6 +239,7 @@ export class Hud {
     this.strip.update(ctx);
     this.tprompt.update(ctx);
     this.bets.update(ctx);
+    this.market.update(ctx);
     this.action.update(ctx, this.bets.trayOpen);
     this.mine.update(ctx, fresh);
     this.legend.setLoans(state.settings.loans);
@@ -255,6 +262,7 @@ export class Hud {
     this.tprompt.tick(d);
     this.action.tick(d);
     this.bets.tick(d);
+    this.market.tick(d);
     this.mine.tick(d);
     this.feedEl.tick(d);
     this.sub.tick(d);
@@ -303,6 +311,11 @@ export class Hud {
     this.bets.flash(box, ok);
   }
 
+  /** Game sent my Pazar pick (0 = pas): the panel rings it until the reveal. */
+  marketPicked(flipNo: number): void {
+    this.market.picked(flipNo);
+  }
+
   /**
    * Game sent my PAS (0 or the tray's PAS button, no bet down): the tray folds away for this turn. Once Game
    * calls this, the tray folds only through here (a refused or swallowed 0 leaves it open).
@@ -336,6 +349,7 @@ export class Hud {
     this.coach.hideAll();
     this.action.reset();
     this.bets.reset();
+    this.market.reset();
     this.plate.reset();
     this.firstTurnKey = "";
     this.firstTurnDone = false;
@@ -366,23 +380,28 @@ export class Hud {
       c.dismiss("siren");
     }
     if (!this.bets.trayOpen) c.dismiss("bet");
+    const shopping = ctx.phase === "market" && !ctx.myTurn && ctx.participant && !s.busy;
+    if (!shopping) c.dismiss("market");
     if (!targeting) c.dismiss("target");
 
     if (myFlip && s.flips === 0) {
-      c.offer("flip", this.action.flipBtn, "Kartı aç: çıkan para tur potuna girer. Her kart sireni biraz daha doldurur.");
+      c.offer("flip", this.action.flipBtn, "Kartı aç: çıkan para vitrine düşer. Her kart sireni biraz daha doldurur.");
     } else if (myFlip && s.raidChance >= SIREN_TIP_CHANCE) {
       c.offer("siren", this.action.risk.root, "Siren kırmızıya döndü! Bir kart daha baskın getirebilir: kasalamanın tam zamanı olabilir.");
     } else if (myFlip) {
       c.offer(
         "cash",
         this.action.cashBtn,
-        `KASALA! potu kasana atar. Bir kart daha çevirirsen ${pct(s.raidChance)} baskın: pot ve rüşvet gider.`,
+        `KASALA! vitrinin en iyi ${picksFor(s.flips)} kartı senin, kalanını rakipler sana ücret ödeyip alır. Bir kart daha: ${pct(s.raidChance)} baskın, vitrin ve rüşvet gider.`,
       );
     }
     if (this.bets.trayOpen) {
       c.offer("bet", this.bets.tray, "Kaçıncı kartta baskın yer? Bir kutuya fiş koy (1–4), fişi Q/W/E ile seç ya da PAS (0).");
     }
     if (targeting) c.offer("target", this.tprompt.root, "Saldırı kartı! Bir rakibe tıkla; ←/→ ile de seçebilirsin.", "below");
+    if (shopping) {
+      c.offer("market", this.market.root, "PAZAR! Rakibin vitrininden bir kart seç (1–9 ya da kartı tıkla): değerinin yarısını ona ödersin. Aynı kartı isteyen olursa kasası az olan alır.");
+    }
   }
 
   // ---------------------------------------------------------------- derive

@@ -71,7 +71,7 @@ export function caseLanded(ctx: Ctx, state: JellyStateView | null, msg: SpinResu
   const tone = rarity === "legendary" ? "gold" : rarity === "cursed" ? "bad" : rarity === "common" ? "neutral" : "good";
   if (def) {
     const p = { emoji: def.emoji, card: cardName(msg.card), text: cardText(msg.card), mult: fmtMult(msg.multiplier) };
-    hud.banner(t(mine ? "game.cardMine" : "game.cardOther", p), tone);
+    hud.banner(msg.card === "plain" ? t("game.cardPlain") : t(mine ? "game.cardMine" : "game.cardOther", p), tone);
   }
 }
 
@@ -129,7 +129,7 @@ export function topple(ctx: Ctx, state: JellyStateView | null, msg: ToppleMsg, l
 }
 
 // --------------------------------------------------------------------------- result
-export function result(ctx: Ctx, state: JellyStateView | null, msg: ResultMsg, later: Later): void {
+export function result(ctx: Ctx, state: JellyStateView | null, msg: ResultMsg, later: Later, myId = ""): void {
   const { fx, audio, chefs, hud, stage } = ctx;
   const head = chefs.headPosition(msg.playerId);
   if (msg.outcome === "stand") {
@@ -161,6 +161,13 @@ export function result(ctx: Ctx, state: JellyStateView | null, msg: ResultMsg, l
     }
   }
   if (msg.delta !== 0) hud.coinDelta(msg.playerId, msg.delta);
+  // Plain-language outcome banner: "It stands! +34 🪙" / "It fell! −5 🪙".
+  const mine = msg.playerId === myId;
+  const delta = fmtDelta(msg.delta);
+  const name = state?.players.get(msg.playerId)?.nickname || t("game.someone");
+  if (msg.outcome === "stand") hud.banner(t(mine ? "game.standBanner" : "game.standBannerOther", { delta, name }), "good");
+  else if (msg.insured) hud.banner(t("game.insuredBanner"), "gold");
+  else hud.banner(t(mine ? "game.fellBanner" : "game.fellBannerOther", { delta, name }), "bad");
 }
 
 export function bets(ctx: Ctx, state: JellyStateView | null, msg: BetsMsg, myId: string): void {

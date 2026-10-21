@@ -1,0 +1,18 @@
+{
+  // Production build of the hub and every game server: `npm run build:server` compiles them to plain ESM in
+  // dist/ (dist/server/index.js, dist/games/<id>/server/...), which `npm run start:prod` / the Docker image run
+  // with node. NodeNext makes a relative import without its .js extension a compile error here, since the
+  // compiled files are loaded by Node itself (no tsx, no bundler). Clients and tests are left out.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": ".",
+    "outDir": "dist",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "types": ["node"]
+  },
+  "include": ["server/**/*.ts", "games/*/server/**/*.ts", "games/*/shared/**/*.ts"],
+  "exclude": ["node_modules", "dist", "**/dist/**", "**/*.test.ts"]
+}

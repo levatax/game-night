@@ -13,6 +13,7 @@ import {
   botAcceptsLoan,
   botBet,
   botHeckle,
+  botMarketChoice,
   botRepayAmount,
   botRescueLoan,
   botRescueRequest,
@@ -46,6 +47,16 @@ export interface BotHost {
   canBet(id: string): boolean;
   /** Already bet or passed this turn. */
   betDecided(id: string): boolean;
+  /** A Pazar buyer right now (market phase, not locked). */
+  canShop(id: string): boolean;
+  /** Already chose (or passed) in this market. */
+  shopped(id: string): boolean;
+  /** Row cards on sale. */
+  marketCards(): { flipNo: number; value: number }[];
+  /** Kasas of the other buyers in this market. */
+  marketRivals(id: string): number[];
+  /** flipNo 0 = pas. */
+  market(id: string, flipNo: number): boolean;
   /** Legal attack targets (turn order). */
   targetCandidates(): string[];
   /** Bribe a raid would cost this player right now. */
@@ -267,6 +278,9 @@ export class BotDesk {
           act: () => this.decideFlip(seat),
         };
       }
+      case "market":
+        if (!h.canShop(id) || h.shopped(id)) return null;
+        return { key: `market:${turn}`, latest: h.timeLeft() * 0.7, act: () => this.shop(seat) };
       case "targeting": {
         if (id !== s.activeId) return null;
         // A single legal target resolves on its own (KasalaRoom), no pick needed.
@@ -276,6 +290,19 @@ export class BotDesk {
       default:
         return null;
     }
+  }
+
+  private shop(seat: Seat): void {
+    const h = this.host;
+    const me = h.state.players.get(seat.id);
+    if (!me || !h.canShop(seat.id)) return;
+    const choice = botMarketChoice(h.rng, {
+      personality: seat.personality,
+      kasa: me.kasa,
+      cards: h.marketCards(),
+      rivals: h.marketRivals(seat.id),
+    });
+    h.market(seat.id, choice);
   }
 
   private placeBet(seat: Seat): void {

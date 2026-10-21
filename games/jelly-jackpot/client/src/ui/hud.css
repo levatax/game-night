@@ -308,7 +308,9 @@
 .jjh-card__emoji { font-size: 30px; line-height: 1; }
 .jjh-card__mid { display: flex; flex-direction: column; min-width: 0; }
 .jjh-card__name { font-weight: 700; font-size: 15px; line-height: 1.1; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.jjh-card__text { font-size: 11px; line-height: 1.15; opacity: 0.8; }
+.jjh-card__text { font-size: 12px; line-height: 1.15; opacity: 0.85; }
+.jjh-card__text:empty { display: none; }
+.jjh-card__mult { display: none; } /* the multiplier is spelled out in the rule line */
 .jjh-card__mult {
   font: 700 20px var(--font);
   color: #fff;
@@ -446,31 +448,47 @@
 }
 .jjh-bet.jjh-on { pointer-events: auto; }
 .jjh-bet__title { font-weight: 700; font-size: 15px; text-align: center; }
-.jjh-bet__chips { display: flex; gap: 6px; justify-content: center; }
-.jjh-chip {
-  position: relative;
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  border: 3px dashed var(--ink);
-  background: var(--coin);
-  box-shadow: 0 3px 0 var(--ink), inset 0 0 0 3px #ffe58a;
-  font: 700 15px var(--font);
-  cursor: pointer;
-  pointer-events: auto;
-  transition: transform 0.12s ease;
-}
-.jjh-chip:hover:not(:disabled) { transform: translateY(-3px) rotate(12deg); }
-.jjh-chip--sel { background: var(--frosting); transform: translateY(-4px) scale(1.08); box-shadow: 0 3px 0 var(--ink), 0 0 0 3px var(--ink); }
-.jjh-chip:disabled { opacity: 0.35; cursor: not-allowed; filter: grayscale(1); }
-.jjh-chip__key { position: absolute; top: -8px; left: -4px; font-size: 10px; background: var(--ink); color: var(--cream); border-radius: 5px; padding: 0 4px; }
 .jjh-bet__sides { display: flex; gap: 6px; }
-.jjh-side { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 15px; padding: 8px 4px; display: flex; flex-direction: column; align-items: center; line-height: 1.1; }
+.jjh-side { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 17px; padding: 12px 4px 8px; display: flex; flex-direction: column; align-items: center; gap: 2px; line-height: 1.1; transition: transform 0.15s ease, opacity 0.2s ease, filter 0.2s ease; }
+.jjh-side__label { font-weight: 700; }
 .jjh-side small { font-size: 10px; opacity: 0.7; }
-.jjh-side--picked { outline: 4px solid var(--coin); outline-offset: 1px; }
+.jjh-side--picked { outline: 4px solid var(--coin); outline-offset: 1px; transform: scale(1.05); }
+.jjh-side--picked .jjh-side__label::after { content: " ✔"; }
+.jjh-side--dim { opacity: 0.55; filter: saturate(0.5); }
+.jjh-side--dim:hover { opacity: 0.9; filter: none; }
+.jjh-bet__rules { font-size: 12px; font-weight: 600; text-align: center; opacity: 0.8; overflow-wrap: anywhere; }
+.jjh-bet__coach {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 10px);
+  translate: -50% 0;
+  width: max-content;
+  max-width: min(260px, calc(100vw - 32px));
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+  background: var(--coin);
+  border: 3px solid var(--ink);
+  border-radius: 12px;
+  box-shadow: 0 3px 0 var(--ink);
+  padding: 4px 10px;
+  animation: jjh-coach-bob 1.4s ease-in-out infinite;
+}
+.jjh-bet__coach::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  translate: -50% 0;
+  border: 8px solid transparent;
+  border-top-color: var(--ink);
+}
+.jjh-bet__coach:not(.jjh-on) { display: none; }
 .jjh-side--boing { animation: jjh-boing 0.45s cubic-bezier(0.3, 1.8, 0.5, 1); }
 @keyframes jjh-boing { 30% { transform: scale(0.85, 1.15); } 60% { transform: scale(1.1, 0.9); } }
-.jjh-bet__status { overflow-wrap: anywhere; font-size: 12px; text-align: center; font-weight: 600; min-height: 15px; }
+.jjh-bet__title { font-size: 18px; }
+.jjh-bet__status { overflow-wrap: anywhere; font-size: 14px; text-align: center; font-weight: 700; }
+.jjh-bet__status:empty { display: none; }
 .jjh-bet--locked .jjh-bet__status { color: #2f8a2f; animation: jjh-locked 0.4s ease; }
 @keyframes jjh-locked { 50% { transform: scale(1.12); } }
 
@@ -663,7 +681,8 @@
   .jjh-meter__cake { width: 56px; height: 38px; }
   .jjh-bet { right: 8px; bottom: 170px; width: 190px; }
   .jjh-feed { bottom: 170px; width: min(300px, calc(100vw - 230px)); }
-  .jjh-next__quip, .jjh-card__text { display: none; }
+  .jjh-next__quip { display: none; }
+  .jjh-coach { bottom: 190px; }
   .jjh-hint { font-size: 11px; }
   .jjh-board__table th:nth-child(5), .jjh-board__table td:nth-child(5) { display: none; }
 }
@@ -684,7 +703,9 @@
   .jjh-card__emoji { font-size: 24px; }
   .jjh-next { max-width: 160px; }
   .jjh-bet { width: 168px; padding: 6px; bottom: 170px; }
-  .jjh-chip { width: 34px; height: 34px; font-size: 12px; }
+  .jjh-side { font-size: 14px; padding: 9px 3px 6px; }
+  .jjh-bet__title { font-size: 15px; }
+  .jjh-coach__main { font-size: 18px; }
   .jjh-feed { width: calc(100vw - 200px); }
   .jjh-feed__line { font-size: 11px; }
   .jjh-sab { top: 430px; font-size: 11px; }
@@ -692,4 +713,81 @@
   .jjh-board__table th:nth-child(4), .jjh-board__table td:nth-child(4),
   .jjh-board__table th:nth-child(6), .jjh-board__table td:nth-child(6) { display: none; }
   .jjh-emote { display: none; }
+}
+
+/* --------------------------------------------------------------- first-turn coach */
+.jjh-coach {
+  position: absolute;
+  left: 50%;
+  bottom: 170px;
+  translate: -50% 0;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  box-sizing: border-box;
+  padding: 10px 22px 8px;
+  text-align: center;
+  background: var(--cream);
+  border: 4px solid var(--ink);
+  border-radius: 22px;
+  box-shadow: 0 6px 0 var(--ink);
+  transition: opacity 0.2s ease, transform 0.25s cubic-bezier(0.3, 1.6, 0.5, 1);
+  animation: jjh-coach-bob 1.4s ease-in-out infinite;
+}
+.jjh-coach::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  translate: -50% 0;
+  border: 12px solid transparent;
+  border-top-color: var(--ink);
+}
+.jjh-coach:not(.jjh-on) { opacity: 0; transform: scale(0.6); visibility: hidden; transition: opacity 0.2s ease, transform 0.2s ease, visibility 0s 0.2s; }
+.jjh-coach--pop { animation: jjh-pop 0.45s cubic-bezier(0.3, 1.8, 0.5, 1), jjh-coach-bob 1.4s ease-in-out 0.45s infinite; }
+.jjh-coach__main { font: 700 24px var(--font); line-height: 1.15; overflow-wrap: anywhere; }
+.jjh-coach__sub { font-size: 13px; font-weight: 600; opacity: 0.75; margin-top: 2px; overflow-wrap: anywhere; }
+.jjh-coach--drop { background: var(--coin); }
+.jjh-coach--drop .jjh-coach__main { animation: jjh-spin-pulse 0.8s ease-in-out infinite; }
+.jjh-coach--spin { background: linear-gradient(160deg, var(--cream) 30%, #ffe58a); bottom: 120px; }
+@keyframes jjh-coach-bob { 50% { translate: -50% -5px; } }
+
+/* Bouncing arrow over my hovering piece (positioned by Hud.pointAt). */
+.jjh-arrow {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+.jjh-arrow:not(.jjh-on) { display: none; }
+.jjh-arrow__icon {
+  position: absolute;
+  left: -22px;
+  bottom: 34px;
+  font-size: 40px;
+  line-height: 1;
+  filter: drop-shadow(0 3px 0 rgba(45, 42, 50, 0.6));
+  animation: jjh-arrow-bounce 0.7s ease-in-out infinite;
+}
+.jjh-arrow::before {
+  content: "";
+  position: absolute;
+  left: -30px;
+  top: -30px;
+  width: 60px;
+  height: 60px;
+  border: 4px solid var(--coin);
+  border-radius: 50%;
+  animation: jjh-arrow-ring 1.1s ease-out infinite;
+}
+@keyframes jjh-arrow-bounce { 50% { transform: translateY(-12px); } }
+@keyframes jjh-arrow-ring { 0% { transform: scale(0.5); opacity: 1; } 100% { transform: scale(1.5); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .jjh-coach, .jjh-bet__coach, .jjh-arrow__icon, .jjh-arrow::before, .jjh-coach--drop .jjh-coach__main { animation: none; }
+}
+@media (max-width: 520px) {
+  .jjh-coach { bottom: 200px; padding: 8px 14px 6px; }
+  .jjh-coach__sub { font-size: 11px; }
 }

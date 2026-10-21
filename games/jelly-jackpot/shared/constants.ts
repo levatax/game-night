@@ -19,17 +19,18 @@ export const PATCH_INTERVAL_MS = 50;
 /** Client → server hover pose rate. */
 export const HOVER_SEND_HZ = 15;
 
-export const ROLE_REVEAL_SEC = 5;
+/** Match intro: the how-to-play card (+ the private role when the Saboteur is on). */
+export const ROLE_REVEAL_SEC = 8;
 /** Waiting for the active player to press Space before an auto spin. */
-export const SPIN_IDLE_SEC = 2;
+export const SPIN_IDLE_SEC = 1;
 /** Total reel time from SPIN_START to the card landing. */
-export const SPIN_SEC = 3;
+export const SPIN_SEC = 2.4;
 /** The server holds the result this long after SPIN_START so the Saboteur can rig (then SPIN_RESULT). */
-export const RIG_WINDOW_SEC = 1.2;
+export const RIG_WINDOW_SEC = 0.9;
 /** Short beat after the reel lands, before placement starts (lets people read the card). */
-export const CARD_READ_SEC = 1.2;
-export const TURN_TIMER_OPTIONS = [8, 10, 15] as const;
-export const DEFAULT_TURN_TIMER = 10;
+export const CARD_READ_SEC = 1.5;
+export const TURN_TIMER_OPTIONS = [10, 15, 20] as const;
+export const DEFAULT_TURN_TIMER = 15;
 export const SPEED_ROUND_TIMER = 5;
 export const SETTLE_MAX_SEC = 4;
 export const RESULT_SEC = 3;
@@ -43,8 +44,11 @@ export const START_COINS = 100;
 export const SURVIVE_BASE = 10;
 /** +1 coin per this many cm of tower height. */
 export const SURVIVE_CM_PER_COIN = 10;
-export const TOPPLE_PENALTY = 10;
-export const BET_AMOUNTS = [0, 10, 25, 50] as const;
+/** Flat: a topple always costs the same, whatever the card (the multiplier only boosts wins). */
+export const TOPPLE_PENALTY = 5;
+/** Side bets are one fixed stake: guess STAND or FALL, win +10 or lose 10. */
+export const BET_STAKE = 10;
+export const BET_AMOUNTS = [0, BET_STAKE] as const;
 export const BET_PAYOUT = 2;
 export const SABOTEUR_TOPPLE_BONUS = 30;
 export const VOTE_CORRECT_REWARD = 40;
@@ -52,37 +56,39 @@ export const SABOTEUR_ESCAPE_BONUS = 60;
 /** Saboteur needs at least this many players. */
 export const SABOTEUR_MIN_PLAYERS = 3;
 
-export const ROUND_OPTIONS = [0, 4, 5, 6, 7, 8, 9, 10] as const; // 0 = auto
+export const ROUND_OPTIONS = [0, 3, 4, 5, 6, 8] as const; // 0 = auto
+/** Rounds so a match lasts ~3–5 min: 2 players 5, 3–4 players 4, 5–6 players 3. */
 export function autoRounds(players: number): number {
-  return players <= 4 ? 8 : players === 5 ? 7 : 6;
+  return players <= 2 ? 5 : players <= 4 ? 4 : 3;
 }
+/** One turn per player per round. */
 export function turnsPerRound(players: number): number {
-  return Math.max(players, 4);
+  return Math.max(players, 1);
 }
 export function survivePayout(heightCm: number, multiplier: number): number {
   return Math.round((SURVIVE_BASE + Math.floor(heightCm / SURVIVE_CM_PER_COIN)) * multiplier);
 }
-export function topplePenalty(multiplier: number): number {
-  return Math.round(TOPPLE_PENALTY * multiplier);
+export function topplePenalty(_multiplier: number): number {
+  return TOPPLE_PENALTY;
 }
 
 // -------------------------------------------------------------------- world / physics
 /** Table top is y = 0. Everything is in the cake stand's LOCAL frame (the stand rotation is visual only). */
 export const TABLE_RADIUS = 1.1;
 export const STAND_PLATE_Y = 0.22;
-export const STAND_PLATE_RADIUS = 0.48;
-export const CAKE_RADIUS = 0.35;
+export const STAND_PLATE_RADIUS = 0.56;
+export const CAKE_RADIUS = 0.42;
 export const CAKE_HEIGHT = 0.2;
 export const CAKE_TOP_Y = STAND_PLATE_Y + CAKE_HEIGHT; // 0.42
 /** A piece whose center drops below this y has toppled (fell off the stand rim). */
 export const TOPPLE_Y = STAND_PLATE_Y + 0.02;
 /** Hover pose must stay within this radius of the stand axis (xz). */
-export const HOVER_RADIUS = 0.42;
+export const HOVER_RADIUS = 0.46;
 /** Lowest point of the hovering piece must be at least this far above the tower top. */
-export const MIN_DROP_GAP = 0.1;
+export const MIN_DROP_GAP = 0.04;
 export const GRAVITY = -9.81;
 export const MOON_GRAVITY_SCALE = 0.4;
-export const STAND_SPEED_DEG = 6;
+export const STAND_SPEED_DEG = 3;
 export const SPIN_CYCLE_SPEED_DEG = 18;
 export const SLEEP_LIN = 0.05;
 export const SLEEP_ANG = 0.1;
@@ -119,8 +125,8 @@ export const RARITY_COLORS: Record<Rarity, string> = {
   cursed: "#EB4B4B",
 };
 /** Percent odds per rarity (index matches RARITIES). */
-export const RARITY_ODDS = [55, 25, 12, 5, 3];
-export const RARITY_ODDS_TWO_PLAYERS = [52, 25, 12, 5, 6];
+export const RARITY_ODDS = [45, 30, 14, 6, 5];
+export const RARITY_ODDS_TWO_PLAYERS = [45, 30, 14, 6, 5];
 
 export type CardId =
   | "plain"
@@ -154,7 +160,23 @@ export interface CardDef {
   text: string;
 }
 
+/**
+ * The cards the case can roll. Kept small and friendly so every card reads at a glance: a bonus
+ * multiplier on WINS plus at most one simple effect. (CardId still lists the retired cards so old
+ * translations and visuals keep compiling; they just never roll.)
+ */
 export const CARDS: CardDef[] = [
+  { id: "plain", name: "Plain Turn", emoji: "🍰", rarity: "common", multiplier: 1, text: "A normal turn. Just stack it!" },
+  { id: "heavySnack", name: "Heavy Snack", emoji: "🏋️", rarity: "common", multiplier: 1.5, text: "Your piece is extra heavy: it won't bounce." },
+  { id: "chonk", name: "Chonk", emoji: "🐘", rarity: "uncommon", multiplier: 2, text: "Your piece is bigger." },
+  { id: "jellyMode", name: "Jelly Mode", emoji: "🍮", rarity: "uncommon", multiplier: 2, text: "Your piece turns into bouncy jelly." },
+  { id: "moonGravity", name: "Moon Gravity", emoji: "🌙", rarity: "uncommon", multiplier: 2, text: "Low gravity: everything floats down slowly." },
+  { id: "glueGun", name: "Glue Gun", emoji: "🔫", rarity: "rare", multiplier: 3, text: "Your piece sticks where it lands." },
+  { id: "goldenCherry", name: "Golden Cherry", emoji: "🍒", rarity: "legendary", multiplier: 5, text: "A tiny golden cherry. Easy money!" },
+  { id: "bowlingBall", name: "Bowling Ball", emoji: "🎳", rarity: "cursed", multiplier: 3, text: "Your piece is a heavy, rolly bowling ball. Careful!" },
+];
+/** Every card ever defined (retired ones included), for lookups. */
+const ALL_CARD_DEFS: CardDef[] = [
   { id: "plain", name: "Plain Turn", emoji: "🍰", rarity: "common", multiplier: 1, text: "Nothing special. Boring. Safe." },
   { id: "butterFingers", name: "Butter Fingers", emoji: "🧈", rarity: "common", multiplier: 1.5, text: "Your piece has almost no friction." },
   { id: "speedRound", name: "Speed Round", emoji: "⏱️", rarity: "common", multiplier: 1.5, text: "Only 5 seconds to place!" },
@@ -177,7 +199,10 @@ export const CARDS: CardDef[] = [
   { id: "windStorm", name: "Wind Storm", emoji: "🌪️", rarity: "cursed", multiplier: 4, text: "A gusty fan blows across the tower." },
   { id: "tiedHands", name: "Tied Hands", emoji: "🪢", rarity: "cursed", multiplier: 4, text: "No rotating. It swings on a string." },
 ];
-export const CARD_BY_ID: Record<CardId, CardDef> = Object.fromEntries(CARDS.map((c) => [c.id, c])) as Record<CardId, CardDef>;
+/** Lookup for any card id: the active CARDS win over the retired definitions. */
+export const CARD_BY_ID: Record<CardId, CardDef> = Object.fromEntries(
+  [...ALL_CARD_DEFS, ...CARDS].map((c) => [c.id, c]),
+) as Record<CardId, CardDef>;
 export const REEL_LENGTH = 48;
 /** Index in the reel strip where the winning card sits (the client scrolls to it). */
 export const REEL_WIN_INDEX = 40;
@@ -335,9 +360,10 @@ export const PIECES: Record<PieceType, PieceDef> = {
     radius: 0.03, sound: "clink", colors: ["#FFD700", "#FFF3A0"], quip: "Shiny. Tiny. Money.",
   },
 };
+/** Dealt pieces. The rollers that slide off almost any stack (watermelon, soap, egg, teapot, banana) are left out. */
 export const BAG_PIECES: PieceType[] = [
-  "jelly", "chicken", "fish", "toaster", "donut", "banana", "teapot", "cheese",
-  "spatula", "egg", "pancakes", "watermelon", "croissant", "soap", "cupcake", "pan",
+  "jelly", "chicken", "fish", "toaster", "donut", "cheese",
+  "spatula", "pancakes", "croissant", "cupcake", "pan",
 ];
 export const CHONK_SCALE = 1.6;
 export const HEAVY_SNACK_MASS = 3;

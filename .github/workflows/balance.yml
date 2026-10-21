@@ -1,0 +1,39 @@
+# Nightly (or on demand from the Actions tab): the Raft Rush bot balance harness, bot-only matches on the real
+# world (games/raft-rush/server/room/botBalance.test.ts) in its target scenario: Normal, the default 3 bots, no
+# idle humans, the real match timings (no RAFT_BALANCE_FAST: the bots lose every match on the RAFT_TEST timers,
+# so that run says nothing about balance), 30 seeds (well under a minute: ~7–20 s locally). Report only: no RAFT_BALANCE_BAND is set
+# until a target win-rate band is agreed, so the job fails only when the harness itself breaks, never on the
+# numbers. The per-seed table and the summary line land in the run's summary.
+name: Raft Rush balance
+
+on:
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  balance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Bot balance report
+        shell: bash
+        env:
+          RAFT_BALANCE: "1"
+          RAFT_BALANCE_SEEDS: "30"
+          # Once a win band for the target scenario is agreed (game4.md §20 asks 55–75 % of Normal), set it here to
+          # turn the report into a check; the harness refuses a band on any other scenario.
+          # RAFT_BALANCE_BAND: "55-75"
+          NO_COLOR: "1"
+        run: |
+          set +e
+          npx vitest run games/raft-rush/server/room/botBalance.test.ts --disableConsoleIntercept 2>&1 | tee balance.txt
+          status=${PIPESTATUS[0]}
+          { echo "## Raft Rush bot balance"; echo '```'; cat balance.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"

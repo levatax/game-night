@@ -1,0 +1,919 @@
+/* Raft Rush panels: craft / chest / settings modals, ping + emote wheels, hold-H guide, Tab stats, the
+   "click to play" veil. Owner: client-ui. Tokens from ui.css (.rr-ui). Modals and wheels capture the mouse
+   (pointer-events: auto); the guide and the stats table are passive overlays. */
+
+.rr-ui .rr-overlays {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+/* ================================================================== modals */
+
+.rr-ui .rr-modal {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(16, 24, 40, 0.45);
+  pointer-events: auto;
+}
+.rr-ui .rr-settings {
+  z-index: 30;
+}
+.rr-ui .rr-modal > .rr-panel {
+  width: min(880px, 100%);
+  max-height: calc(100vh - 32px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+}
+.rr-ui .rr-modal__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-right: 52px;
+}
+.rr-ui .rr-modal__title {
+  font-size: 24px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.rr-ui .rr-modal__sub {
+  font-size: 14px;
+  color: var(--muted);
+}
+.rr-ui .rr-modal__close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+.rr-ui .rr-modal__close svg {
+  width: 20px;
+  height: 20px;
+}
+.rr-ui .rr-modal__foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px 14px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.rr-ui .rr-modal__keys {
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------------- craft */
+
+.rr-ui .rr-craft__fuel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.rr-ui .rr-craft__fuel-icon {
+  width: 24px;
+  height: 24px;
+}
+.rr-ui .rr-craft__fuel-icon svg {
+  width: 100%;
+  height: 100%;
+}
+.rr-ui .rr-craft__fuel-track {
+  width: 140px;
+  height: 14px;
+  overflow: hidden;
+  background: rgba(45, 42, 50, 0.15);
+  border: 2.5px solid var(--ink);
+  border-radius: 999px;
+}
+.rr-ui .rr-craft__fuel-fill {
+  display: block;
+  width: var(--v, 0%);
+  height: 100%;
+  background: linear-gradient(90deg, var(--crab), var(--fire) 40%, var(--hud));
+  transition: width 0.3s linear;
+}
+.rr-ui .rr-craft__panel.is-fire-out .rr-craft__fuel {
+  color: #d8323a;
+}
+.rr-ui .rr-craft__warn {
+  padding: 7px 12px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--crab);
+  border: 2.5px solid var(--ink);
+  border-radius: 12px;
+}
+.rr-ui .rr-craft__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(255px, 1fr));
+  gap: 8px;
+  overflow: auto;
+  padding: 4px 6px 8px 4px;
+  min-height: 0;
+}
+.rr-ui .rr-recipe {
+  position: relative;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 74px;
+  padding: 8px 10px 8px 8px;
+  text-align: left;
+  color: var(--ink);
+  background: var(--paper);
+  border: 2.5px solid var(--ink);
+  border-radius: 16px;
+  box-shadow: 3px 3px 0 var(--ink);
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, background-color 0.15s ease;
+}
+.rr-ui .rr-recipe:hover {
+  transform: translate(-1px, -2px);
+  box-shadow: 4px 5px 0 var(--ink);
+}
+.rr-ui .rr-recipe.is-ok {
+  background: #effbe9;
+  box-shadow: inset 0 0 0 2px var(--green), 3px 3px 0 var(--ink);
+}
+.rr-ui .rr-recipe.is-no {
+  background: #efece7;
+  color: #5d5864;
+}
+.rr-ui .rr-recipe.is-no .rr-recipe__icon {
+  filter: grayscale(0.85);
+  opacity: 0.7;
+}
+.rr-ui .rr-recipe.is-locked {
+  background: repeating-linear-gradient(135deg, #f2eee8 0 10px, #e9e3da 10px 20px);
+  border-style: dashed;
+  cursor: not-allowed;
+}
+.rr-ui .rr-recipe__key {
+  position: absolute;
+  top: -8px;
+  left: -6px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  border-radius: 7px;
+}
+.rr-ui .rr-recipe__icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  font-size: 28px;
+  background: var(--cream);
+  border: 2.5px solid var(--ink);
+  border-radius: 12px;
+}
+.rr-ui .rr-recipe__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.rr-ui .rr-recipe__name {
+  font-size: 16px;
+  font-weight: 700;
+}
+.rr-ui .rr-recipe__desc {
+  font-size: 12.5px;
+  line-height: 1.25;
+  color: var(--muted);
+}
+.rr-ui .rr-recipe__cost {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+.rr-ui .rr-cost {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 7px 0 4px;
+  font-size: 13px;
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+}
+.rr-ui .rr-cost.is-ok {
+  background: #c7f0c0;
+}
+.rr-ui .rr-cost.is-short {
+  background: #ffd9d4;
+}
+.rr-ui .rr-recipe__go {
+  align-self: center;
+  padding: 4px 12px;
+  font-size: 14px;
+  font-weight: 700;
+  background: var(--green);
+  border: 2.5px solid var(--ink);
+  border-radius: 999px;
+}
+.rr-ui .rr-recipe:not(.is-ok) .rr-recipe__go {
+  visibility: hidden;
+}
+
+/* ------------------------------------------------------------------- chest */
+
+.rr-ui .rr-chest__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(250px, 1fr);
+  gap: 14px;
+  min-height: 0;
+}
+.rr-ui .rr-chest__col {
+  min-height: 0;
+  overflow: auto;
+}
+.rr-ui .rr-chest__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+  padding: 4px;
+}
+.rr-ui .rr-chest__empty {
+  grid-column: 1 / -1;
+  padding: 30px 10px;
+  text-align: center;
+  font-weight: 600;
+  color: var(--muted);
+  border: 2.5px dashed rgba(45, 42, 50, 0.35);
+  border-radius: 16px;
+}
+.rr-ui .rr-item-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 6px;
+  background: var(--paper);
+  border: 2.5px solid var(--ink);
+  border-radius: 16px;
+  box-shadow: 2px 2px 0 var(--ink);
+}
+.rr-ui .rr-item-tile__icon {
+  font-size: 30px;
+  line-height: 1.1;
+}
+.rr-ui .rr-item-tile__name {
+  font-size: 14px;
+  font-weight: 700;
+  text-align: center;
+}
+.rr-ui .rr-item-tile__count {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.rr-ui .rr-item-tile__actions {
+  display: flex;
+  gap: 5px;
+  margin-top: 4px;
+}
+.rr-ui .rr-item-tile__actions .rr-btn {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+.rr-ui .rr-chest__sec {
+  margin-bottom: 6px;
+  font-size: 15px;
+  font-weight: 700;
+}
+.rr-ui .rr-chest__pockets {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.rr-ui .rr-pocket {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 48px;
+  padding: 6px 10px;
+  background: var(--paper);
+  border: 2.5px solid var(--ink);
+  border-radius: 14px;
+}
+.rr-ui .rr-pocket.is-active {
+  background: #fff3c4;
+  box-shadow: 0 0 0 3px var(--hud);
+}
+.rr-ui .rr-pocket.is-empty {
+  opacity: 0.6;
+  border-style: dashed;
+}
+.rr-ui .rr-pocket__key {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  font-size: 12px;
+  font-weight: 700;
+  border: 2px solid var(--ink);
+  border-radius: 7px;
+}
+.rr-ui .rr-pocket__icon {
+  font-size: 24px;
+}
+.rr-ui .rr-pocket__name {
+  font-size: 15px;
+  font-weight: 600;
+}
+.rr-ui .rr-pocket__held {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.rr-ui .rr-pocket__actions {
+  display: flex;
+  gap: 5px;
+  margin-left: auto;
+}
+.rr-ui .rr-pocket__actions .rr-btn {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+.rr-ui .rr-chest__putall {
+  width: 100%;
+  margin-top: 10px;
+}
+.rr-ui .rr-chest__note {
+  margin-top: 5px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+/* Keyboard tiles (ChestPanel.onKey): focusable, with a focus ring that reads on both paper and the held yellow.
+   A click on a pocket that isn't held takes it in hand; only the buttons move items. */
+.rr-ui .rr-pocket[role="button"]:not(.is-active) {
+  cursor: pointer;
+}
+.rr-ui .rr-pocket[aria-disabled="true"] {
+  cursor: default;
+}
+.rr-ui .rr-item-tile:focus-visible,
+.rr-ui .rr-pocket:focus-visible,
+.rr-ui .rr-recipe:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 7px rgba(63, 167, 245, 0.28);
+}
+/* The craft / chest dialog itself holds the focus on open: no ring around the whole panel. */
+.rr-ui .rr-chest__panel:focus,
+.rr-ui .rr-craft__panel:focus {
+  outline: none;
+}
+
+/* --------------------------------------------------------------- settings */
+
+.rr-ui .rr-settings__panel {
+  width: min(900px, 100%) !important;
+}
+.rr-ui .rr-settings__note {
+  grid-column: 1 / -1;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.rr-ui .rr-settings__body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 18px;
+  min-height: 0;
+  overflow: auto;
+  padding: 2px 6px 6px 2px;
+}
+.rr-ui .rr-settings__col {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.rr-ui .rr-settings__section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--paper);
+  border: 2.5px solid var(--ink);
+  border-radius: 16px;
+}
+.rr-ui .rr-settings__section-title {
+  font-size: 16px;
+  font-weight: 700;
+}
+.rr-ui .rr-setting {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 4px 10px;
+}
+.rr-ui .rr-setting--slider .rr-slider {
+  grid-column: 1 / -1;
+}
+.rr-ui .rr-setting--quality {
+  grid-template-columns: 1fr;
+}
+.rr-ui .rr-setting--tips {
+  grid-template-columns: 1fr;
+  justify-items: start;
+}
+.rr-ui .rr-settings__tips:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.rr-ui .rr-setting__label {
+  display: flex;
+  flex-direction: column;
+  font-size: 15px;
+  font-weight: 600;
+}
+.rr-ui .rr-setting__value {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.rr-ui .rr-setting__hint {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.rr-ui .rr-settings__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.rr-ui .rr-settings__secondary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.rr-ui .rr-settings__confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px 5px 12px;
+  background: #ffe1df;
+  border: 2.5px solid var(--ink);
+  border-radius: 999px;
+}
+.rr-ui .rr-settings__confirm-text {
+  font-weight: 700;
+}
+
+/* ============================================================ radial wheels */
+
+.rr-ui .rr-radial {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--u) * 18);
+  background: radial-gradient(circle at 50% 50%, rgba(16, 24, 40, 0.05), rgba(16, 24, 40, 0.5));
+  pointer-events: auto;
+}
+.rr-ui .rr-radial__ring {
+  position: relative;
+  width: calc(var(--u) * 330);
+  height: calc(var(--u) * 330);
+  border-radius: 50%;
+  background: radial-gradient(circle, transparent 34%, rgba(16, 28, 48, 0.55) 35%, rgba(16, 28, 48, 0.55) 70%, transparent 71%);
+}
+.rr-ui .rr-radial--emote .rr-radial__ring {
+  width: calc(var(--u) * 360);
+  height: calc(var(--u) * 360);
+}
+.rr-ui .rr-radial__opt {
+  --c: var(--hud);
+  position: absolute;
+  left: calc(50% + var(--x) * var(--u) * 118);
+  top: calc(50% + var(--y) * var(--u) * 118);
+  translate: -50% -50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--u) * 1);
+  width: calc(var(--u) * 100);
+  height: calc(var(--u) * 100);
+  padding: calc(var(--u) * 4);
+  color: var(--ink);
+  background: var(--cream);
+  border: calc(var(--u) * 3) solid var(--ink);
+  border-radius: 50%;
+  box-shadow: 0 calc(var(--u) * 4) 0 var(--ink);
+  cursor: pointer;
+  transition: scale 0.15s var(--bounce), background-color 0.15s ease;
+}
+.rr-ui .rr-radial--emote .rr-radial__opt {
+  left: calc(50% + var(--x) * var(--u) * 128);
+  top: calc(50% + var(--y) * var(--u) * 128);
+  width: calc(var(--u) * 92);
+  height: calc(var(--u) * 92);
+}
+.rr-ui .rr-radial__opt.is-hover,
+.rr-ui .rr-radial__opt:hover {
+  scale: 1.14;
+  background: var(--c);
+}
+.rr-ui .rr-radial__key {
+  position: absolute;
+  top: calc(var(--u) * -6);
+  right: calc(var(--u) * -2);
+  display: grid;
+  place-items: center;
+  width: calc(var(--u) * 24);
+  height: calc(var(--u) * 24);
+  font-size: max(12px, calc(var(--u) * 13));
+  font-weight: 700;
+  background: var(--paper);
+  border: calc(var(--u) * 2) solid var(--ink);
+  border-radius: calc(var(--u) * 7);
+}
+.rr-ui .rr-radial__icon {
+  font-size: calc(var(--u) * 34);
+  line-height: 1;
+}
+.rr-ui .rr-radial__label {
+  max-width: 100%;
+  font-size: max(12px, calc(var(--u) * 13));
+  font-weight: 700;
+  text-align: center;
+  line-height: 1.1;
+}
+.rr-ui .rr-radial__tag {
+  position: absolute;
+  bottom: calc(var(--u) * -10);
+  padding: 0 calc(var(--u) * 6);
+  font-size: max(10px, calc(var(--u) * 10));
+  font-weight: 700;
+  white-space: nowrap;
+  color: #fff;
+  background: #ff6fb5;
+  border: calc(var(--u) * 2) solid var(--ink);
+  border-radius: 999px;
+}
+.rr-ui .rr-radial__hub {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  translate: -50% -50%;
+  display: grid;
+  place-items: center;
+  width: calc(var(--u) * 100);
+  height: calc(var(--u) * 100);
+  padding: calc(var(--u) * 6);
+  color: var(--cream);
+  text-align: center;
+  background: var(--glass);
+  border: calc(var(--u) * 3) solid #000;
+  border-radius: 50%;
+}
+.rr-ui .rr-radial__hub-label {
+  font-size: max(13px, calc(var(--u) * 15));
+  font-weight: 700;
+  line-height: 1.15;
+}
+.rr-ui .rr-radial__hint {
+  padding: calc(var(--u) * 3) calc(var(--u) * 14);
+  font-size: max(13px, calc(var(--u) * 14));
+  font-weight: 600;
+  color: var(--cream);
+  background: var(--glass);
+  border-radius: 999px;
+}
+
+/* =================================================================== guide */
+
+.rr-ui .rr-legend {
+  position: absolute;
+  z-index: 4;
+  left: 50%;
+  top: calc(var(--u) * 52);
+  transform: translateX(-50%);
+  width: min(1120px, calc(100vw - 32px));
+  max-height: calc(100vh - var(--u) * 52 - var(--u) * 120);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 16px 14px;
+  overflow: hidden;
+  background: rgba(255, 244, 220, 0.96);
+  border: var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-big);
+  animation: rr-pop-in 0.2s ease-out;
+}
+.rr-ui .rr-legend__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.rr-ui .rr-legend__title {
+  font-size: 22px;
+  font-weight: 700;
+}
+.rr-ui .rr-legend__hint {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.rr-ui .rr-legend__body {
+  display: grid;
+  grid-template-columns: 1.15fr 1fr 1fr;
+  gap: 12px;
+  min-height: 0;
+  overflow: auto;
+}
+.rr-ui .rr-legend__stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.rr-ui .rr-legend__col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 11px;
+  background: var(--paper);
+  border: 2.5px solid var(--ink);
+  border-radius: 16px;
+}
+.rr-ui .rr-legend__sec {
+  font-size: 15px;
+  font-weight: 700;
+}
+.rr-ui .rr-legend__note {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.rr-ui .rr-legend__recipes,
+.rr-ui .rr-legend__loot {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.rr-ui .rr-legend__recipe,
+.rr-ui .rr-legend__lootrow {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+.rr-ui .rr-legend__recipe.is-locked {
+  color: var(--muted);
+  font-style: italic;
+}
+.rr-ui .rr-legend__out {
+  font-size: 18px;
+  text-align: center;
+}
+.rr-ui .rr-legend__name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rr-ui .rr-legend__cost {
+  display: flex;
+  gap: 3px;
+}
+.rr-ui .rr-legend__chip {
+  padding: 0 5px;
+  font-size: 12px;
+  background: var(--cream);
+  border: 1.5px solid var(--ink);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.rr-ui .rr-legend__lootrow {
+  padding: 1px 6px;
+  border-radius: 10px;
+  box-shadow: inset 4px 0 0 var(--rc);
+}
+.rr-ui .rr-legend__pct {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.rr-ui .rr-legend__hist {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rr-ui .rr-legend__line {
+  display: flex;
+  gap: 6px;
+  padding: 2px 8px;
+  font-size: 13px;
+  border-left: 4px solid var(--tone, var(--sea));
+  background: var(--cream);
+  border-radius: 8px;
+}
+
+/* =================================================================== stats */
+
+.rr-ui .rr-scoreboard {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(16, 24, 40, 0.35);
+  pointer-events: none;
+}
+.rr-ui .rr-sb {
+  width: min(980px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  background: rgba(255, 244, 220, 0.97);
+}
+.rr-ui .rr-sb__title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 20px;
+  font-weight: 700;
+}
+.rr-ui .rr-sb__hint {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.rr-ui .rr-sb__table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0 4px;
+}
+.rr-ui .rr-sb__table th {
+  padding: 2px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-align: center;
+  white-space: nowrap;
+}
+.rr-ui .rr-sb__icon {
+  display: block;
+  font-size: 16px;
+}
+.rr-ui .rr-sb__table th.rr-sb__player {
+  text-align: left;
+}
+.rr-ui .rr-sb__row td {
+  padding: 5px 7px;
+  text-align: center;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  background: var(--paper);
+  border-top: 2.5px solid var(--ink);
+  border-bottom: 2.5px solid var(--ink);
+}
+.rr-ui .rr-sb__row td:first-child {
+  border-left: 2.5px solid var(--ink);
+  border-radius: 12px 0 0 12px;
+  box-shadow: inset 6px 0 0 var(--slot);
+}
+.rr-ui .rr-sb__row td:last-child {
+  border-right: 2.5px solid var(--ink);
+  border-radius: 0 12px 12px 0;
+}
+.rr-ui .rr-sb__row.is-you td {
+  background: #fff3c4;
+}
+.rr-ui .rr-sb__rank {
+  width: 40px;
+  font-weight: 700;
+}
+.rr-ui td.rr-sb__player {
+  text-align: left;
+}
+.rr-ui .rr-sb__player {
+  display: table-cell;
+}
+.rr-ui td.rr-sb__player > * {
+  vertical-align: middle;
+}
+.rr-ui .rr-sb__face {
+  display: inline-block;
+  width: 30px;
+  height: 30px;
+  margin-right: 8px;
+  overflow: hidden;
+  background: var(--slot);
+  border: 2.5px solid var(--ink);
+  border-radius: 50%;
+}
+.rr-ui .rr-sb__face svg {
+  width: 100%;
+  height: 100%;
+}
+.rr-ui .rr-sb__name {
+  display: inline-block;
+  max-width: 180px;
+  margin-right: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+}
+.rr-ui .rr-sb__score {
+  font-weight: 700;
+}
+.rr-ui td.rr-sb__ping span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+/* ==================================================================== veil */
+
+.rr-ui .rr-veil {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: auto;
+}
+.rr-ui .rr-veil__play {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  color: var(--cream);
+  background: radial-gradient(circle at 50% 50%, rgba(16, 24, 40, 0.25), rgba(16, 24, 40, 0.6));
+  border: 0;
+  cursor: pointer;
+}
+.rr-ui .rr-veil__icon {
+  width: 64px;
+  height: 64px;
+  padding: 10px;
+  color: var(--ink);
+  background: var(--cream);
+  border: var(--line);
+  border-radius: 50%;
+  box-shadow: var(--shadow);
+  animation: rr-bob 1.6s ease-in-out infinite;
+}
+.rr-ui .rr-veil__icon svg {
+  width: 100%;
+  height: 100%;
+}
+.rr-ui .rr-veil__title {
+  font-size: 30px;
+  font-weight: 700;
+  text-shadow: 0 3px 0 var(--ink);
+}
+.rr-ui .rr-veil__hint {
+  font-size: 15px;
+  font-weight: 600;
+}
+.rr-ui .rr-veil__hint--keys {
+  max-width: min(520px, 90vw);
+  font-size: 13px;
+  text-align: center;
+  opacity: 0.85;
+}
+/* The Play button fills the screen: draw its keyboard focus ring inside. */
+.rr-ui .rr-veil__play:focus-visible {
+  outline-offset: -10px;
+}
+.rr-ui .rr-veil__menu {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+}

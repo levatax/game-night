@@ -1,8 +1,8 @@
 // Keyboard + mouse (+ basic touch) input. Owner: client-controls. PUBLIC API IS THE CONTRACT.
 //
 // Two jobs:
-// 1) Global key/mouse actions → `actions` events (Game decides what they do): Space spin, R rig, 1–4 bet
-//    amount, F/G bet stand/fall, T emote (down/up), Tab scoreboard (down/up, preventDefault), Esc menu.
+// 1) Global key/mouse actions → `actions` events (Game decides what they do): Space spin, R rig,
+//    F/G guess stays up / falls (1–4 are left to the emote wheel; they never touch bets), T emote (down/up), Tab scoreboard (down/up, preventDefault), Esc menu.
 //    Ignore keys while focus is in an <input>/<textarea>. Camera orbit: right-drag or A/D (and left-drag
 //    when NOT placing), wheel zoom when not placing → stage.orbit / stage.zoom, scaled by
 //    settings.cameraSensitivity and invertOrbit.
@@ -19,11 +19,10 @@
 //    - Every frame: emit nothing; Game reads `pose()` and sends net.hover(pose) (Net throttles).
 // Upside Down card: the Stage flips the camera; pickLocal already accounts for it (no extra inversion).
 //
-// Notes: `betAmount` carries the coin VALUE from BET_AMOUNTS (keys 1–4 → 0/10/25/50), not the index.
 // Touch extras: two-finger vertical drag = pitch; when not placing, one-finger drag orbits, pinch zooms.
 
 import * as THREE from "three";
-import { BET_AMOUNTS, HOVER_RADIUS, type PieceType } from "../../../shared/constants";
+import { HOVER_RADIUS, type PieceType } from "../../../shared/constants";
 import type { Pose } from "../../../shared/protocol";
 import { settings } from "../app/settings";
 import { t } from "../i18n";
@@ -34,7 +33,6 @@ import "./controls.css";
 export interface ControlActions {
   spin: void;
   rig: void;
-  betAmount: number;
   bet: "stand" | "fall";
   emoteDown: void;
   emoteUp: void;
@@ -391,18 +389,6 @@ export class Controls {
       case "KeyR":
         this.actions.emit("rig", undefined);
         break;
-      case "Digit1":
-      case "Digit2":
-      case "Digit3":
-      case "Digit4":
-      case "Numpad1":
-      case "Numpad2":
-      case "Numpad3":
-      case "Numpad4": {
-        const i = Number(code.slice(-1)) - 1;
-        this.actions.emit("betAmount", BET_AMOUNTS[i] ?? 0);
-        break;
-      }
       case "KeyF":
         this.actions.emit("bet", "stand");
         break;

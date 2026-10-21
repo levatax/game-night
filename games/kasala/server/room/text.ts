@@ -62,6 +62,7 @@ export const say = {
   loanNotAllowed: () => n("📒 Bu oyuncuyla şu an borç işi yapılamaz."),
   repayBroke: () => n("💸 Kasada ödeyecek para yok."),
   flipFirst: () => n("Önce bir kart çevir!"),
+  marketBroke: () => n("💸 Kasan bu kartın fiyatına yetmiyor."),
   botJoined: (name: string) => n(`🤖 ${name} masaya oturdu. Bot ama gözü açık.`),
   botLeft: (name: string) => n(`🤖 ${name} masadan kalktı.`),
   botMadeRoom: (name: string) => n(`🤖 ${name} yerini yeni gelene bıraktı.`),

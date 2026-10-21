@@ -47,7 +47,7 @@ export interface HudCtx {
   calm: boolean;
 }
 
-export const TURN_PHASES: ReadonlySet<Phase> = new Set<Phase>(["betting", "flipping", "targeting", "wheel", "result", "settle"]);
+export const TURN_PHASES: ReadonlySet<Phase> = new Set<Phase>(["betting", "flipping", "targeting", "wheel", "result", "market", "settle"]);
 /** Phases in which cards are still being flipped this turn (the turn has not ended). */
 export const LIVE_PHASES: ReadonlySet<Phase> = new Set<Phase>(["betting", "flipping", "targeting", "wheel"]);
 
@@ -90,7 +90,7 @@ export function raidBribe(mode: Mode, kasa: number, round: number, finalTable: b
   return Math.min(k, Math.floor((k * Math.round(RAID_BRIBE_PCT * 100) * (finalTable ? FINAL_TABLE_MULT : 1)) / 100));
 }
 
-/** What a raid on the next card would cost the active player: the turn pot plus the bribe. */
+/** What a raid on the next card would cost the active player: the vitrin plus the bribe. */
 export function raidCost(s: KasalaStateView, active: PlayerView | undefined): { pot: number; bribe: number } {
   const pot = Math.max(0, s.turnPot);
   const bribe = active ? raidBribe(s.settings.mode, active.kasa, s.round, s.finalTable) : 0;

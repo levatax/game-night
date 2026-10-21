@@ -12,6 +12,8 @@ A small hub of browser multiplayer party games. One Node process serves:
 |---|---|---|
 | Bonk Brawl: 3D dodgeball free-for-all for 2–8 players | `games/bonk-brawl/` | [`game1.md`](game1.md) |
 | Jelly Jackpot: wobbly cake-stacking, gambling and a secret Saboteur for 2–6 players | `games/jelly-jackpot/` | [`game2.md`](game2.md) |
+| KASALA!: push-your-luck card flipping, side bets and loan sharks in a mafia back room for 2–6 players (Turkish) | `games/kasala/` | [`game3.md`](game3.md) |
+| Raft Rush: first-person co-op island survival, build a raft before the storm, 1–6 players with helper bots (EN/TR, beta) | `games/raft-rush/` | [`game4.md`](game4.md) |
 
 ## Run it
 
