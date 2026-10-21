@@ -4,3 +4,7 @@ dist/
 *.log
 .vite/
 *.zip
+.claude/
+.env
+.env.*
+!.env.example
