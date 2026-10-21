@@ -35,6 +35,28 @@ export function domeGeo(segments = 10): THREE.BufferGeometry {
   return cachedGeometry(`dome:${segments}`, () => new THREE.SphereGeometry(1, segments, Math.max(2, Math.round(segments * 0.4)), 0, Math.PI * 2, 0, Math.PI / 2));
 }
 
+/**
+ * Unit superellipsoid ("pillow"): a sphere pushed toward a cube, |x|^(2/eps) + |y|^(2/eps) + |z|^(2/eps) = 1.
+ * eps = 1 is a sphere, ≈ 0.6 a soft rounded block. Normals are analytic, so the seams stay smooth.
+ */
+export function superSphereGeo(eps: number, segments = 14): THREE.BufferGeometry {
+  return cachedGeometry(`super:${eps.toFixed(3)}:${segments}`, () => {
+    const g = new THREE.SphereGeometry(1, segments, Math.max(4, Math.round(segments * 0.75)));
+    const pos = g.getAttribute("position") as THREE.BufferAttribute;
+    const nor = g.getAttribute("normal") as THREE.BufferAttribute;
+    const n = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++) {
+      const v = [pos.getX(i), pos.getY(i), pos.getZ(i)];
+      const p = v.map((c) => Math.sign(c) * Math.abs(c) ** eps);
+      n.set(...(v.map((c) => Math.sign(c) * Math.abs(c) ** (2 - eps)) as [number, number, number])).normalize();
+      pos.setXYZ(i, p[0]!, p[1]!, p[2]!);
+      nor.setXYZ(i, n.x, n.y, n.z);
+    }
+    g.deleteAttribute("uv");
+    return g;
+  });
+}
+
 /** Capsule along +Y centered on the origin: total length `length + 2·radius`. */
 export function capsuleGeo(radius: number, length: number, radial = 7, caps = 2): THREE.BufferGeometry {
   return cachedGeometry(`capsule:${radius.toFixed(4)}:${length.toFixed(4)}:${radial}:${caps}`, () => new THREE.CapsuleGeometry(radius, length, caps, radial));

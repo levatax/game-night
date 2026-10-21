@@ -404,7 +404,10 @@ export class GameFeedback {
     audio.play(ev.kept ? "catch" : "bounce", { pos: ev.pos });
     if (this.isMe(ev.playerId)) {
       renderer.fp.punch(0.6);
-      if (ev.kept) fx.itemPop(ev.kind, 1, above(ev.pos, 0.4));
+      if (ev.kept) {
+        fx.itemPop(ev.kind, 1, above(ev.pos, 0.4));
+        characters.fpArms.caught();
+      }
     }
     // A pass between castaways is worth a line (catching a crab-bound coconut is just good reflexes).
     if (ev.kept && ev.throwerId && ev.throwerId !== ev.playerId && this.ctx.dir.view(ev.throwerId)) {
@@ -596,7 +599,7 @@ export class GameFeedback {
     const me = this.isMe(ev.playerId);
     const site = this.ctx.net.island?.sites[ev.team] ?? this.ctx.net.island?.sites[0];
     const pos = site ? point(site.raft.x, groundY(this.ctx, site.raft.x, site.raft.z) + 0.6, site.raft.z) : null;
-    if (me) characters.fpArms.play("deliver");
+    if (me) characters.fpArms.play("deliver", ev.items.map((i) => i.kind));
     else characters.trigger(ev.playerId, "use");
     if (pos) {
       fx.burst("woodChips", pos, { scale: 0.9 });

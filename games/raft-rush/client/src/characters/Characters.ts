@@ -13,8 +13,11 @@
 //   Tourist.ts      the baked bean-body model instance (bones, face, wristband, held item, flash)
 //   models/         the six character builds (common.ts: builder + shared body)
 //   Animator.ts     states.ts (continuous) + clips.ts (one-shots) + pose.ts / rigPose.ts
-//   fpArms.ts       first-person arms (ik.ts: followers + two-bone IK)
-//   holds.ts        how item meshes (fx/itemMeshes) sit in a hand
+//   fpArms.ts       first-person arms: sleeves, springs, sway, the item swap, base poses (ik.ts: two-bone IK)
+//   fpHand.ts       the skinned first-person hand (one bone per phalanx) and its poses (named + grip / cup)
+//   fpHolds.ts      how every item sits in the first-person hand(s) (anchor, pose, orientation, rest spot)
+//   fpMotion.ts     keyframed first-person clips (gestures with item variants, charge wind-ups, fidgets)
+//   holds.ts        how item meshes (fx/itemMeshes) sit in a third-person hand
 //   monsters/       crab, boss, puffer (instanced pools), monkey, gull, the manager (index.ts)
 //   Nameplate.ts, shadowBlob.ts, portraits.ts, puppet.ts, kit.ts (geometry cache + merge + materials)
 
@@ -84,6 +87,14 @@ export interface FpArmsFrame {
   torchLit: boolean;
   /** 0..1 fuse left while holding a puffer (-1 none): shaking hands. */
   fuse: number;
+  /** The camera's walk-bob phase (rad), so the arm bob rides the same stride; omitted = the rig keeps its own. */
+  bobPhase?: number;
+  /** The predicted look (rad): the look sway follows it, free of camera shake and recoil; omitted = from the camera. */
+  yaw?: number;
+  pitch?: number;
+  /** What the hold-E gather yields ("berry", wood, rope, stone…) and how long the channel takes (s), when known. */
+  channelItem?: InvKind | "berry" | "";
+  channelSec?: number;
 }
 
 export type FpGesture = "throw" | "toss" | "use" | "eat" | "gather" | "catch" | "cast" | "reel" | "swing" | "hurt" | "place" | "deliver";
@@ -97,8 +108,21 @@ export class FpArms {
   update(dt: number, camera: THREE.PerspectiveCamera, frame: FpArmsFrame): void {
     this.rig.update(dt, camera, frame);
   }
-  play(gesture: FpGesture): void {
-    this.rig.play(gesture);
+  /** Play a gesture; `kinds` = what a delivery took from the pockets (the held item leaves only if among them). */
+  play(gesture: FpGesture, kinds?: readonly InvKind[]): void {
+    this.rig.play(gesture, kinds);
+  }
+  /** My catch succeeded (the catch event): the hands clap-cup onto the item, wherever it was stowed. */
+  caught(): void {
+    this.rig.caught();
+  }
+  /**
+   * Attach the rig to the camera (hidden) and build what first person needs for `character` ahead of time — the
+   * skinned hands now, one close-up item per call — so the renderer can prewarm its shaders before the first
+   * first-person frame. Returns true while it still built something this call.
+   */
+  prepare(camera: THREE.Camera, character: CharacterId): boolean {
+    return this.rig.prepare(camera, character);
   }
   setVisible(v: boolean): void {
     this.rig.setVisible(v);
@@ -106,6 +130,16 @@ export class FpArms {
   /** Seat color of the all-inclusive wristband (Characters.sync sets it from the local frame). */
   setSeatColor(color: string): void {
     this.rig.setSeatColor(color);
+  }
+  /** World center of the held item (where a throw leaves from: the bundle between both hands, the cupped ball…),
+   * or the right hand's grip with empty hands; false while hidden. */
+  releasePosition(out: Vec3Like): boolean {
+    if (!this.rig.isVisible) return false;
+    this.rig.releaseWorld(tmpV);
+    out.x = tmpV.x;
+    out.y = tmpV.y;
+    out.z = tmpV.z;
+    return true;
   }
   /** World position of the right hand (or a held rod's tip); false while hidden. */
   handPosition(out: Vec3Like): boolean {
@@ -119,6 +153,10 @@ export class FpArms {
   /** Drop running gestures (respawn, new match). */
   clear(): void {
     this.rig.clear();
+  }
+  /** Charge glow on the held first-person item (0 = off), tinted `color`. */
+  setChargeGlow(amount: number, color: string): void {
+    this.rig.setChargeGlow(amount, color);
   }
   /** The camera-attached root (dev harness / debugging). */
   get object(): THREE.Object3D {

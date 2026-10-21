@@ -449,6 +449,8 @@ no tunneling at 34 m/s through a 0.3 m trunk, `sampleTrajectory` end ≈ actual 
    bobbers from players with fishState ≠ 0 (bobber position from the last `fishCast` event per player);
    `fx.update(dt)`.
 7. `renderer.fp.update(realDt, cameraFrame)` (eye from the local frame, look from Input; `CameraDirector.shoot`).
+   It runs right after the world update in step 5, before the characters / arms / fx, so the first-person rig, the
+   throw hand-off and the fishing line read the pose that is rendered this frame.
 8. Audio: listener at the eye; loops (charge, fire near camp, rain, waves by distance to the shore, swim,
    puffer fuse, channel); `setAmbience`; `setRadio(Amca's position)`; `audio.update(dt)`.
 9. `renderer.render()`; `ui.updateHud(hudModel)`; open panels' models; Tab scoreboard rows.
@@ -502,6 +504,19 @@ Edges:
 | `marker`, `emote` | trigger emote | marker balloon | `marker` / `emote` + voice | compass ping 8 s | — |
 | `notice`, `reject` (mine only: the server sends a reject to its actor) | — | — | `uiError` (reject) | toast / short hint | — |
 | `matchEnd` | cheer | confetti (win) | `win` / `lose`, music | matchEnd screen | orbit |
+
+**First-person viewmodel** (`characters/fpArms.ts` + `fpHand.ts` / `fpHolds.ts` / `fpMotion.ts`). The local
+tourist's arms are a camera-attached overlay (depth cleared, fixed 75° framing via a depth scale of the root) with
+skinned hands (one bone per phalanx; poses solved by FK on the geometry, incl. `gripPose(R)` / `cupPose(Rs)`).
+Every item kind has a first-person hold (`FP_HOLDS`: anchor on the hand, pose, orientation, rest spot; checked by
+`fpHolds.readability.test.ts`) and a smooth close-up mesh (`buildItemMesh(kind, {closeUp: true})`). The rig infers
+everything from `FpArmsFrame` plus the gestures above: the item swap (holster → change → equip, reload after a
+throw, consumed, catch, land after a reel, pocket), the clip variant per item (`fpMotion` `CLIPS`: e.g. use = jab /
+chop / bonk / fish slap / torch swing; eat = bite / drink / gulp / "nope" for inedible or empty hands, since the
+sim raises `eat` on every F press), charge wind-ups, hold-E loops locked to the channel (`channelItem` /
+`channelSec`), fishing states, idle fidgets and item secondary motion. Optional frame fields `bobPhase`
+(`FpCamera.walkPhase`), `yaw` / `pitch` (predicted look, so the sway ignores shake and recoil). The local
+projectile's visual starts at `fpArms.handPosition` and blends into the simulated path over 80 ms (render only).
 
 Sound captions (`ui.caption`, `ui/hud/Subtitle.ts` above the feed, game screen only) cover cues that are only
 heard: crabs / puffers crawling ashore, a monster gnawing a fence, a blast nobody got a feed line for, thunder

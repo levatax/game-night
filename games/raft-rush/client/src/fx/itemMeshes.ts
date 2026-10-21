@@ -34,10 +34,19 @@ import {
   sphere,
   taperedTube,
   torus,
+  withDetail,
 } from "./itemParts";
 
 /** Outline thickness (view-space meters) for items: thinner than characters'. */
 export const ITEM_OUTLINE = 0.012;
+/** The first-person close-up variant's outline: the same line weight as the first-person hands. */
+export const FP_ITEM_OUTLINE = 0.0024;
+
+/** buildItemMesh options. */
+export interface ItemMeshOptions {
+  /** First-person close-up: twice the segments, smooth shading, a thin outline (one variant per kind, cached). */
+  closeUp?: boolean;
+}
 
 /** Item metadata stored on the root's userData. */
 export interface ItemMeshInfo {
@@ -171,6 +180,23 @@ function crabBody(b: PartBuilder, shell: string, dark: string, eyeOn: boolean): 
   }
 }
 
+/** Radius of the rope grip wrap on tool handles: the thickness first-person fingers visibly close around. */
+const GRIP_WRAP_RADIUS = 0.034;
+/** Length (along the handle) of the rope grip wrap. */
+const GRIP_WRAP_LENGTH = 0.16;
+
+/**
+ * Rope binding where the hand holds a long tool (handle along Y): a cord sleeve centered on the recipe's grip
+ * point `y`, with a darker tied-off band near each end so it reads as wrapped cord rather than a plain bulge.
+ */
+function gripWrap(b: PartBuilder, y: number): void {
+  b.add(cylinder(GRIP_WRAP_RADIUS, GRIP_WRAP_RADIUS, GRIP_WRAP_LENGTH, 8), C.rope, { p: [0, y, 0] });
+  const inset = GRIP_WRAP_LENGTH / 2 - 0.014;
+  for (const side of [-1, 1]) {
+    b.add(torus(GRIP_WRAP_RADIUS + 0.001, 0.0065, 3, 8), C.ropeDark, { p: [0, y + side * inset, 0], r: [Math.PI / 2, 0, 0] });
+  }
+}
+
 /** One log along X (length l, radius r) with light end caps and a bark ring. */
 function log(b: PartBuilder, l: number, r: number, p: readonly [number, number, number], rotY = 0): void {
   b.add(cylinder(r, r, l, 7, true).rotateZ(Math.PI / 2).rotateY(rotY), C.bark, { p });
@@ -232,10 +258,13 @@ const RECIPES: Readonly<Record<ItemKind, ItemRecipe>> = {
       for (let i = 0; i < 3; i++) b.add(box(0.012, 0.11, 0.104), C.grill, { p: [-0.07 + i * 0.07, 0.005, 0], r: [0, 0, 0.5] });
       b.add(ellipsoid(0.018, 0.008, 0.012, 5, 3), C.ink, { p: [0.12, 0.022, 0.044] });
       b.add(ellipsoid(0.018, 0.008, 0.012, 5, 3), C.ink, { p: [0.12, 0.022, -0.044] });
-      // Skewer through the fish (🍢).
-      b.add(cylinderX(0.009, 0.62, 5), C.woodEnd, { p: [-0.05, 0, 0] });
+      // Skewer through the fish (🍢), with a thicker handle stub past the tail (x −0.48..−0.36) so a fist holds the
+      // stick, not the fish. The tip past the snout is kept short (to x 0.22) so the whole skewer stays inside the
+      // compact-item size bound.
+      b.add(cylinderX(0.009, 0.58, 5), C.woodEnd, { p: [-0.07, 0, 0] });
+      b.add(cylinderX(0.02, 0.12, 6), C.woodLight, { p: [-0.42, 0, 0] });
     },
-    grip: [-0.33, 0, 0],
+    grip: [-0.42, 0, 0],
   },
   crab_raw: {
     build(b) {
@@ -291,6 +320,7 @@ const RECIPES: Readonly<Record<ItemKind, ItemRecipe>> = {
       b.add(cone(0.05, 0.17, 4), C.stone, { p: [0, 0.56, 0] });
       b.add(cylinder(0.03, 0.03, 0.07, 6), C.rope, { p: [0, 0.46, 0] });
       b.add(cylinder(0.026, 0.026, 0.05, 6), C.ropeDark, { p: [0, -0.4, 0] });
+      gripWrap(b, -0.12);
     },
     grip: [0, -0.12, 0],
     tip: [0, 0.645, 0],
@@ -315,6 +345,8 @@ const RECIPES: Readonly<Record<ItemKind, ItemRecipe>> = {
       b.add(cylinder(0.05, 0.042, 0.11, 7), C.coconutDark, { p: [0, 0.24, 0] });
       b.add(torus(0.046, 0.01, 3, 8), C.rope, { p: [0, 0.2, 0], r: [Math.PI / 2, 0, 0] });
       b.add(torus(0.05, 0.01, 3, 8), C.rope, { p: [0, 0.27, 0], r: [Math.PI / 2, 0, 0] });
+      // The wrap spans y −0.20..−0.04, well clear of the head (from y 0.185).
+      gripWrap(b, -0.12);
     },
     grip: [0, -0.12, 0],
     tip: [0, 0.36, 0],
@@ -329,6 +361,7 @@ const RECIPES: Readonly<Record<ItemKind, ItemRecipe>> = {
       b.add(box(0.06, 0.07, 0.05), C.stoneDark, { p: [0.0, 0.17, 0] });
       b.add(torus(0.032, 0.01, 3, 8), C.rope, { p: [0, 0.12, 0], r: [Math.PI / 2, 0, 0] });
       b.add(torus(0.032, 0.01, 3, 8), C.rope, { p: [0, 0.22, 0], r: [Math.PI / 2, 0, 0] });
+      gripWrap(b, -0.18);
     },
     grip: [0, -0.18, 0],
     tip: [0.17, 0.17, 0],
@@ -473,16 +506,16 @@ const BERRY_RECIPE: ItemRecipe = {
 
 /* ============================================================== cache */
 
-const cache = new Map<ItemKind | "berry", CachedItem>();
+const cache = new Map<string, CachedItem>();
 
-function materialFor(kind: MaterialKind): THREE.Material {
+function materialFor(kind: MaterialKind, flat: boolean): THREE.Material {
   switch (kind) {
     case "golden":
-      return toonColor(0xffffff, { vertexColors: true, flatShading: true, emissive: "#6B4300", emissiveIntensity: 1 });
+      return toonColor(0xffffff, { vertexColors: true, flatShading: flat, emissive: "#6B4300", emissiveIntensity: 1 });
     case "jelly":
-      return toonColor(0xffffff, { vertexColors: true, flatShading: true, transparent: true, opacity: 0.82, emissive: "#7A1E5A", emissiveIntensity: 0.6 });
+      return toonColor(0xffffff, { vertexColors: true, flatShading: flat, transparent: true, opacity: 0.82, emissive: "#7A1E5A", emissiveIntensity: 0.6 });
     default:
-      return vertexColorToon(THREE.FrontSide, true);
+      return vertexColorToon(THREE.FrontSide, flat);
   }
 }
 
@@ -490,17 +523,18 @@ function v3(t: readonly [number, number, number] | undefined, shift: THREE.Vecto
   return t ? new THREE.Vector3(t[0] + shift.x, t[1] + shift.y, t[2] + shift.z) : shift.clone();
 }
 
-function cachedItem(kind: ItemKind | "berry"): CachedItem {
-  const hit = cache.get(kind);
+function cachedItem(kind: ItemKind | "berry", closeUp = false): CachedItem {
+  const key = closeUp ? `${kind}:fp` : kind;
+  const hit = cache.get(key);
   if (hit) return hit;
   const recipe = kind === "berry" ? BERRY_RECIPE : RECIPES[kind];
   const builder = new PartBuilder();
-  recipe.build(builder);
+  withDetail(closeUp ? 2 : 1, () => recipe.build(builder));
   const { geometry, shift } = builder.build(true);
   geometry.name = `item-${kind}`;
   const entry: CachedItem = {
     geometry,
-    material: materialFor(recipe.material ?? "toon"),
+    material: materialFor(recipe.material ?? "toon", !closeUp),
     info: {
       kind,
       grip: v3(recipe.grip, shift),
@@ -510,7 +544,7 @@ function cachedItem(kind: ItemKind | "berry"): CachedItem {
     },
     flame: recipe.flame ? v3(recipe.flame, shift) : null,
   };
-  cache.set(kind, entry);
+  cache.set(key, entry);
   return entry;
 }
 
@@ -570,8 +604,8 @@ function buildFlame(at: THREE.Vector3): THREE.Group {
 /* ================================================================ public */
 
 /** A new Object3D for `kind` (shares geometry / materials across calls). Dispose nothing: geometries are cached. */
-export function buildItemMesh(kind: ItemKind): THREE.Object3D {
-  return instantiate(kind);
+export function buildItemMesh(kind: ItemKind, opts: ItemMeshOptions = {}): THREE.Object3D {
+  return instantiate(kind, opts.closeUp ?? false);
 }
 
 /** The berry cluster (not an ItemKind): item pops for berries eaten from a bush. */
@@ -579,13 +613,13 @@ export function buildBerryMesh(): THREE.Object3D {
   return instantiate("berry");
 }
 
-function instantiate(kind: ItemKind | "berry"): THREE.Object3D {
-  const entry = cachedItem(kind);
+function instantiate(kind: ItemKind | "berry", closeUp = false): THREE.Object3D {
+  const entry = cachedItem(kind, closeUp);
   const mesh = new THREE.Mesh(entry.geometry, entry.material);
   mesh.name = `item-${kind}`;
   mesh.castShadow = true;
   mesh.receiveShadow = false;
-  addOutline(mesh, ITEM_OUTLINE);
+  addOutline(mesh, closeUp ? FP_ITEM_OUTLINE : ITEM_OUTLINE);
   if (entry.flame) mesh.add(buildFlame(entry.flame));
   const info: ItemMeshInfo = {
     kind: entry.info.kind,

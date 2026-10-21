@@ -9,9 +9,11 @@
 //   (more at night: the halo is additive); occasional glints; bait fish emit green smell lines.
 // - stuck: a spear keeps the angle it hit with.
 // - bounced: squash along world up, by impact speed. opacity < 1: the item fades (per-visual material clones).
+// - hand-off (first person): my own predicted throw is drawn leaving the first-person hand, not the simulated throw
+//   origin, and eases onto its true path over HAND_OFF_SEC (render-only offset; the simulation never moves).
 
 import * as THREE from "three";
-import type { ItemKind } from "../../../shared/types";
+import type { ItemKind, Vec3Like } from "../../../shared/types";
 import type { ProjectileFrame } from "../net/types";
 import { BILLBOARD_FACING, BillboardBatch } from "./billboard";
 import { glowTexture } from "./fxTextures";
@@ -35,6 +37,21 @@ const FULL_UV = new THREE.Vector4(0, 0, 1, 1);
 const HALO_COLOR = "#FFF1C2";
 const BAIT_HALO_COLOR = "#C9F27A";
 const GOLD_HALO_COLOR = "#FFD166";
+/** First person: how long (s) my own throw's visual takes to blend from the drawn hand onto its simulated path. */
+export const HAND_OFF_SEC = 0.08;
+/** A hand further than this (m) from the spawn point is ignored (stale arms pose): the visual starts on its path. */
+const HAND_OFF_MAX_DIST = 2;
+
+/**
+ * Weight (1 → 0) of the hand-off offset `t` seconds after the visual spawned: an ease-out, so the item leaves the
+ * hand quickly and settles onto the simulated path without a kink at the end. 0 from HAND_OFF_SEC on.
+ */
+export function handOffWeight(t: number): number {
+  if (!(t < HAND_OFF_SEC)) return 0;
+  if (t <= 0) return 1;
+  const u = 1 - t / HAND_OFF_SEC;
+  return u * u;
+}
 
 /** Tumble rate in flight (rad/s) per kind; unlisted kinds use DEFAULT_SPIN. */
 const SPIN_RATE: Partial<Record<ItemKind, number>> = {
@@ -114,6 +131,10 @@ interface Visual {
   fade: FadeState | null;
   /** Rest pose: lift so the lying item touches the ground (computed per kind). */
   restLift: number;
+  /** First-person hand-off: drawn hand − simulated position when the visual spawned (render-only offset). */
+  handOff: THREE.Vector3;
+  /** Seconds since the hand-off started (≥ HAND_OFF_SEC: no offset). */
+  handOffT: number;
 }
 
 export class ProjectileVisuals {
@@ -164,7 +185,11 @@ export class ProjectileVisuals {
     return true;
   }
 
-  sync(frames: ReadonlyArray<ProjectileFrame>, dt: number): void {
+  /**
+   * Per frame: create / move / remove a visual per frame id. `hand`: the first-person hand's world position this
+   * frame (null outside first person): a predicted throw seen for the first time starts there (the hand-off).
+   */
+  sync(frames: ReadonlyArray<ProjectileFrame>, dt: number, hand: Vec3Like | null = null): void {
     this.stamp++;
     this.time += dt;
     this.halos.begin();
@@ -174,7 +199,7 @@ export class ProjectileVisuals {
       if (v && v.kind === f.kind) v.stamp = this.stamp;
       else this.unmatched.push(f);
     }
-    for (const f of this.unmatched) this.attach(f).stamp = this.stamp;
+    for (const f of this.unmatched) this.attach(f, hand).stamp = this.stamp;
     for (const f of frames) {
       const v = this.visuals.get(f.id);
       if (v) this.updateVisual(v, f, dt);
@@ -202,9 +227,10 @@ export class ProjectileVisuals {
 
   /* ------------------------------------------------------------- lifecycle */
 
-  private attach(f: ProjectileFrame): Visual {
+  private attach(f: ProjectileFrame, hand: Vec3Like | null): Visual {
     const existing = this.visuals.get(f.id);
     if (existing) this.release(existing);
+    // An adopted visual keeps its running hand-off: the server twin continues the predicted throw seamlessly.
     const adopted = f.predicted ? null : this.adoptPredicted(f);
     if (adopted) return adopted;
     const v = this.pool.pop() ?? this.createVisual();
@@ -228,12 +254,31 @@ export class ProjectileVisuals {
     if (f.state === "rest") restPoseFor(v.kind, v.base, v.orient);
     if (f.state === "stuck") v.orient.copy(this.stuckPose(v, f));
     v.restQuat.copy(v.orient);
-    v.root.position.set(f.x, f.y, f.z);
+    this.startHandOff(v, f, hand);
+    v.root.position.set(f.x + v.handOff.x, f.y + v.handOff.y, f.z + v.handOff.z);
     v.root.scale.setScalar(1);
     v.root.visible = true;
     v.trail.reset();
     this.visuals.set(f.id, v);
     return v;
+  }
+
+  /**
+   * A predicted live projectile (my own throw, just released) starts at the first-person hand: remember the offset
+   * hand − simulated position, faded out by handOffWeight(). Anything else (or no hand) gets no offset.
+   */
+  private startHandOff(v: Visual, f: ProjectileFrame, hand: Vec3Like | null): void {
+    const o = v.handOff;
+    o.set(0, 0, 0);
+    v.handOffT = HAND_OFF_SEC;
+    if (!hand || !f.predicted || f.state !== "live") return;
+    o.set(hand.x - f.x, hand.y - f.y, hand.z - f.z);
+    const d2 = o.lengthSq();
+    if (!(d2 <= HAND_OFF_MAX_DIST * HAND_OFF_MAX_DIST)) {
+      o.set(0, 0, 0);
+      return;
+    }
+    v.handOffT = 0;
   }
 
   private adoptPredicted(f: ProjectileFrame): Visual | null {
@@ -283,6 +328,8 @@ export class ProjectileVisuals {
       phase: 0,
       fade: null,
       restLift: 0,
+      handOff: new THREE.Vector3(),
+      handOffT: HAND_OFF_SEC,
     };
   }
 
@@ -350,13 +397,27 @@ export class ProjectileVisuals {
     }
     v.spin.quaternion.copy(v.orient);
 
+    // First-person hand-off: the drawn position eases from the hand onto the simulated one (render only).
+    let ox = 0;
+    let oy = 0;
+    let oz = 0;
+    if (v.handOffT < HAND_OFF_SEC) {
+      const w = handOffWeight(v.handOffT);
+      ox = v.handOff.x * w;
+      oy = v.handOff.y * w;
+      oz = v.handOff.z * w;
+      v.handOffT += dt;
+    }
+    const x = f.x + ox;
+    const z = f.z + oz;
+
     // Position: resting items settle to the ground and bob gently.
-    let y = f.y;
+    let y = f.y + oy;
     if (f.state === "rest") {
       const bob = BOB_HEIGHT * (0.6 + 0.4 * Math.sin(this.time * BOB_HZ * Math.PI * 2 + v.phase));
-      y = f.y + (v.restLift + bob) * v.restBlend;
+      y += (v.restLift + bob) * v.restBlend;
     }
-    v.root.position.set(f.x, y, f.z);
+    v.root.position.set(x, y, z);
 
     // Squash along world up after a bounce; puffers swell in flight; jellyfish wobble.
     let sx = 1;
@@ -381,8 +442,8 @@ export class ProjectileVisuals {
     flickerFlame(v.item, this.time, true, v.phase);
     this.updateFade(v, f.opacity);
     this.updateGlow(v, f);
-    this.updateTrail(v, f, dt, speed);
-    this.shadows.add({ x: f.x, y: f.y, z: f.z, radius: Math.max(0.12, f.radius), opacity: f.opacity });
+    this.updateTrail(v, f, dt, speed, x, f.y + oy, z);
+    this.shadows.add({ x, y: f.y + oy, z, radius: Math.max(0.12, f.radius), opacity: f.opacity });
   }
 
   private updateRemoved(v: Visual, dt: number): void {
@@ -491,14 +552,15 @@ export class ProjectileVisuals {
     else if (pickup) this.particles.emit(`glint:${v.id}`, "glint", v.root.position, { color: golden ? "#FFD166" : undefined, scale: Math.max(0.6, f.radius * 5) });
   }
 
-  private updateTrail(v: Visual, f: ProjectileFrame, dt: number, speed: number): void {
+  /** Trail through the drawn position (x, y, z): the frame's plus any hand-off offset, bob excluded. */
+  private updateTrail(v: Visual, f: ProjectileFrame, dt: number, speed: number, x: number, y: number, z: number): void {
     if (f.state === "live" && speed > TRAIL_MIN_SPEED) {
-      v.trail.record(dt, f.x, f.y, f.z);
+      v.trail.record(dt, x, y, z);
       v.trail.setStyle(this.white, Math.max(0.1, f.radius * 0.9), 0.5 * f.opacity * Math.min(1, (speed - TRAIL_MIN_SPEED) / 8 + 0.4));
     } else {
-      v.trail.record(dt, f.x, f.y, f.z);
+      v.trail.record(dt, x, y, z);
     }
-    v.trail.rebuild(f.x, f.y, f.z);
+    v.trail.rebuild(x, y, z);
   }
 
   /** Fade a visual's item (clones its materials on first use, restores the shared ones at full opacity). */

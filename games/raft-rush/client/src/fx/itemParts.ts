@@ -104,26 +104,42 @@ function paint(g: THREE.BufferGeometry, hex: string, jitter: number): void {
 
 /* ------------------------------------------------------------------ primitives */
 
+/** Segment multiplier for the primitives below (the first-person close-up variant builds at ×2). */
+let detail = 1;
+
+/** Run `build` with every primitive's segment counts multiplied by `k`. */
+export function withDetail<T>(k: number, build: () => T): T {
+  const prev = detail;
+  detail = k;
+  try {
+    return build();
+  } finally {
+    detail = prev;
+  }
+}
+
+const seg = (n: number): number => Math.max(n, Math.round(n * detail));
+
 /** Low-poly cylinder (or cone frustum) along Y, centered. */
 export function cylinder(rTop: number, rBottom: number, height: number, sides = 7, openEnded = false): THREE.BufferGeometry {
-  return new THREE.CylinderGeometry(rTop, rBottom, height, sides, 1, openEnded);
+  return new THREE.CylinderGeometry(rTop, rBottom, height, seg(sides), 1, openEnded);
 }
 
 /** Cylinder along X (logs, skewers, reel axles). */
 export function cylinderX(r: number, length: number, sides = 7): THREE.BufferGeometry {
-  return new THREE.CylinderGeometry(r, r, length, sides, 1).rotateZ(Math.PI / 2);
+  return new THREE.CylinderGeometry(r, r, length, seg(sides), 1).rotateZ(Math.PI / 2);
 }
 
 export function cone(r: number, height: number, sides = 6): THREE.BufferGeometry {
-  return new THREE.ConeGeometry(r, height, sides, 1);
+  return new THREE.ConeGeometry(r, height, seg(sides), 1);
 }
 
 export function sphere(r: number, wSeg = 8, hSeg = 6): THREE.BufferGeometry {
-  return new THREE.SphereGeometry(r, wSeg, hSeg);
+  return new THREE.SphereGeometry(r, seg(wSeg), seg(hSeg));
 }
 
 export function hemisphere(r: number, wSeg = 8, hSeg = 4): THREE.BufferGeometry {
-  return new THREE.SphereGeometry(r, wSeg, hSeg, 0, Math.PI * 2, 0, Math.PI / 2);
+  return new THREE.SphereGeometry(r, seg(wSeg), seg(hSeg), 0, Math.PI * 2, 0, Math.PI / 2);
 }
 
 export function box(w: number, h: number, d: number): THREE.BufferGeometry {
@@ -131,12 +147,12 @@ export function box(w: number, h: number, d: number): THREE.BufferGeometry {
 }
 
 export function torus(r: number, tube: number, radial = 4, tubular = 10): THREE.BufferGeometry {
-  return new THREE.TorusGeometry(r, tube, radial, tubular);
+  return new THREE.TorusGeometry(r, tube, seg(radial), seg(tubular));
 }
 
 /** Lumpy low-poly rock: an icosahedron whose vertices are nudged by a deterministic hash. */
 export function lumpyRock(r: number, lump = 0.18): THREE.BufferGeometry {
-  const g = new THREE.IcosahedronGeometry(r, 0);
+  const g = new THREE.IcosahedronGeometry(r, detail >= 2 ? 1 : 0);
   const p = g.getAttribute("position");
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i);
@@ -153,7 +169,7 @@ export function lumpyRock(r: number, lump = 0.18): THREE.BufferGeometry {
 export function lathe(profile: ReadonlyArray<readonly [number, number]>, segments = 8): THREE.BufferGeometry {
   return new THREE.LatheGeometry(
     profile.map(([r, y]) => new THREE.Vector2(r, y)),
-    segments,
+    seg(segments),
   );
 }
 
@@ -178,9 +194,11 @@ export function taperedTube(
   ctrl: THREE.Vector3,
   b: THREE.Vector3,
   radius: (t: number) => number,
-  rings = 9,
-  sides = 6,
+  ringCount = 9,
+  sideCount = 6,
 ): THREE.BufferGeometry {
+  const rings = seg(ringCount);
+  const sides = seg(sideCount);
   const curve = new THREE.QuadraticBezierCurve3(a, ctrl, b);
   const frames = curve.computeFrenetFrames(rings, false);
   const positions: number[] = [];

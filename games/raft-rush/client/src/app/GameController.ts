@@ -157,10 +157,14 @@ export class GameController {
   private readonly bobberPool: Bobber[] = [];
   private readonly bobbers: Bobber[] = [];
   private readonly eye = vec3();
+  /** The first-person hand this frame (throw hand-off of my own projectiles). */
+  private readonly handPos = vec3();
   private readonly aimDir = vec3();
   private readonly listener = new THREE.Vector3();
   private readonly forward = new THREE.Vector3();
   private readonly pose: Pose = { x: 0, y: 0, z: 0, yaw: 0 };
+  /** The first-person rig's shaders were prewarmed after it was built ahead (updateArms). */
+  private armsWarm = false;
   private readonly armsFrame: FpArmsFrame = {
     character: "kaptan",
     held: "",
@@ -361,17 +365,18 @@ export class GameController {
     step("memory", () => this.watchMatch(state, nowMs));
     // 5. World, characters, monsters, FP arms.
     step("world", () => this.updateWorld(state, nowMs, dt));
+    // The camera before the arms and fx: the first-person rig, the throw hand-off and the fishing line read the
+    // pose that is rendered this frame (it only needs the plan and the world's raft pose).
+    step("camera", () => this.director.shoot(this.camInputs));
     step("characters", () => this.syncCharacters(dt));
     step("monsters", () => this.deps.characters.monsters.sync(this.monsters, dt));
     step("arms", () => this.updateArms(dt));
     // 6. Fx: projectiles, arc preview, bobbers.
-    step("projectiles", () => this.deps.fx.syncProjectiles(this.projectiles, dt));
+    step("projectiles", () => this.deps.fx.syncProjectiles(this.projectiles, dt, this.throwHand()));
     step("arc", () => this.updateArc());
     step("glows", () => this.updateChargeGlows());
     step("bobbers", () => this.updateBobbers());
     step("fx", () => this.deps.fx.update(dt));
-    // 7. Camera.
-    step("camera", () => this.director.shoot(this.camInputs));
     // 8. Audio.
     step("audio", () => this.updateAudio(state, nowMs, dt));
     // 9. Render, HUD, panels, scoreboard.
@@ -641,6 +646,16 @@ export class GameController {
     const me = net.me;
     const visible = this.camera.firstPerson && !!local && !!me && local.alive && !local.washed && !local.spectator;
     characters.fpArms.setVisible(visible);
+    if (!visible && me) {
+      // Build the hands and close-up items ahead (a little per frame), then prewarm their shaders once, so the
+      // first first-person frame doesn't stall on them.
+      const building = characters.fpArms.prepare(renderer.camera, me.character) === true;
+      if (building) this.armsWarm = false;
+      else if (!this.armsWarm) {
+        this.armsWarm = true;
+        renderer.prewarm();
+      }
+    }
     if (!visible || !local || !me) return;
     const a = this.armsFrame;
     a.character = me.character;
@@ -657,7 +672,24 @@ export class GameController {
     a.fishState = me.fishState;
     a.torchLit = a.held === "torch" && me.torchTicks > 0;
     a.fuse = a.held === "puffer" && me.fuseTicks > 0 ? clamp(me.fuseTicks / PUFFER_FUSE_TICKS, 0, 1) : -1;
+    const phase = renderer.fp?.walkPhase;
+    a.bobPhase = typeof phase === "number" ? phase : undefined;
+    a.yaw = local.yaw;
+    a.pitch = local.pitch;
+    const it = this.interaction;
+    const channeling = it !== null && it.hold && it.channel === local.channel && local.channel !== 0;
+    a.channelItem = channeling ? it.item : "";
+    a.channelSec = channeling && it.ticks > 0 ? it.ticks / TICK_RATE : undefined;
     characters.fpArms.update(dt, renderer.camera, a);
+  }
+
+  /**
+   * Step 6a: where my own throws are drawn leaving from: the first-person hand (after the arms moved this frame),
+   * null outside first person or while the arms are hidden (the visuals then start on their simulated path).
+   */
+  private throwHand(): Vec3 | null {
+    if (this.camera.mode !== "fp") return null;
+    return this.deps.characters.fpArms.releasePosition(this.handPos) ? this.handPos : null;
   }
 
   /** Step 6b: the dotted arc after half charge (settings.showArcPreview). */
@@ -684,9 +716,12 @@ export class GameController {
     this.arcShown = true;
   }
 
-  /** Step 6b': a glow at the hand of everyone charging a throw (the telegraph Bonk Brawl players rely on). */
+  /**
+   * Step 6b': a glow at the hand of everyone charging a throw (the telegraph Bonk Brawl players rely on). In first
+   * person my own glow sits on the item held by the first-person arms instead of at the world throw origin.
+   */
   private updateChargeGlows(): void {
-    const { fx } = this.deps;
+    const { characters, fx } = this.deps;
     const seen = this.glowSeen;
     seen.clear();
     const glow = (p: PlayerFrame): void => {
@@ -695,7 +730,11 @@ export class GameController {
       fx.setChargeGlow(p.id, this.eye, chargeFraction(p), playerColor(p.seat));
       seen.add(p.id);
     };
-    if (this.local && this.camera.mode !== "fp") glow(this.local);
+    const local = this.local;
+    const fp = this.camera.mode === "fp";
+    if (fp && local && local.alive && !local.washed && local.chargeTicks > 0) characters.fpArms.setChargeGlow(chargeFraction(local), playerColor(local.seat));
+    else characters.fpArms.setChargeGlow(0, "#FFFFFF");
+    if (local && !fp) glow(local);
     for (const r of this.remotes) glow(r);
     for (const id of this.glowing) if (!seen.has(id)) fx.setChargeGlow(id, null, 0, "#FFFFFF");
     this.glowing.clear();

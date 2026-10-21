@@ -78,6 +78,11 @@ export class FpCamera {
     camera.rotation.order = "YXZ";
   }
 
+  /** The walk-bob phase (rad): the first-person arms bob on the same stride. */
+  get walkPhase(): number {
+    return this.bobPhase;
+  }
+
   /** 0..1 how desaturated the view should be (downed). The renderer applies it as a canvas filter. */
   get desaturation(): number {
     return this.desat;

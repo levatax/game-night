@@ -9,7 +9,8 @@
 //
 // Frame order for the app: syncProjectiles(frames, dt) → setArc / setBobbers / setChargeGlow → update(dt).
 // Extras beyond the architect's facade (optional): setIsland (shadow / debris ground), setQuality,
-// setReducedFlashing, setChargeGlow, dispose, and the read-only subsystem fields for the dev harness.
+// setReducedFlashing, setChargeGlow, syncProjectiles' trailing localHand (first-person throw hand-off), dispose,
+// and the read-only subsystem fields for the dev harness.
 
 import * as THREE from "three";
 import { WATER_Y } from "../../../shared/constants";
@@ -137,10 +138,14 @@ export class Fx {
     this.chargeGlows = new ChargeGlows(this.root, this.particles);
   }
 
-  /** Per frame: item meshes for every projectile frame (create / move / remove by id). */
-  syncProjectiles(frames: ProjectileFrame[], dt: number): void {
+  /**
+   * Per frame: item meshes for every projectile frame (create / move / remove by id). Optional extra `localHand`:
+   * the first-person hand's world position this frame (null / omitted outside first person), where my own
+   * predicted throws are drawn leaving from before they ease onto their simulated path.
+   */
+  syncProjectiles(frames: ProjectileFrame[], dt: number, localHand: Vec3Like | null = null): void {
     this.shadows.begin();
-    this.projectiles.sync(frames, dt);
+    this.projectiles.sync(frames, dt, localHand && finite(localHand) ? localHand : null);
     this.shadows.end();
   }
 
