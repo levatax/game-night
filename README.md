@@ -37,6 +37,30 @@ server code changes.
 
 Other scripts: `npm run typecheck`, `npm test`.
 
+## Voices (ElevenLabs)
+
+KASALA's announcer, Cemil Abi, speaks 95 Turkish lines. They are pre-rendered with ElevenLabs
+(multilingual v2, the Istanbul-accented Adam voice `J17lijyP1BHYcM7ld0Rg`) and committed under
+`games/kasala/client/public/audio/spiker/`, so the game needs no key to speak. The client plays a
+recorded mp3 when one exists, otherwise asks the hub's `/api/voice/tts` proxy to synthesize the
+line, then falls back to the browser's Turkish speech voice, then to a subtitle. A missing key or
+an ElevenLabs outage never breaks the game.
+
+To render lines (after editing `games/kasala/shared/announcer.ts`) with your own ElevenLabs API
+key:
+
+```bash
+ELEVENLABS_API_KEY=sk_… npm run voices          # only missing lines
+ELEVENLABS_API_KEY=sk_… npm run voices -- --force
+```
+
+The same key enables on-demand synthesis on the server: set `ELEVENLABS_API_KEY` in the host's
+environment (EasyPanel → service → Environment). Optional: `ELEVENLABS_VOICE_KASALA` (default
+`J17lijyP1BHYcM7ld0Rg`), `ELEVENLABS_VOICE_ID` (other games, default Adam
+`pNInz6obpgDQGcFmaJgB`), `ELEVENLABS_MODEL_ID`, `ELEVENLABS_TTS_DISABLED=1`, `VOICE_CACHE_DIR`.
+On-demand audio is cached on disk (`.voice-cache/` by default), so each line is paid for once.
+The key is read only by the server; clients never see it. See `.env.example`.
+
 ## Add a game
 
 Every folder in `games/` that has a `game.json` is picked up automatically: it's listed on the

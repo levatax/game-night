@@ -8,6 +8,7 @@ import { WebSocketTransport } from "@colyseus/ws-transport";
 import { hubHealth, loadGames, publicManifest, type LoadedGame } from "./games.js";
 import { CODE_PATTERN, createRoomCodeRegistry, normalizeCode } from "./roomCodes.js";
 import type { GameServerModule } from "./types.js";
+import { voiceRouter, voiceStatus } from "./voice.js";
 
 // Runs from source (`npm start`: tsx server/index.ts) or compiled (`npm run start:prod`: node dist/server/index.js,
 // built by tsconfig.server.json). Compiled, the game server modules sit in dist/ and everything else (portal,
@@ -71,6 +72,10 @@ async function liveStats(game: LoadedGame) {
   return { rooms, players };
 }
 
+// ElevenLabs text-to-speech (optional; recorded mp3s are always preferred). Clients only learn whether it is
+// enabled and the public voice id — the API key stays in this process.
+app.use("/api/voice", voiceRouter);
+
 app.get("/api/games", async (_req, res) => {
   const list = await Promise.all(
     games.map(async (game) => ({
@@ -131,4 +136,10 @@ for (const game of games) {
 app.use(express.static(PORTAL_DIR, { extensions: ["html"] }));
 
 await gameServer.listen(PORT);
+const voice = voiceStatus();
+console.log(
+  voice.enabled
+    ? `[voice] ElevenLabs on-demand synthesis enabled (voice ${voice.voiceId}, cache ${voice.cacheDir})`
+    : "[voice] ElevenLabs disabled (no ELEVENLABS_API_KEY); announcer uses recorded mp3s / browser speech",
+);
 console.log(`[hub] Game Night is running at http://localhost:${PORT}`);
