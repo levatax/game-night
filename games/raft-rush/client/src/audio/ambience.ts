@@ -7,7 +7,7 @@
 
 import type { AmbienceFrame } from "./AudioEngine";
 import type { LoopName, MusicMood } from "./Sfx";
-import { LOOP_LEVEL, createLoop, type LoopVoice } from "./synth/loops";
+import { LOOP_LEVEL, createLoop, type LoopFactory, type LoopVoice } from "./synth/loops";
 import { clamp01, safeDisconnect } from "./synth/dsp";
 
 export type BedName = "waves" | "wind" | "gulls" | "crickets" | "rain" | "storm" | "drums";
@@ -84,6 +84,8 @@ export class AmbienceMixer {
   constructor(
     private readonly ctx: BaseAudioContext,
     out: AudioNode,
+    private readonly makeLoop: LoopFactory = createLoop,
+    private readonly sampleReady: ((name: LoopName) => boolean) | null = null,
   ) {
     this.beds = BED_NAMES.map((name) => {
       const gain = ctx.createGain();
@@ -128,7 +130,13 @@ export class AmbienceMixer {
       bed.param = l.param;
       if (target > AUDIBLE) {
         bed.quietFor = 0;
-        if (!bed.voice) bed.voice = createLoop(this.ctx, bed.name, bed.gain, now + 0.02, l.param);
+        // A synth bed that started before the generated loop decoded is replaced in place once it is ready.
+        if (bed.voice && bed.voice.kind !== "sample" && this.sampleReady?.(bed.name)) {
+          const old = bed.voice;
+          bed.voice = null;
+          old.stop(now, 0.25);
+        }
+        if (!bed.voice) bed.voice = this.makeLoop(this.ctx, bed.name, bed.gain, now + 0.02, l.param);
       } else {
         bed.quietFor += dt;
         if (bed.voice && bed.quietFor > STOP_AFTER_SEC) {

@@ -17,6 +17,7 @@ const PARAM_EPSILON = 0.002;
 
 /** A running loop voice. Times are absolute context seconds. */
 export interface LoopVoice {
+  readonly kind: "synth" | "sample";
   /** 0..1 loop parameter (charge, fire size, intensity, speed, progress, drum tempo…). */
   setParam(value: number, now: number): void;
   /** Pitch multiplier (1 = as designed). */
@@ -28,6 +29,9 @@ export interface LoopVoice {
   /** Fires once after stop() when the voice has fully ended. */
   onEnded: (() => void) | null;
 }
+
+/** Creates a synth or sampled loop; AmbienceMixer can swap one for the other when a file finishes decoding. */
+export type LoopFactory = (ctx: BaseAudioContext, name: LoopName, out: AudioNode, start: number, initial?: number) => LoopVoice;
 
 /** Base gain of each loop before PlayOptions.volume (tuned against the one-shots). */
 export const LOOP_LEVEL: Readonly<Record<LoopName, number>> = {
@@ -190,6 +194,7 @@ export function createLoop(ctx: BaseAudioContext, name: LoopName, out: AudioNode
   let rate = 1;
   let nextEvent = start + 0.05;
   const voice: LoopVoice = {
+    kind: "synth",
     onEnded: null,
     setParam(value, now) {
       const v = clamp01(value);

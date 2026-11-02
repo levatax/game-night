@@ -39,6 +39,7 @@ import { VoicePool } from "./engine/VoicePool";
 import { MusicCore } from "./music/MusicCore";
 import { composeSongBook, songForMood } from "./music/songs";
 import { Ticker } from "./music/ticker";
+import { SampleBank } from "./SampleBank";
 import type { LoopName, MusicMood, SfxName, VoiceKind } from "./Sfx";
 import { Synth, belowNyquist, safeDisconnect } from "./synth/dsp";
 import { LOOP_LEVEL, createLoop, type LoopVoice } from "./synth/loops";
@@ -125,6 +126,7 @@ export class AudioEngine {
   private ticker: Ticker | null = null;
   private readonly pool = new VoicePool(MAX_VOICES);
   private readonly loops = new Map<string, ActiveLoop>();
+  private readonly bank = new SampleBank();
   private volumes = { ...DEFAULT_VOLUMES };
   private mood: MusicMood = "off";
   private musicSeed = 0;
@@ -181,7 +183,7 @@ export class AudioEngine {
     const graph = this.graph;
     if (!ctx || !graph) return;
     const bus = def.bus === "ui" ? graph.ui : graph.sfx;
-    this.spawn(ctx, name, def.cap, sfxGain(name) * clampVolume(opts?.volume ?? 1), bus, def.positional ? opts?.pos : undefined, opts, recipe);
+    this.spawn(ctx, name, def.cap, sfxGain(name) * clampVolume(opts?.volume ?? 1), bus, def.positional ? opts?.pos : undefined, opts, recipe, false, name);
   }
 
   /** Start (or update the position / volume / pitch of) a continuous sound identified by `key`. */
@@ -204,7 +206,7 @@ export class AudioEngine {
       const bus = AMBIENCE_BEDS.has(name) ? graph.ambience : graph.sfx;
       if (panner) out.connect(panner).connect(bus);
       else out.connect(bus);
-      const voice = createLoop(ctx, name, out, now + START_DELAY, opts?.param ?? 0.5);
+      const voice = this.makeLoop(ctx, name, out, now + START_DELAY, opts?.param ?? 0.5);
       voice.onEnded = () => {
         safeDisconnect(out);
         if (panner) safeDisconnect(panner);
@@ -269,6 +271,7 @@ export class AudioEngine {
     if (!ctx || !graph || this.disposed) return;
     const now = ctx.currentTime;
     this.updateRadio(now);
+    this.upgradeLoops(now);
     this.ambienceAge += Math.max(0, dt);
     const ambienceOn = this.ambienceAge < AMBIENCE_STALE_SEC;
     const under = ambienceOn && this.ambienceFrame.underwater;
@@ -359,6 +362,28 @@ export class AudioEngine {
 
   /* ------------------------------------------------------------------ private */
 
+  private makeLoop(ctx: BaseAudioContext, name: LoopName, out: AudioNode, start: number, param: number): LoopVoice {
+    return this.bank.startLoop(name, ctx as AudioContext, out, start, param) ?? createLoop(ctx, name, out, start, param);
+  }
+
+  /** Replace a running synth loop with its generated sample as soon as the file has decoded. */
+  private upgradeLoops(now: number): void {
+    for (const [key, active] of this.loops) {
+      if (active.voice.kind === "sample" || !this.bank.hasLoop(active.name)) continue;
+      const old = active.voice;
+      old.onEnded = null;
+      old.stop(now, LOOP_FADE);
+      const ctx = this.ctx;
+      const voice = ctx ? this.bank.startLoop(active.name, ctx, active.out, now, 0.5) : null;
+      if (!voice) continue;
+      voice.onEnded = () => {
+        safeDisconnect(active.out);
+        if (active.panner) safeDisconnect(active.panner);
+      };
+      this.loops.set(key, { ...active, voice });
+    }
+  }
+
   private create(): AudioContext | null {
     const Ctor = audioContextCtor();
     if (!Ctor) {
@@ -381,7 +406,13 @@ export class AudioEngine {
     this.music = new MusicCore(ctx, this.radioChain.input);
     this.music.setBook(composeSongBook(this.musicSeed));
     this.music.play(songForMood(this.mood));
-    this.ambience = new AmbienceMixer(ctx, graph.ambience);
+    this.bank.prime(ctx);
+    this.ambience = new AmbienceMixer(
+      ctx,
+      graph.ambience,
+      (c, name, out, start, param = 0.5) => this.makeLoop(c, name, out, start, param),
+      (name) => this.bank.hasLoop(name),
+    );
     setListenerPose(ctx.listener, this.listener, this.forward);
     this.ticker = new Ticker(TICK_MS, () => this.pump());
     this.ticker.start();
@@ -484,6 +515,7 @@ export class AudioEngine {
     opts: PlayOptions | undefined,
     recipe: (s: Synth) => void,
     exactPitch = false,
+    sampleName?: SfxName,
   ): void {
     const now = ctx.currentTime;
     const delay = Math.max(0, Math.min(10, opts?.delay ?? 0));
@@ -499,7 +531,17 @@ export class AudioEngine {
     } else {
       out.connect(bus);
     }
-    const synth = new Synth(ctx, out, now + START_DELAY + delay, pitchOf(opts, exactPitch));
+    const start = now + START_DELAY + delay;
+    const pitch = pitchOf(opts, exactPitch);
+    const sample = sampleName ? this.bank.startSfx(sampleName, ctx, out, start, pitch) : null;
+    if (sample) {
+      this.pool.add(
+        { key, startedAt: now + delay, endsAt: sample.endTime, output: out, chain, sources: [sample.source] },
+        sample.source,
+      );
+      return;
+    }
+    const synth = new Synth(ctx, out, start, pitch);
     recipe(synth);
     this.pool.add({ key, startedAt: now + delay, endsAt: synth.endTime, output: out, chain, sources: synth.sources }, synth.finalSource);
   }
