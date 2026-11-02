@@ -209,10 +209,11 @@ export class Raft {
     // Provisions.
     this.crates = new THREE.InstancedMesh(bank.geo(crateBaker().build()), vertexColorToon(), CRATES);
     this.crates.name = "raftCrates";
-    this.crates.castShadow = true;
+    // Small provisions ride on the shadowed hull: skipping them removes three shadow-pass draws.
+    this.crates.castShadow = false;
     this.gourds = new THREE.InstancedMesh(bank.geo(gourdBaker().build()), vertexColorToon(), GOURDS);
     this.gourds.name = "raftGourds";
-    this.gourds.castShadow = true;
+    this.gourds.castShadow = false;
     for (let i = 0; i < CRATES; i++) {
       const m = composeMatrix(new THREE.Vector3(-0.9 + (i % 3) * 0.9, LOG_RADIUS, 0.75 + Math.floor(i / 3) * 0.7), new THREE.Euler(0, (i * 0.37) % 0.5 - 0.25, 0), 1);
       this.crateRest.push(m);
@@ -369,7 +370,7 @@ export class Raft {
     mesh.name = "raftSlip";
     mesh.position.copy(this.restPos);
     mesh.rotation.y = this.yaw;
-    mesh.castShadow = true;
+    mesh.castShadow = false;
     return mesh;
   }
 

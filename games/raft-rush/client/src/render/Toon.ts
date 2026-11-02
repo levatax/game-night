@@ -153,10 +153,12 @@ export function noShadow(root: THREE.Object3D): void {
 const OUTLINE_VERTEX = /* glsl */ `
   #include <common>
   #include <batching_pars_vertex>
+  #include <color_pars_vertex>
   #include <fog_pars_vertex>
   uniform float thickness;
   void main() {
     #include <batching_vertex>
+    #include <color_vertex>
     vec4 localPosition = vec4(position, 1.0);
     vec3 localNormal = normal;
     #ifdef USE_INSTANCING
@@ -179,10 +181,16 @@ const OUTLINE_VERTEX = /* glsl */ `
 
 const OUTLINE_FRAGMENT = /* glsl */ `
   #include <fog_pars_fragment>
+  #include <color_pars_fragment>
   uniform vec3 color;
   uniform float opacity;
   void main() {
-    gl_FragColor = vec4(color, opacity);
+    vec3 tint = color;
+    #ifdef USE_BATCHING_COLOR
+      // Batched characters carry their seat-tinted ink in the per-instance colour.
+      tint *= vColor.rgb;
+    #endif
+    gl_FragColor = vec4(tint, opacity);
     #include <fog_fragment>
   }
 `;
