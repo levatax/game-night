@@ -37,6 +37,53 @@ server code changes.
 
 Other scripts: `npm run typecheck`, `npm test`.
 
+## Voices (ElevenLabs)
+
+KASALA's announcer, Cemil Abi, speaks 95 Turkish lines. They are pre-rendered with ElevenLabs
+(Eleven v4, the Istanbul-accented Adam voice `J17lijyP1BHYcM7ld0Rg`, with per-line delivery tags and a
+short back-room reverb baked in) and committed under
+`games/kasala/client/public/audio/spiker/`, so the game needs no key to speak. The client plays a
+recorded mp3 when one exists, otherwise asks the hub's `/api/voice/tts` proxy to synthesize the
+line, then falls back to the browser's Turkish speech voice, then to a subtitle. A missing key or
+an ElevenLabs outage never breaks the game.
+
+The voice performance (audio tags such as `[shouting]`, `[whispers]`, `[laughs]`) lives in
+`scripts/voice-performance.ts`; subtitle text stays clean. To render lines (after editing
+`games/kasala/shared/announcer.ts`) with your own ElevenLabs API
+key:
+
+```bash
+ELEVENLABS_API_KEY=sk_… npm run voices          # only missing lines
+ELEVENLABS_API_KEY=sk_… npm run voices -- --force
+```
+
+The same key enables on-demand synthesis on the server: set `ELEVENLABS_API_KEY` in the host's
+environment (EasyPanel → service → Environment). Optional: `ELEVENLABS_VOICE_KASALA` (default
+`J17lijyP1BHYcM7ld0Rg`), `ELEVENLABS_VOICE_ID` (other games, default Adam
+`pNInz6obpgDQGcFmaJgB`), `ELEVENLABS_MODEL_ID` (default `eleven_v4`), `ELEVENLABS_TTS_DISABLED=1`,
+`VOICE_CACHE_DIR`.
+On-demand audio is cached on disk (`.voice-cache/` by default), so each line is paid for once.
+The key is read only by the server; clients never see it. See `.env.example`.
+
+## Raft Rush sound effects (ElevenLabs)
+
+Raft Rush has 95 one-shot effects and 13 continuous loops (waves, wind, gulls, crickets, rain,
+storm, drums, fire, charge, swim, fuse, reel, channel), all rendered with ElevenLabs Sound
+Effects `eleven_text_to_sound_v3` and stored under
+`games/raft-rush/client/public/audio/raft-rush/`. The client starts playing generated files as
+they decode and keeps the original Web Audio synth as a fallback, so a slow network or missing
+file never silences the game.
+
+To re-render after editing a prompt or adding a sound (the script resumes missing files):
+
+```bash
+ELEVENLABS_API_KEY=sk_… npm run sfx
+ELEVENLABS_API_KEY=sk_… npm run sfx -- --force
+```
+
+The cue sheet and durations are in `scripts/generate-raft-sfx.mjs`; it validates that every
+`SFX_NAMES` / `LOOP_NAMES` entry has exactly one cue and rebuilds `manifest.json`.
+
 ## Add a game
 
 Every folder in `games/` that has a `game.json` is picked up automatically: it's listed on the

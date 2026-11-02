@@ -14,7 +14,9 @@
     "start:prod": "node dist/server/index.js",
     "dev": "node scripts/dev.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "voices": "tsx scripts/generate-voices.ts",
+    "sfx": "node scripts/generate-raft-sfx.mjs"
   },
   "dependencies": {
     "@colyseus/core": "^0.16.26",
