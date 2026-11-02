@@ -4,7 +4,8 @@
 //   ELEVENLABS_API_KEY=sk_… npm run voices -- --force # re-render every line
 //
 // Voice: ELEVENLABS_VOICE_KASALA, else ELEVENLABS_VOICE_ID, else the Istanbul-accented Adam chosen for Cemil
-// Abi (J17lijyP1BHYcM7ld0Rg). Model: ELEVENLABS_MODEL_ID (default eleven_multilingual_v2).
+// Abi (J17lijyP1BHYcM7ld0Rg). Model: ELEVENLABS_MODEL_ID (default eleven_v4, which supports audio tags).
+// Delivery comes from scripts/voice-performance.ts, so subtitles stay clean while the voice gets the tags.
 // Writes games/kasala/client/public/audio/spiker/<line id>.mp3 and updates manifest.json. The hub's runtime
 // proxy (server/voice.ts) renders any line that has no file, so this script is optional but makes playback
 // instant and means production needs no API key.
@@ -15,11 +16,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ANNOUNCER_LINES } from "../games/kasala/shared/announcer";
+import { performanceText } from "./voice-performance";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const OUT_DIR = path.join(ROOT, "games", "kasala", "client", "public", "audio", "spiker");
 const CONCURRENCY = 3;
-const MODEL = process.env.ELEVENLABS_MODEL_ID?.trim() || "eleven_multilingual_v2";
+const MODEL = process.env.ELEVENLABS_MODEL_ID?.trim() || "eleven_v4";
 const OUTPUT_FORMAT = process.env.ELEVENLABS_OUTPUT_FORMAT?.trim() || "mp3_44100_128";
 const VOICE =
   process.env.ELEVENLABS_VOICE_KASALA?.trim() ||
@@ -78,9 +80,10 @@ async function renderOne(line: (typeof ANNOUNCER_LINES)[number]): Promise<void> 
       method: "POST",
       headers: { "xi-api-key": key, "Content-Type": "application/json", Accept: "audio/mpeg" },
       body: JSON.stringify({
-        text: line.text,
+        text: performanceText(line),
         model_id: MODEL,
-        voice_settings: { stability: 0.45, similarity_boost: 0.8, style: 0.1, use_speaker_boost: true },
+        // v4 supports only stability and similarity_boost; lower stability leaves room for the tags.
+        voice_settings: { stability: 0.35, similarity_boost: 0.85 },
       }),
       signal: AbortSignal.timeout(60_000),
     },

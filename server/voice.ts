@@ -10,7 +10,7 @@
 //   ELEVENLABS_VOICE_ID       default voice (default: Adam, pNInz6obpgDQGcFmaJgB).
 //   ELEVENLABS_VOICE_<GAME>   per-game override, e.g. ELEVENLABS_VOICE_KASALA.
 //   ELEVENLABS_VOICE_<GAME>_<CHARACTER>  per-character override (optional `character` query parameter).
-//   ELEVENLABS_MODEL_ID       default eleven_multilingual_v2.
+//   ELEVENLABS_MODEL_ID       default eleven_v4 (supports audio tags and the room treatment).
 //   ELEVENLABS_OUTPUT_FORMAT  default mp3_44100_128.
 //   ELEVENLABS_TTS_DISABLED=1 turns the proxy off even when a key is set.
 //   VOICE_CACHE_DIR           where rendered mp3s are kept (default .voice-cache next to the process cwd).
@@ -30,7 +30,7 @@ export const DEFAULT_VOICE_ID = "pNInz6obpgDQGcFmaJgB";
 const GAME_VOICE_IDS: Readonly<Record<string, string>> = {
   kasala: "J17lijyP1BHYcM7ld0Rg",
 };
-export const DEFAULT_MODEL_ID = "eleven_multilingual_v2";
+export const DEFAULT_MODEL_ID = "eleven_v4";
 const DEFAULT_OUTPUT_FORMAT = "mp3_44100_128";
 const MAX_CHARS = 1000;
 /** Upstream calls in flight at once: enough for a room joining, gentle enough for ElevenLabs rate limits. */
@@ -87,7 +87,8 @@ function outputFormat(): string {
 
 /** Voice settings shared with scripts/generate-voices.ts. */
 export function voiceSettings(): Record<string, number | boolean> {
-  return { stability: 0.45, similarity_boost: 0.8, style: 0.1, use_speaker_boost: true };
+  // v4 supports only stability and similarity_boost.
+  return { stability: 0.35, similarity_boost: 0.85 };
 }
 
 // ---------------------------------------------------------------- cache + queue
