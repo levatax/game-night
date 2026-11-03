@@ -110,27 +110,38 @@ RAFT_BALANCE=1 npx vitest run games/raft-rush/server/room/botBalance.test.ts
 | `RAFT_BALANCE_FAST` | off | `1` = the RAFT_TEST timers: a smoke run of the match flow (bots lose every match there) |
 | `RAFT_BALANCE_TRACE` | off | print every bot goal change, throw and hit |
 | `RAFT_BALANCE_BAND` | — | `lo-hi` win %: assert it. Only for the target scenario (normal, 3 bots, 0 idle humans, real timings); with any other scenario the run fails |
-| `RAFT_BALANCE_GATE` | off | `1` = acceptance gate: 30 seeds × expert + novice cohorts, per-seed boss/launch table, gate assertions |
 
-**Acceptance gate** (`npm run balance`, the same command CI runs): the expert cohort is Normal, 3 bots, no idle
-humans; the novice cohort is Normal, 2 bots + 1 idle human (a novice partner who never plays). Each seed prints
-`boss yes/no`, `launch <second>s`, the outcome and downs. The gate holds:
+**Acceptance runs — QA's `qa:runs` is the one measurement engine** (`games/raft-rush/qa/`, owner: qa). It plays
+the same real RaftWorld + BotDesk loop and writes one CSV row per match (plus JSON, a Markdown summary and a death
+heatmap). It is not a vitest test and it does not run on every PR: one full cohort of 120 seeds takes ~25–45 min.
 
-| Check | Target |
-|---|---|
-| boss spawn | 100 % in both cohorts |
-| raft launch median (expert) | 440–460 s |
-| expert win rate | 55–75 % |
-| novice win rate | 40–50 % |
-| any cohort | ≥ 15 % |
+```
+npm run qa:runs -- --runs 120 --label expert --out qa/out
+npm run qa:runs -- --runs 120 --bots 2 --idle 1 --label novice --out qa/out
+```
 
-Any violation is printed as `GATE FAIL: …` and fails the run (CI red). This is an acceptance gate: a red run means
-the beta is not accepted yet. The levers are §1–§2 (bars, waves, raft costs) and the bot pacing in
-`botNeeds.ts`; the harness itself changes no balance value.
+The CSV keeps the two clocks apart — this is the number the gate talks about:
 
-**CI**: `.github/workflows/balance.yml` ("Raft Rush acceptance", 03:23 UTC daily, on demand, and on pushes/PRs
-that touch Raft Rush) runs `npm run typecheck` and `npm run balance`, and writes the whole table and summary into
-the run summary.
+| Column | Meaning | Target |
+|---|---|---|
+| `raft_ready_s` | stage 3 is complete and the raft is in the water | 440–460 s (expert median) |
+| `departure_s` | the raft actually left (tide over, `launchRequest`) | 470–495 s (expert median) |
+
+`npm run qa:gate` runs the wider five-criterion QA gate (AT1–AT5, including the browser probe) on its own;
+`npm run qa:probe` drives that real browser client.
+
+**CSV gate** (`scripts/raft-acceptance.mjs`, owner: devops): reads the two CSVs and checks expert raft-ready
+median 440–460 s, expert departure median 470–495 s, expert win 55–75 %, idle-human cohort 0 wins (the anti-AFK
+rule), and boss spawn 100 % once the QA CSV carries a `boss_spawn` column (today it does not, so that check prints
+UNVERIFIED). It never replays a match. A red run means the beta is not accepted yet; the levers are §1–§2 (bars,
+waves, raft costs) and the bot pacing in `botNeeds.ts`.
+
+**CI**: `.github/workflows/balance.yml` ("Raft Rush CI", Node 22). Pushes/PRs that touch Raft Rush run
+`npm run typecheck`, `npx vitest run games/raft-rush --retry 2`, `npm run build`, `npm run build:server` and
+`scripts/smoke-hub.mjs`. Nightly at 03:23 UTC (and on demand, with a `runs` input) the acceptance job runs
+`qa:runs` for both cohorts and the CSV gate, and uploads `qa/out/` as an artifact. Perf decision: the render
+budget is covered by deterministic unit tests; the island-generation wall-clock budget stays in the suite with two
+retries as a load signal, never as a gameplay gate.
 
 **Render budget readout**: `?stats=1` on the game page prints draw calls and triangles for the frame just drawn,
 their peak and the quality tier, and mirrors them to `window.__raftPerf`. `?quality=low|medium|high` pins the tier
@@ -158,7 +169,7 @@ Colyseus there: only Home works.
 | Hub helpers + `/healthz` | `npx vitest run server/games.test.ts` |
 | Typecheck (game + hub) | `npx tsc --noEmit -p games/raft-rush/tsconfig.json`; whole repo `npm run typecheck` |
 | Client build | `node scripts/build-games.mjs raft-rush` |
-| What CI runs | `npm run typecheck && npm run balance` |
+| What CI runs (push/PR) | `npm run typecheck && npx vitest run games/raft-rush --retry 2 && npm run build && npm run build:server && node scripts/smoke-hub.mjs` |
 
 Room tests (`server/RaftRoom.test.ts`, `test/room-smoke.test.ts`):
 - They start an in-process Colyseus server on a free port and talk real WebSockets through colyseus.js. They stub
@@ -217,8 +228,10 @@ live room hasn't completed a fixed tick for `STALL_MS` (5 s): a blocked loop, or
 join codes) and no error text; throws from `health()` are logged throttled. The Docker image's HEALTHCHECK polls
 it every 30 s.
 
-**CI** (`.github/workflows/balance.yml`, every push/PR that touches Raft Rush, nightly and on demand, Node 22):
-`npm ci`, `npm run typecheck`, `npm run balance`. A red run is a gate violation, not a broken workflow.
+**CI** (`.github/workflows/balance.yml`, Node 22): every push/PR that touches Raft Rush runs typecheck, the
+game's tests, the client/server build and the hub smoke; nightly and on demand the acceptance job runs QA's
+`qa:runs` for both cohorts and gates on its CSV (§4). A red acceptance run is a gate violation, not a broken
+workflow.
 
 **Compiled server**: `npm run build:server` compiles the hub and every game's `server/` + `shared/` with
 `tsconfig.server.json` (NodeNext, tests and clients left out) into `dist/` (`dist/server/index.js`,

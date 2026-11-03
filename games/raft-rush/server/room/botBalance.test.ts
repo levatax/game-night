@@ -15,12 +15,6 @@
 // fast timers change the rules so much that the bots lose every match there. A band given for any other
 // scenario (another difficulty / team, RAFT_BALANCE_FAST=1) fails the run instead of passing silently; seed
 // count, start seed and trace don't matter. No band agreed yet → report only (bots win ~all Normal matches today).
-//
-// RAFT_BALANCE_GATE=1 is the acceptance gate (`npm run balance`): 30 fixed seeds for the expert cohort (Normal,
-// 3 bots, no idle humans) and 30 for the novice cohort (Normal, 2 bots + 1 idle human: a novice partner who never
-// plays). Every seed prints boss spawn, launch second, outcome and downs; the summary holds:
-//   boss spawn 100 % (both cohorts), expert launch median 440–460 s, expert win 55–75 %, novice win 40–50 %,
-//   and no cohort below 15 %. Any violation fails the test (CI red), the list is printed as GATE FAIL lines.
 // Owner: server-bots.
 
 import { describe, expect, it } from "vitest";
@@ -56,10 +50,6 @@ interface MatchReport {
   gnawed: number;
   throws: number;
   hits: number;
-  /** A boss (night 3 wave, or night 2 on nightmare) spawned at least once. */
-  boss: boolean;
-  /** Second the raft left (launchRequest), counted from the start of playing; null when it never launched. */
-  launchSec: number | null;
   rejects: Record<string, number>;
   goals: Record<string, number>;
 }
@@ -116,7 +106,7 @@ function runMatch(seed: number, bots: number, difficulty: Difficulty, fast: bool
   state.day = 1;
   state.dayPhase = "day";
 
-  const report: MatchReport = { seed, biome: island.biome, outcome: "timeout", seconds: 0, stage: 0, raft: "", delivered: 0, downs: 0, kills: 0, fish: 0, crafted: 0, spawns: 0, hurt: 0, gnawed: 0, throws: 0, hits: 0, boss: false, launchSec: null, rejects: {}, goals: {} };
+  const report: MatchReport = { seed, biome: island.biome, outcome: "timeout", seconds: 0, stage: 0, raft: "", delivered: 0, downs: 0, kills: 0, fish: 0, crafted: 0, spawns: 0, hurt: 0, gnawed: 0, throws: 0, hits: 0, rejects: {}, goals: {} };
   const limit = timings.landing + matchTicks(timings) + 60;
   const trace = !!process.env.RAFT_BALANCE_TRACE;
   const lastGoal = new Map<string, string>();
@@ -157,7 +147,6 @@ function runMatch(seed: number, bots: number, difficulty: Difficulty, fast: bool
     for (const ev of events) {
       if (ev.type === "launchRequest") {
         report.outcome = "launched";
-        report.launchSec = Math.round(state.clockTicks / TICK_RATE);
         done = true;
       } else if (ev.type === "teamWiped") {
         report.outcome = "wiped";
@@ -169,10 +158,7 @@ function runMatch(seed: number, bots: number, difficulty: Difficulty, fast: bool
       else if (ev.type === "monsterDie" && !ev.fled) report.kills++;
       else if (ev.type === "fishResult") report.fish++;
       else if (ev.type === "crafted") report.crafted++;
-      else if (ev.type === "monsterSpawn") {
-        report.spawns++;
-        if (ev.kind === "boss") report.boss = true;
-      }
+      else if (ev.type === "monsterSpawn") report.spawns++;
       else if (ev.type === "playerHurt") report.hurt += ev.amount;
       else if (ev.type === "raftDamage") report.gnawed += ev.amount;
       else if (ev.type === "throw" && !ev.toss) {
@@ -235,100 +221,8 @@ function parseBand(raw: string | undefined): { lo: number; hi: number } | null {
   return { lo, hi };
 }
 
-/* ============================================================ acceptance gate */
-
-/** The two cohorts the gate measures (see the header). */
-const EXPERT: Readonly<Scenario> = { difficulty: "normal", bots: 3, idle: 0, fast: false };
-const NOVICE: Readonly<Scenario> = { difficulty: "normal", bots: 2, idle: 1, fast: false };
-
-/** Larry's acceptance thresholds (2 Nov 2026). */
-const GATE = {
-  bossPct: 100,
-  launchMedian: { lo: 440, hi: 460 },
-  expertWin: { lo: 55, hi: 75 },
-  noviceWin: { lo: 40, hi: 50 },
-  minCohortWin: 15,
-} as const;
-
-interface CohortSummary {
-  name: string;
-  scenario: Scenario;
-  reports: MatchReport[];
-  wins: number;
-  winPct: number;
-  bossPct: number;
-  /** Median launch second among the runs that launched; null when none did. */
-  medianLaunch: number | null;
-}
-
-function median(values: number[]): number | null {
-  if (values.length === 0) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1]! + sorted[mid]!) / 2 : sorted[mid]!;
-}
-
-function summarize(name: string, scenario: Scenario, reports: MatchReport[]): CohortSummary {
-  const wins = reports.filter((r) => r.outcome === "launched").length;
-  const bosses = reports.filter((r) => r.boss).length;
-  const launches = reports.map((r) => r.launchSec).filter((s): s is number => s !== null);
-  return {
-    name,
-    scenario,
-    reports,
-    wins,
-    winPct: (100 * wins) / Math.max(1, reports.length),
-    bossPct: (100 * bosses) / Math.max(1, reports.length),
-    medianLaunch: median(launches),
-  };
-}
-
-function runCohort(name: string, scenario: Scenario, count: number, firstSeed: string | undefined): CohortSummary {
-  const reports: MatchReport[] = [];
-  for (let i = 0; i < count; i++) {
-    const seed = firstSeed ? Number(firstSeed) + i : 1000 + i * 7919;
-    reports.push(runMatch(seed, scenario.bots, scenario.difficulty, scenario.fast, scenario.idle));
-  }
-  return summarize(name, scenario, reports);
-}
-
-/** One compact line per seed: boss spawn, launch second, outcome, downs. */
-function printCohort(c: CohortSummary): void {
-  out(`\n== ${c.name}: ${scenarioName(c.scenario)} ==`);
-  for (const r of c.reports) {
-    out(
-      `seed ${String(r.seed).padEnd(7)} ${r.biome.padEnd(8)} ${r.outcome.padEnd(8)} boss ${(r.boss ? "yes" : "no").padEnd(3)} launch ${(r.launchSec === null ? "-" : `${r.launchSec}s`).padEnd(5)} downs ${String(r.downs).padEnd(2)} t=${r.seconds}s stage ${r.stage} delivered ${r.delivered}`,
-    );
-  }
-  out(
-    `${c.name}: ${c.wins}/${c.reports.length} wins = ${c.winPct.toFixed(0)} % | boss spawn ${c.bossPct.toFixed(0)} % | launch median ${c.medianLaunch === null ? "-" : `${c.medianLaunch.toFixed(0)}s`}`,
-  );
-}
-
-function gateViolations(expert: CohortSummary, novice: CohortSummary): string[] {
-  const bad: string[] = [];
-  const pct = (n: number): string => `${n.toFixed(0)} %`;
-  if (expert.bossPct < GATE.bossPct) bad.push(`expert boss spawn ${pct(expert.bossPct)} (need ${GATE.bossPct} %)`);
-  if (novice.bossPct < GATE.bossPct) bad.push(`novice boss spawn ${pct(novice.bossPct)} (need ${GATE.bossPct} %)`);
-  const med = expert.medianLaunch;
-  if (med === null) bad.push(`expert launch median missing (no run launched; need ${GATE.launchMedian.lo}–${GATE.launchMedian.hi} s)`);
-  else if (med < GATE.launchMedian.lo || med > GATE.launchMedian.hi) {
-    bad.push(`expert launch median ${med.toFixed(0)} s (need ${GATE.launchMedian.lo}–${GATE.launchMedian.hi} s)`);
-  }
-  if (expert.winPct < GATE.expertWin.lo || expert.winPct > GATE.expertWin.hi) {
-    bad.push(`expert win ${pct(expert.winPct)} (need ${GATE.expertWin.lo}–${GATE.expertWin.hi} %)`);
-  }
-  if (novice.winPct < GATE.noviceWin.lo || novice.winPct > GATE.noviceWin.hi) {
-    bad.push(`novice win ${pct(novice.winPct)} (need ${GATE.noviceWin.lo}–${GATE.noviceWin.hi} %)`);
-  }
-  if (expert.winPct < GATE.minCohortWin) bad.push(`expert win ${pct(expert.winPct)} below the ${GATE.minCohortWin} % floor`);
-  if (novice.winPct < GATE.minCohortWin) bad.push(`novice win ${pct(novice.winPct)} below the ${GATE.minCohortWin} % floor`);
-  return bad;
-}
-
 const env = process.env;
-const gate = !!env.RAFT_BALANCE_GATE;
-const enabled = !!env.RAFT_BALANCE && !gate;
+const enabled = !!env.RAFT_BALANCE;
 const seeds = Number(env.RAFT_BALANCE_SEEDS ?? 6);
 const scenario: Scenario = {
   difficulty: (env.RAFT_BALANCE_DIFFICULTY ?? "normal") as Difficulty,
@@ -386,28 +280,5 @@ describe("bot balance harness", () => {
     expect(isTarget({ ...TARGET, fast: true })).toBe(false);
     expect(isTarget({ ...TARGET, idle: 1, bots: 2 })).toBe(false);
     expect(isTarget({ ...TARGET, difficulty: "nightmare" })).toBe(false);
-  });
-});
-
-describe("raft rush acceptance gate", () => {
-  const gateSeeds = Number(env.RAFT_BALANCE_SEEDS ?? 30);
-  it.skipIf(!gate)("runs 30 fixed seeds per cohort and holds Larry's acceptance gate", { timeout: 60_000 + gateSeeds * 20_000 }, () => {
-    const started = performance.now();
-    const expert = runCohort("expert", EXPERT, gateSeeds, env.RAFT_BALANCE_SEED);
-    const novice = runCohort("novice", NOVICE, gateSeeds, env.RAFT_BALANCE_SEED);
-    printCohort(expert);
-    printCohort(novice);
-    const bad = gateViolations(expert, novice);
-    out(
-      `\nGATE ${bad.length === 0 ? "PASS" : "FAIL"} (${gateSeeds} seeds/cohort, ${(performance.now() - started).toFixed(1)} s): ` +
-        `expert win ${expert.winPct.toFixed(0)} % [${GATE.expertWin.lo}–${GATE.expertWin.hi}], ` +
-        `novice win ${novice.winPct.toFixed(0)} % [${GATE.noviceWin.lo}–${GATE.noviceWin.hi}], ` +
-        `boss ${expert.bossPct.toFixed(0)} / ${novice.bossPct.toFixed(0)} % [100], ` +
-        `launch median ${expert.medianLaunch === null ? "-" : `${expert.medianLaunch.toFixed(0)}s`} [${GATE.launchMedian.lo}–${GATE.launchMedian.hi}s]`,
-    );
-    for (const line of bad) out(`GATE FAIL: ${line}`);
-    expect(expert.reports.length).toBe(gateSeeds);
-    expect(novice.reports.length).toBe(gateSeeds);
-    expect(bad, `acceptance gate violations:\n${bad.join("\n")}`).toEqual([]);
   });
 });

@@ -15,11 +15,12 @@
     "dev": "node scripts/dev.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "balance": "RAFT_BALANCE=1 RAFT_BALANCE_GATE=1 RAFT_BALANCE_SEEDS=30 vitest run games/raft-rush/server/room/botBalance.test.ts --disableConsoleIntercept",
-    "balance:report": "RAFT_BALANCE=1 RAFT_BALANCE_SEEDS=30 vitest run games/raft-rush/server/room/botBalance.test.ts --disableConsoleIntercept",
     "voices": "tsx scripts/generate-voices.ts",
     "sfx": "node scripts/generate-raft-sfx.mjs",
-    "sfx:kasala": "node scripts/generate-kasala-sfx.mjs"
+    "sfx:kasala": "node scripts/generate-kasala-sfx.mjs",
+    "qa:runs": "tsx games/raft-rush/qa/batch.ts",
+    "qa:gate": "tsx games/raft-rush/qa/gate.ts",
+    "qa:probe": "node games/raft-rush/qa/client-probe.mjs"
   },
   "dependencies": {
     "@colyseus/core": "^0.16.26",

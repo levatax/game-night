@@ -9,3 +9,4 @@ dist/
 .env.*
 !.env.example
 .voice-cache/
+games/raft-rush/qa/out/

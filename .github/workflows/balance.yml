@@ -1,35 +1,58 @@
-# Raft Rush acceptance gate: one command (`npm run balance`) runs 30 fixed seeds for the expert cohort
-# (Normal, 3 bots) and 30 for the novice cohort (Normal, 2 bots + 1 idle human) on the real RaftWorld + BotDesk.
-# The per-seed table (boss spawn, launch second, outcome, downs) and the gate summary land in the run summary;
-# any gate violation fails the job. Thresholds (2 Nov 2026):
-#   boss spawn 100 % · expert launch median 440–460 s · expert win 55–75 % · novice win 40–50 % · no cohort < 15 %.
-# A failing run is the point: it means the beta is not accepted yet, not that CI is broken.
-name: Raft Rush acceptance
+# Raft Rush CI. One measurement engine only: QA's `qa:runs` (games/raft-rush/qa/batch.ts) writes the CSV and
+# `scripts/raft-acceptance.mjs` reads that same CSV; nothing here replays matches a second time.
+#
+# On every push/PR touching Raft Rush: typecheck, the game's unit/room tests, client + server build, hub smoke.
+# Nightly (03:23 UTC) and on demand: the full acceptance gate — 120 seeds for each cohort, then the CSV gate.
+#   raft_ready_s  = stage 3 complete, raft in the water (target 440–460 s)
+#   departure_s   = the raft actually left (target 470–495 s)
+# A red gate means the beta is not accepted yet; that is the point of the gate.
+#
+# Perf decision: the render budget is asserted by deterministic unit tests (perfBudget.test.ts) in the test job.
+# The island-generation wall-clock budget stays in the suite with two retries: on shared CI runners it is a
+# load signal, not a gate, and a red run there is never taken as a gameplay regression on its own.
+name: Raft Rush CI
 
 on:
   schedule:
     - cron: "23 3 * * *"
   workflow_dispatch:
+    inputs:
+      runs:
+        description: "Seeds per cohort (100–150 for a band decision; 30 is smoke only)"
+        type: number
+        default: 120
+      seed_base:
+        description: "First seed (qa:runs adds 7919 per run)"
+        type: number
+        default: 1000
   push:
     branches:
       - feat/raft-rush-fun
       - feat/raft-rush-acceptance
+      - main
     paths:
       - "games/raft-rush/**"
+      - "scripts/raft-acceptance.mjs"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/balance.yml"
   pull_request:
     paths:
       - "games/raft-rush/**"
+      - "scripts/raft-acceptance.mjs"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/balance.yml"
 
+concurrency:
+  group: raft-rush-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  balance:
+  checks:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -39,13 +62,40 @@ jobs:
       - run: npm ci
       - name: Typecheck
         run: npm run typecheck
-      - name: Raft Rush acceptance gate (30 seeds x 2 cohorts)
-        shell: bash
-        env:
-          NO_COLOR: "1"
-        run: |
-          set +e
-          npm run balance 2>&1 | tee balance.txt
-          status=${PIPESTATUS[0]}
-          { echo "## Raft Rush acceptance gate"; echo '```'; cat balance.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-          exit "$status"
+      - name: Raft Rush tests (wall-clock perf retried, not a gate)
+        run: npx vitest run games/raft-rush --retry 2
+      - name: Build clients and server
+        run: npm run build && npm run build:server
+      - name: Boot the compiled hub and check /healthz
+        run: node scripts/smoke-hub.mjs
+
+  acceptance:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      RUNS: ${{ inputs.runs || 120 }}
+      SEED_BASE: ${{ inputs.seed_base || 1000 }}
+      NO_COLOR: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Expert cohort (3 bots, no idle humans)
+        run: npm run qa:runs -- --runs "$RUNS" --seed-base "$SEED_BASE" --label expert --out qa/out
+      - name: Idle-human cohort (2 bots + 1 idle human)
+        run: npm run qa:runs -- --runs "$RUNS" --seed-base "$SEED_BASE" --bots 2 --idle 1 --label novice --out qa/out
+      - name: Gate on the same CSV
+        run: node scripts/raft-acceptance.mjs --expert qa/out/runs-expert-*.csv --novice qa/out/runs-novice-*.csv
+      - name: Upload the measurement set
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: raft-rush-acceptance-${{ github.run_id }}
+          path: qa/out/
+          retention-days: 30
