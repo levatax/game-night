@@ -136,6 +136,7 @@ export function runOne(seed: number, scenario: Scenario, runIndex = 0, runIdPref
   const rejects: Record<string, number> = {};
   const goals: Record<string, number> = {};
   let spawned = 0;
+  let bossSpawned = false;
   let kills = 0;
   let crafted = 0;
   let throws = 0;
@@ -225,6 +226,7 @@ export function runOne(seed: number, scenario: Scenario, runIndex = 0, runIdPref
           break;
         case "monsterSpawn":
           spawned++;
+          if (ev.kind === "boss") bossSpawned = true;
           break;
         case "monsterDie":
           if (!ev.fled) kills++;
@@ -294,6 +296,7 @@ export function runOne(seed: number, scenario: Scenario, runIndex = 0, runIdPref
     focal_points: focal.score,
     death_height: focalFirstDown ? round2(focalFirstDown.y) : null,
     first_choice_source: "",
+    boss_spawn: bossSpawned ? 1 : 0,
   };
 
   return {

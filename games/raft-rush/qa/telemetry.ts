@@ -11,6 +11,10 @@
 //   (the acceptance-gate "raft in the water" moment; target 440–460 s, early = < 440 s).
 // - departure_s = seconds from the start of playing until the raft actually left (launchRequest;
 //   target 470–495 s). This build has no separate tide delay, so departure_s == the launch second.
+// - boss_spawn = 1 when a monsterSpawn event with kind "boss" was observed in the run, else 0. Bosses are
+//   scheduled for night 3 (normal/vacation) and additionally night 2 (nightmare), so 0 is correct for a run
+//   that ended before that wave (early launch, wipe or storm): only match_seconds >= 450 runs are in scope
+//   for the "boss spawned" check.
 
 export interface RunRow {
   run_id: string;
@@ -54,6 +58,7 @@ export interface RunRow {
   focal_points: number;
   death_height: number | null;
   first_choice_source: string;
+  boss_spawn: 0 | 1;
 }
 
 export const REQUIRED_COLUMNS: ReadonlyArray<keyof RunRow> = [
@@ -99,6 +104,7 @@ export const EXTRA_COLUMNS: ReadonlyArray<keyof RunRow> = [
   "focal_points",
   "death_height",
   "first_choice_source",
+  "boss_spawn",
 ];
 
 export const COLUMNS: ReadonlyArray<keyof RunRow> = [...REQUIRED_COLUMNS, ...EXTRA_COLUMNS];

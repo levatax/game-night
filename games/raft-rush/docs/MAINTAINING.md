@@ -127,13 +127,16 @@ The CSV keeps the two clocks apart — this is the number the gate talks about:
 | `raft_ready_s` | stage 3 is complete and the raft is in the water | 440–460 s (expert median) |
 | `departure_s` | the raft actually left (tide over, `launchRequest`) | 470–495 s (expert median) |
 
-`npm run qa:gate` runs the wider five-criterion QA gate (AT1–AT5, including the browser probe) on its own;
-`npm run qa:probe` drives that real browser client.
+`npm run qa:gate` is a **local diagnostic, not an acceptance count**: it replays no match, reads the newest
+`qa/out/runs-*.csv` (or `--csv <file>`) and prints descriptive numbers only — no PASS/FAIL, no AT table. The beta
+band decision is made only by `scripts/raft-acceptance.mjs` over the same `qa:runs` CSV. `npm run qa:probe`
+drives the real browser client for the client-only observations.
 
 **CSV gate** (`scripts/raft-acceptance.mjs`, owner: devops): reads the two CSVs and checks expert raft-ready
 median 440–460 s, expert departure median 470–495 s, expert win 55–75 %, idle-human cohort 0 wins (the anti-AFK
-rule), and boss spawn 100 % once the QA CSV carries a `boss_spawn` column (today it does not, so that check prints
-UNVERIFIED). It never replays a match. A red run means the beta is not accepted yet; the levers are §1–§2 (bars,
+rule), and boss spawn 100 % among runs that reach the boss window (`match_seconds >= 450`; the CSV now carries the
+`boss_spawn` 0/1 column as its last column, and shorter runs are out of scope, never a FAIL). It never replays a
+match. A red run means the beta is not accepted yet; the levers are §1–§2 (bars,
 waves, raft costs) and the bot pacing in `botNeeds.ts`.
 
 **CI**: `.github/workflows/balance.yml` ("Raft Rush CI", Node 22). Pushes/PRs that touch Raft Rush run
