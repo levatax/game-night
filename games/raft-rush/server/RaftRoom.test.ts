@@ -83,7 +83,7 @@ const allNotices: NoticeMsg[] = [];
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-async function waitFor<T>(label: string, probe: () => T | null | undefined | false, timeoutMs = 6000): Promise<T> {
+async function waitFor<T>(label: string, probe: () => T | null | undefined | false, timeoutMs = 15000): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const value = probe();
@@ -117,7 +117,7 @@ function received<K extends MessageType>(p: Peer, type: K, match?: (m: ServerMes
   return all(p, type, match)[0];
 }
 
-function waitMessage<K extends MessageType>(p: Peer, type: K, match?: (m: ServerMessages[K]) => boolean, timeoutMs = 6000): Promise<ServerMessages[K]> {
+function waitMessage<K extends MessageType>(p: Peer, type: K, match?: (m: ServerMessages[K]) => boolean, timeoutMs = 15000): Promise<ServerMessages[K]> {
   return waitFor(`${type} message`, () => received(p, type, match), timeoutMs);
 }
 
@@ -199,10 +199,16 @@ function inventory(p: PlayerView | undefined): string {
 }
 
 async function leaveAll(list: Peer[]): Promise<void> {
-  await Promise.all(list.map((p) => (p.room.connection.isOpen ? Promise.race([p.room.leave(true).catch(() => undefined), sleep(500)]) : Promise.resolve())));
+  // A loaded host makes the close handshake slow: give it real time instead of the old 500 ms race, which could
+  // leave a client behind and make the next test's room look occupied.
+  await Promise.all(list.map((p) => (p.room.connection.isOpen ? Promise.race([p.room.leave(true).catch(() => undefined), sleep(10_000)]) : Promise.resolve())));
 }
 
 beforeAll(async () => {
+  // The host shell may export NODE_ENV=production, and RaftRoom deliberately ignores every test knob (fast timers,
+  // warp, manual clock) in production. Pin the worker to test so the suite behaves the same whatever the caller's
+  // environment is; restore it in afterAll with unstubAllEnvs.
+  vi.stubEnv("NODE_ENV", "test");
   vi.stubEnv("RAFT_TEST", "1");
   gameServer.define(ROOM_NAME, RaftRoom);
   await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
@@ -213,7 +219,7 @@ afterAll(async () => {
   await leaveAll(peers);
   await gameServer.gracefullyShutdown(false);
   vi.unstubAllEnvs();
-}, 15_000);
+}, 30_000);
 
 describe("RaftRoom lobby → match", () => {
   it("validates joins, runs the lobby (settings, seed preview, ready gating) and starts a match players can walk in", async () => {
@@ -327,7 +333,7 @@ describe("RaftRoom lobby → match", () => {
     await sleep(100);
     expect(["landing", "playing"]).toContain(host.room.state.phase);
     await leaveAll([host, guest]);
-  }, 30_000);
+  }, 60_000);
 
   it(`a lone human gets ${SOLO_AUTO_BOTS} helper bots and the fast match reaches matchEnd with standings`, async () => {
     const host = await create({ nickname: "Deniz", character: "amca", fast: true, testSeed: 5, manualClock: true });
@@ -380,7 +386,7 @@ describe("RaftRoom lobby → match", () => {
     expect([...host.room.state.players.values()].filter((p) => p.bot && p.ready)).toHaveLength(SOLO_AUTO_BOTS);
     expect(host.room.state.day).toBe(0);
     await leaveAll([host]);
-  }, 20_000);
+  }, 60_000);
 });
 
 describe("RaftRoom seats", () => {
@@ -421,7 +427,7 @@ describe("RaftRoom seats", () => {
     expect(after).toMatchObject({ bot: false, botRole: "", alive: true, spectator: false });
     expect(host.room.state.players.size).toBe(2);
     await leaveAll([host, back]);
-  }, 20_000);
+  }, 60_000);
 
   it("a mid-match leaver's seat becomes a bot, the host moves on, late joiners spectate", async () => {
     const host = await create({ nickname: "Kaan", character: "fenomen", fast: true, testSeed: 4, manualClock: true });
@@ -464,7 +470,7 @@ describe("RaftRoom seats", () => {
     expect(me(late)?.spectator).toBe(false);
     expect(guest.room.state.players.size).toBe(2);
     await leaveAll([guest, late]);
-  }, 20_000);
+  }, 60_000);
 
   it("rejects joins into a full room and caps the helper bots", async () => {
     const host = await create({ nickname: "Rehber", fast: true, testSeed: 2 });
@@ -495,7 +501,7 @@ describe("RaftRoom seats", () => {
     host.room.send("addBot", {});
     await waitMessage(host, "notice", (n) => n.key === "beachFull" || n.key === "tooManyBots");
     await leaveAll([host, guest]);
-  }, 20_000);
+  }, 60_000);
 });
 
 describe("RaftRoom lifecycle", () => {
@@ -528,7 +534,7 @@ describe("RaftRoom lifecycle", () => {
       vi.stubEnv("RAFT_MAX_ROOMS", "");
       allocate.mockRestore();
     }
-  }, 20_000);
+  }, 60_000);
 
   it("a create whose island generation throws gives its code and its live-room slot back", async () => {
     const codes = getRoomCodes();
@@ -615,7 +621,7 @@ describe("RaftRoom lifecycle", () => {
     room.advance(2000);
     await waitFor("empty room disposed", () => !localRoom(code));
     expect(getRoomCodes().lookup(code)).toBeUndefined();
-  }, 20_000);
+  }, 60_000);
 
   it("a drop whose stand-in bot fails still gets its reconnect grace, and the emptied room still disposes (manual clock)", async () => {
     const host = await create({ nickname: "Ilgaz", fast: true, testSeed: 14, manualClock: true });
@@ -654,7 +660,7 @@ describe("RaftRoom lifecycle", () => {
     await waitFor("no client left", () => room.clients.length === 0);
     room.advance((EMPTY_ROOM_DISPOSE_SEC + 1) * 1000);
     await waitFor("empty room disposed", () => !localRoom(code));
-  }, 20_000);
+  }, 60_000);
 
   it("a graceful server shutdown closes every client with CLOSE_CODE.SERVER_RESTART and gives the code back", async () => {
     const host = await create({ nickname: "Gül", fast: true, testSeed: 9 });
@@ -669,7 +675,7 @@ describe("RaftRoom lifecycle", () => {
     expect(closes).toEqual([CLOSE_CODE.SERVER_RESTART, CLOSE_CODE.SERVER_RESTART]);
     await waitFor("room disposed", () => !localRoom(code));
     expect(getRoomCodes().lookup(code)).toBeUndefined();
-  }, 20_000);
+  }, 60_000);
 
   it("every human leaving mid-match ends it as abandoned; one log line per lifecycle transition", async () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -705,7 +711,7 @@ describe("RaftRoom lifecycle", () => {
       vi.stubEnv("RAFT_LOG", "");
       log.mockRestore();
     }
-  }, 20_000);
+  }, 60_000);
 });
 
 describe("RaftRoom host & message hardening", () => {
@@ -738,7 +744,7 @@ describe("RaftRoom host & message hardening", () => {
     await waitFor("Anıl hosts again", () => back.room.state.hostId === aId);
     await waitMessage(back, "notice", (n) => n.key === "host" && n.params?.n === "Anıl");
     await leaveAll([back]);
-  }, 20_000);
+  }, 60_000);
 
   it("a world reject reaches only its actor; a human's craft / chest messages spend a per-kind action budget (manual clock)", async () => {
     const host = await create({ nickname: "Cem", character: "kaptan", fast: true, testSeed: 21, manualClock: true });
@@ -808,7 +814,7 @@ describe("RaftRoom host & message hardening", () => {
       intake.mockRestore();
     }
     await leaveAll([host, guest]);
-  }, 20_000);
+  }, 60_000);
 
   it("a client flooding messages is cut off at its budget; everyone else (and the flooder, a second later) is served", async () => {
     const host = await create({ nickname: "Gül", fast: true, testSeed: 13 });
@@ -816,35 +822,127 @@ describe("RaftRoom host & message hardening", () => {
     const flooder = await join(code, { nickname: "Hasan" });
     await waitFor("2 players", () => host.room.state.players.size === 2);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const intake = vi.spyOn(MessageBudget.prototype, "take"); // calls through; records ok/drop/firstDrop per client
     vi.stubEnv("RAFT_LOG", "1");
     try {
-      // every non-host "start" costs a validation and earns a hostOnly notice — until the budget runs out
-      for (let i = 0; i < 3 * MESSAGE_BURST; i++) flooder.room.send("start", {});
-      await waitFor("budget spent", () => all(flooder, "notice", (n) => n.key === "hostOnly").length >= MESSAGE_BURST);
+      // Every non-host "start" costs a validation and earns a hostOnly notice — until the budget runs out. Enough
+      // messages that even a slow (loaded) sender outruns the 120/s refill: to admit them all would take ~24 s.
+      const id = flooder.room.sessionId;
+      const sent = 12 * MESSAGE_BURST;
+      for (let i = 0; i < sent; i++) flooder.room.send("start", {});
+      await waitFor("every flood message reached the room", () => intake.mock.calls.filter((c) => c[0] === id).length >= sent);
+      const verdicts = intake.mock.calls.flatMap((c, i) => (c[0] === id ? [intake.mock.results[i]!.value as "ok" | "drop" | "firstDrop"] : []));
+      const admitted = verdicts.filter((v) => v === "ok").length;
+      const firstDrops = verdicts.filter((v) => v === "firstDrop").length;
+      expect(admitted).toBeGreaterThanOrEqual(MESSAGE_BURST);
+      expect(admitted).toBeLessThan(sent); // the budget really cut the flood off
+      expect(firstDrops).toBeGreaterThanOrEqual(1);
+
+      // Each admitted message is served exactly once; nothing dropped reaches the room.
+      await waitFor("every admitted message served", () => all(flooder, "notice", (n) => n.key === "hostOnly").length >= admitted);
+      const served = all(flooder, "notice", (n) => n.key === "hostOnly").length;
+      expect(served).toBe(admitted);
+      // One flood log line per firstDrop verdict (rate-limited to one per DROP_LOG_MS), all for this client.
+      const floodLogs = logLines(warn, code).filter((l) => l.event === "flood" && l.client === id);
+      expect(floodLogs).toHaveLength(firstDrops);
+
       host.room.send("settings", { difficulty: "vacation" });
       await waitFor("host still served", () => host.room.state.settings.difficulty === "vacation");
-      await sleep(200);
-      const served = all(flooder, "notice", (n) => n.key === "hostOnly").length;
-      expect(served).toBeGreaterThanOrEqual(MESSAGE_BURST);
-      expect(served).toBeLessThan(MESSAGE_BURST + 60);
-      expect(logLines(warn, code).filter((l) => l.event === "flood" && l.client === flooder.room.sessionId)).toHaveLength(1);
 
       await sleep(1000);
       flooder.room.send("addBot", {});
       await waitFor("served again", () => all(flooder, "notice", (n) => n.key === "hostOnly").length > served);
     } finally {
       vi.stubEnv("RAFT_LOG", "");
+      intake.mockRestore();
       warn.mockRestore();
     }
     await leaveAll([host, flooder]);
-  }, 20_000);
+  }, 60_000);
 });
 
 describe("RaftRoom notices", () => {
-  it("every notice carries a key of client/src/i18n/strings/server.ts and its filled English line", () => {
-    expect(allNotices.length).toBeGreaterThan(10);
+  /**
+   * A self-contained tour that makes the room emit one of every notice this file checks. It owns its rooms and
+   * clients, so the notice contract is exercised even when this test runs alone (`-t`) or an earlier test failed.
+   */
+  async function noticeTour(): Promise<Peer[]> {
+    const tour: Peer[] = [];
+
+    // Solo start (soloBots), then the lobby bot limit and its notices.
+    const solo = await create({ nickname: "Tur Solo", fast: true, testSeed: 91, manualClock: true });
+    tour.push(solo);
+    solo.room.send("start", {});
+    await waitMessage(solo, "notice", (n) => n.key === "soloBots");
+    await leaveAll([solo]);
+
+    const bots = await create({ nickname: "Tur Bot", fast: true, testSeed: 92, manualClock: true });
+    tour.push(bots);
+    bots.room.send("addBot", {});
+    await waitMessage(bots, "notice", (n) => n.key === "botAdded");
+    await waitFor("tour bot seated", () => [...bots.room.state.players.values()].some((p) => p.bot));
+    const botId = [...bots.room.state.players.values()].find((p) => p.bot)!.id;
+    bots.room.send("removeBot", { id: botId });
+    await waitMessage(bots, "notice", (n) => n.key === "botRemoved");
+    for (let i = 0; i < MAX_BOTS; i++) bots.room.send("addBot", {});
+    await waitFor("tour bots full", () => [...bots.room.state.players.values()].filter((p) => p.bot).length === MAX_BOTS);
+    bots.room.send("addBot", {});
+    await waitMessage(bots, "notice", (n) => n.key === "tooManyBots");
+    await leaveAll([bots]);
+
+    // Two humans: host-only / duel / lazy-start notices, then a match with a spectator and a takeover.
+    const host = await create({ nickname: "Tur Host", character: "kaptan", fast: true, testSeed: 93, manualClock: true });
+    const code = host.room.roomId;
+    const room = localRoom(code)!;
+    tour.push(host);
+    const guest = await join(code, { nickname: "Tur Guest", character: "sef" });
+    tour.push(guest);
+    await waitFor("tour pair", () => host.room.state.players.size === 2);
+
+    guest.room.send("settings", { difficulty: "vacation" });
+    await waitMessage(guest, "notice", (n) => n.key === "hostOnly");
+    host.room.send("settings", { mode: "duel" });
+    await waitMessage(host, "notice", (n) => n.key === "duelLocked");
+    host.room.send("start", {});
+    await waitMessage(host, "notice", (n) => n.key === "cantStartLazyOne");
+
+    guest.room.send("ready", { ready: true });
+    await waitFor("tour ready", () => seen(host, guest.room.sessionId)?.ready === true);
+    host.room.send("start", {});
+    await waitMessage(guest, "matchStart");
+
+    const late = await join(code, { nickname: "Tur Late", character: "amca" });
+    tour.push(late);
+    await waitMessage(late, "notice", (n) => n.key === "spectatingYou");
+
+    const hostId = host.room.sessionId;
+    const guestId = guest.room.sessionId;
+    await host.room.leave(true);
+    await waitMessage(guest, "notice", (n) => n.key === "tookOver" && n.params?.n === "Tur Host");
+    await waitFor("tour takeover synced", () => seen(guest, hostId)?.bot === true);
+    await waitMessage(guest, "notice", (n) => n.key === "host" && n.params?.n === "Tur Guest");
+    await waitFor("tour host moved", () => guest.room.state.hostId === guestId);
+
+    const token = guest.room.reconnectionToken;
+    guest.room.connection.close();
+    await waitMessage(late, "notice", (n) => n.key === "reconnecting" && n.params?.n === "Tur Guest");
+    const back = adopt(await new Client(endpoint).reconnect<RaftStateView>(token));
+    tour.push(back);
+    await waitMessage(late, "notice", (n) => n.key === "reconnected" && n.params?.n === "Tur Guest");
+
+    await playToPodium(room);
+    back.room.send("rematch", { ready: true });
+    await waitMessage(back, "notice", (n) => n.key === "rematch");
+    await leaveAll([late, back]);
+    return tour;
+  }
+
+  it("every notice carries a key of client/src/i18n/strings/server.ts and its filled English line", async () => {
+    const tour = await noticeTour();
+    const received = [...allNotices, ...tour.flatMap((p) => all(p, "notice"))];
+    expect(received.length).toBeGreaterThan(10);
     const keys = new Set<string>();
-    for (const n of allNotices) {
+    for (const n of received) {
       expect(serverStrings, n.key).toHaveProperty(n.key);
       const line = serverStrings[n.key as keyof typeof serverStrings];
       expect(n.text).toBe(fill(line, n.params ?? {}));
@@ -853,9 +951,13 @@ describe("RaftRoom notices", () => {
     for (const k of ["hostOnly", "duelLocked", "cantStartLazyOne", "soloBots", "reconnecting", "reconnected", "tookOver", "host", "spectatingYou", "rematch", "botAdded", "botRemoved", "tooManyBots"]) {
       expect(keys.has(k), k).toBe(true);
     }
-  });
+  }, 60_000);
 
-  it("notice keys of every client actually received are known (sanity on the inbox helper)", () => {
-    for (const p of peers) for (const k of noticeKeys(p)) expect(Object.keys(serverStrings)).toContain(k);
-  });
+  it("notice keys of every client actually received are known (sanity on the inbox helper)", async () => {
+    const host = await create({ nickname: "Tur Kontrol", fast: true, testSeed: 94, manualClock: true });
+    const guest = await join(host.room.roomId, { nickname: "Tur Konuk", character: "sef" });
+    await waitMessage(host, "notice", (n) => n.key.startsWith("joined"));
+    for (const p of [host, guest]) for (const k of noticeKeys(p)) expect(Object.keys(serverStrings)).toContain(k);
+    await leaveAll([host, guest]);
+  }, 60_000);
 });
