@@ -112,6 +112,22 @@ per-chunk culling), rafts back to instanced parts (5 per raft) and characters to
 (16/avatar). That profile measures ~120 draws solo / ~170 duel — still over budget, which is why per-archetype
 instancing alone does not replace multi-draw.
 
+## Minimum spec: WEBGL_multi_draw (decision, 2026-11-03)
+
+Re-measured on the integrated branch (`feat/raft-rush-fun` with the perf and QA/acceptance work merged,
+seed 4471, high, no GPU capture):
+
+| layout | total draws, extension on | total draws, extension off | total triangles |
+| --- | ---: | ---: | ---: |
+| solo | 42 | **292** | 118k |
+| duel | 57 | **260** | 211k |
+
+Against the shipped budget of 60 draws / 250k triangles (`client/src/render/perfBudget.ts`) both layouts pass
+only with `WEBGL_multi_draw`. Decision: **the extension is part of the minimum spec**; the client requires a
+WebGL2 browser with `WEBGL_multi_draw` (Chromium/WebKit/Firefox, 2022+). No second rendering path is built for
+browsers without it — those clients fall back to one GL call per batched range and are out of spec. Revisit only
+if telemetry from a real beta shows players on such browsers.
+
 ## Verification
 
 Run on a fresh `npm ci --include=dev` (this sandbox's npm config sets `omit=dev`, so a plain `npm ci`
