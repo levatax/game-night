@@ -110,7 +110,7 @@ import { matchRngs, previewSeed, textRng, type Rng } from "./room/rng.js";
 import { scoreMatch, type ScoreInput } from "./room/scoring.js";
 import { readKnobs, NO_KNOBS, type TestKnobs } from "./room/testing.js";
 import { say } from "./room/text.js";
-import { roomTimings, secondsLeft, type RoomTimings } from "./room/timings.js";
+import { roomTimings, type RoomTimings } from "./room/timings.js";
 import { PlayerState, RaftState } from "./schema.js";
 import { isBroadcastEvent, type GameEvent, type GameEventOf, type LaunchRequestEvent } from "./world/events.js";
 import { RaftWorld } from "./world/World.js";
@@ -529,7 +529,7 @@ export class RaftRoom extends Room<RaftState> {
     s.phaseTicksLeft = clock.phaseLeft;
     if (!this.stormWarned && !clock.over && clock.day === DAYS && clock.dayPhase === "night" && clock.stormLeft <= this.timings.stormWarnTicks) {
       this.stormWarned = true;
-      this.sendAll(MSG.STORM_WARNING, { tick: s.tick, secondsLeft: secondsLeft(clock.stormLeft) });
+      this.sendAll(MSG.STORM_WARNING, { tick: s.tick, secondsLeft: matchLeftSec(this.timings, s.clockTicks, s.phase === "landing" ? s.phaseTicksLeft : 0) });
     }
     if (clock.over) {
       this.enterStorm();

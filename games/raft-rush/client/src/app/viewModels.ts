@@ -354,7 +354,7 @@ export function buildHudModel(i: HudInputs): HudModel {
     days: DAYS,
     dayPhase: clock.dayPhase,
     phaseSecLeft: i.phase === "landing" ? timings.day / TICK_RATE : clock.phaseLeft / TICK_RATE,
-    stormSecLeft: clock.stormLeft / TICK_RATE,
+    stormSecLeft: matchLeftSec(timings, i.clockTicks, i.phase === "landing" ? state.phaseTicksLeft : 0),
     cycle: clock.cycle,
     weather: state.weather,
     hp,

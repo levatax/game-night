@@ -277,7 +277,8 @@ export const BASE_NODE_COUNTS = { tree: 120, palm: 30, rock: 60, bush: 80 } as c
 /**
  * Resource scarcity ramp: the share of every node the island still offers as the match runs out. Buckets are
  * match-progress fractions (0..1 of the whole day clock); the first bucket at or below the progress wins.
- * 100 % → 75 % → 50 % → 35 %, so the last stretch is a scramble rather than an endless forest.
+ * 100 % → 115 % → 135 % → 150 % (Game Designer v4b): the late match gets more generous, not scarcer, so the run-1
+ * economy binds early and a competent team is not starved at the gate.
  */
 export const RESOURCE_RAMP: ReadonlyArray<{ readonly from: number; readonly share: number }> = [
   { from: 0, share: 1 },

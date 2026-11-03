@@ -3,6 +3,7 @@
 // Owner: client-ui.
 
 import { DAY_SEC, DUSK_SEC, NIGHT_SEC } from "../../../../shared/constants";
+import { clockLabel } from "../../../../shared/rules/tempo";
 import type { DayPhase, Phase, Weather } from "../../../../shared/types";
 import { clockText, t, weatherName } from "../../i18n";
 import { WEATHER_ICON } from "../content";
@@ -122,6 +123,6 @@ export class DayClock {
     if (sec === this.stormSec) return;
     this.stormSec = sec;
     setHidden(this.storm, !show);
-    if (show) setText(this.stormText, t(m.stormWarning ? "hud.stormSoon" : "hud.stormIn", { t: clockText(sec) }));
+    if (show) setText(this.stormText, t(m.stormWarning ? "hud.stormSoon" : "hud.stormIn", { t: clockLabel(sec) }));
   }
 }

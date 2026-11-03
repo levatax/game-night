@@ -16,8 +16,8 @@ import type {
   StormWarningEvent,
   WeatherEvent,
 } from "../../../shared/protocol";
-import { clockAt, matchTicks } from "../../../shared/rules/schedule";
-import { biomeName, clockText, has, t, weatherName } from "../i18n";
+import { clockLabel, matchLeftSec } from "../../../shared/rules/tempo";
+import { biomeName, has, t, weatherName } from "../i18n";
 import type { NetEventMap } from "../net/types";
 import { above, bannerLine, feedLine, point, type FeedbackContext } from "./feedbackContext";
 
@@ -59,12 +59,12 @@ export class FlowFeedback {
   /** "Day 1 — storm in 7:45": the landing banner (game4.md §4.2). */
   private onMatchStart(ev: MatchStartEvent): void {
     const { audio } = this.ctx;
-    const storm = matchTicks(this.ctx.net.timings) / TICK_RATE;
+    const storm = matchLeftSec(this.ctx.net.timings, 0, this.ctx.net.timings.landing);
     audio.play("dayStart");
     bannerLine(this.ctx, "day", "info", {
       params: { n: 1, days: DAYS },
       sub: "daySubFirst",
-      subParams: { time: clockText(storm), biome: biomeName(ev.biome) },
+      subParams: { time: clockLabel(storm), biome: biomeName(ev.biome) },
       duration: LONG_BANNER_SEC,
     });
     feedLine(this.ctx, "landing", "🚢", "info", { biome: biomeName(ev.biome), seed: ev.seed });
@@ -78,8 +78,8 @@ export class FlowFeedback {
     if (ev.dayPhase === "day") {
       if (ev.day <= 1) return; // the landing banner already said "Day 1"
       audio.play("dayStart");
-      const stormLeft = state ? clockAt(state.clockTicks, timings).stormLeft / TICK_RATE : 0;
-      bannerLine(this.ctx, "day", "good", { params: { n: ev.day, days: DAYS }, sub: last ? "daySubLast" : "daySub", subParams: { time: clockText(stormLeft) } });
+      const stormLeft = state ? matchLeftSec(timings, state.clockTicks, 0) : 0;
+      bannerLine(this.ctx, "day", "good", { params: { n: ev.day, days: DAYS }, sub: last ? "daySubLast" : "daySub", subParams: { time: clockLabel(stormLeft) } });
       feedLine(this.ctx, "dawn", "🌅", "good", { n: ev.day });
       return;
     }
