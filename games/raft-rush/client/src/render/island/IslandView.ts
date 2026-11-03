@@ -56,7 +56,7 @@ export class IslandView {
     this.structures = new Structures(def.grid, this.bank);
     this.fireflies = new Fireflies(def, FIREFLIES * (def.layout === "duel" ? 2 : 1), this.bank);
     this.volcano = def.biome === "volcanic" ? new Volcano(def, this.bank) : null;
-    this.group.add(terrain.group, this.water.mesh, this.flora.mesh, this.grass.mesh, this.sites.group, this.structures.group, this.fireflies.points);
+    this.group.add(terrain.group, this.water.mesh, this.flora.mesh, this.flora.softMesh, this.grass.mesh, this.sites.group, this.structures.group, this.fireflies.points);
     for (const c of this.campfires) this.group.add(c.group);
     for (const r of this.rafts) this.group.add(r.group);
     if (this.volcano) this.group.add(this.volcano.group);

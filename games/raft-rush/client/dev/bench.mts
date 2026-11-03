@@ -51,6 +51,9 @@ interface Metrics {
   draws: number;
   tris: number;
   frameMs: number;
+  /** Main-pass draws if WEBGL_multi_draw is missing (three loops each batched range). */
+  fallbackDraws: number;
+  batchedMeshes: number;
 }
 
 /** Triangle count a mesh contributes on one draw (BatchedMesh: only its visible instances). */
@@ -77,18 +80,28 @@ function trianglesOf(o: any): number {
 function count(scene: THREE.Scene, camera: THREE.PerspectiveCamera): Omit<Metrics, "mode" | "frameMs"> {
   scene.updateMatrixWorld(true);
   let mainDraws = 0, mainTris = 0, shadowDraws = 0, shadowTris = 0;
+  let batchedMeshes: any[] = [];
   scene.traverseVisible((o: any) => {
     if (!o.isMesh && !o.isPoints && !o.isLine && !o.isSprite) return;
     if (!o.layers.test(camera.layers)) return; // parked source meshes (after) stay out of both passes
     const tris = trianglesOf(o);
     mainDraws++;
     mainTris += tris;
+    if (o.isBatchedMesh) batchedMeshes.push(o);
     if (o.isMesh && o.castShadow) {
       shadowDraws++;
       shadowTris += tris;
     }
   });
-  return { mainDraws, mainTris, shadowDraws, shadowTris, draws: mainDraws + shadowDraws, tris: mainTris + shadowTris };
+  // WEBGL_multi_draw is present on every WebGL2 browser in practice; when it is missing three.js r186
+  // loops the batched mesh's draw ranges one call at a time. Reproduce that range count exactly.
+  let batchFallback = 0;
+  for (const m of batchedMeshes) {
+    m.onBeforeRender(null, scene, camera, m.geometry, m.material);
+    batchFallback += (m._multiDrawCount as number) ?? 0;
+  }
+  const fallbackDraws = mainDraws - batchedMeshes.length + batchFallback;
+  return { mainDraws, mainTris, shadowDraws, shadowTris, draws: mainDraws + shadowDraws, tris: mainTris + shadowTris, fallbackDraws, batchedMeshes: batchedMeshes.length };
 }
 
 function makeFrame(i: number, character: CharacterId, x: number, z: number, y: number): PlayerFrame {
@@ -137,6 +150,8 @@ function run(mode: "before" | "after", layout: "solo" | "duel"): Metrics {
       avatar.sync(f, { hidden: false, dark: 0, camera: camera.position, revive: -1 }, 1 / 60);
     }
     (island as any).terrain.group.children.forEach((c: any) => (c.castShadow = true));
+    // The old build had every flora- archetype in the one shadow-casting batch.
+    island.group.traverse((o: any) => { if (o.isBatchedMesh && o.name.startsWith("flora")) o.castShadow = true; });
     // The old build also let the small raft props cast; restored here so "before" is the real baseline.
     island.group.traverse((o: any) => { if (o.name === "raftCrates" || o.name === "raftGourds" || o.name === "raftSlip") o.castShadow = true; });
   } else {
@@ -167,5 +182,6 @@ if (process.argv.includes("--json")) {
   console.log(row(after));
   console.log("");
   console.log(`* modeled: 5.0 ms fixed 1080p cost + 0.045 ms/draw + 0.00002 ms/triangle. Not a GPU capture.`);
+  console.log(`WEBGL_multi_draw fallback: main pass ${after.mainDraws} -> ${after.fallbackDraws} draws (${after.batchedMeshes} batched meshes, one call per frustum-visible range), total ${after.fallbackDraws + after.shadowDraws}.`);
   console.log(`delta: ${before.draws - after.draws} fewer draws, ${Math.round((before.tris - after.tris) / 1000)}k fewer triangles, ~${(before.frameMs - after.frameMs).toFixed(1)} ms less.`);
 }

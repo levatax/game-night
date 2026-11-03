@@ -26,6 +26,7 @@ import { CHANNEL, playerColor, REVIVE_TICKS } from "../../../shared/constants";
 import type { CharacterId, EmoteId, InvKind, ItemKind, Vec3Like } from "../../../shared/types";
 import type { MonsterFrame, PlayerFrame } from "../net/types";
 import { Avatar } from "./Avatar";
+import { AvatarShadowPool } from "./shadowBlob";
 import { CharacterBatcher } from "./CharacterBatcher";
 import { FpArmsRig } from "./fpArms";
 import { MonsterHerd } from "./monsters";
@@ -209,6 +210,7 @@ export class Characters {
   private readonly root = new THREE.Group();
   private readonly batcher: CharacterBatcher;
   private readonly camera: THREE.PerspectiveCamera;
+  private readonly shadows = new AvatarShadowPool(this.root);
   private readonly avatars = new Map<string, Avatar>();
   private readonly leaving = new Map<string, { avatar: Avatar; frame: PlayerFrame }>();
   private readonly lastFrames = new Map<string, PlayerFrame>();
@@ -259,7 +261,7 @@ export class Characters {
           avatar.cancelLeave();
         } else {
           if (back) this.disposeAvatar(back.avatar);
-          avatar = new Avatar(this.root, f);
+          avatar = new Avatar(this.root, f, this.shadows);
           fresh = true;
         }
         this.leaving.delete(f.id);
@@ -310,6 +312,7 @@ export class Characters {
     }
     // All bone matrices are final now: push them into the batched meshes before the renderer runs.
     this.batcher.flush();
+    this.shadows.flush();
   }
 
   /** Remove one avatar's batched instances before disposing its meshes. */
