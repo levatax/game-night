@@ -59,6 +59,12 @@ export interface RunRow {
   death_height: number | null;
   first_choice_source: string;
   boss_spawn: 0 | 1;
+  /** Which pilot policy drove the focal human seat: expert / novice / idle (keyboard-less) / bot. */
+  skill: "expert" | "novice" | "idle" | "bot";
+  /** Inputs the pilot never pressed (start delay, distraction, missed key). */
+  pilot_drops: number;
+  /** Craft / chest clicks the pilot fumbled. */
+  pilot_fumbles: number;
 }
 
 export const REQUIRED_COLUMNS: ReadonlyArray<keyof RunRow> = [
@@ -105,6 +111,9 @@ export const EXTRA_COLUMNS: ReadonlyArray<keyof RunRow> = [
   "death_height",
   "first_choice_source",
   "boss_spawn",
+  "skill",
+  "pilot_drops",
+  "pilot_fumbles",
 ];
 
 export const COLUMNS: ReadonlyArray<keyof RunRow> = [...REQUIRED_COLUMNS, ...EXTRA_COLUMNS];
