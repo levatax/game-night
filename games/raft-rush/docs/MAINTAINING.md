@@ -110,14 +110,32 @@ RAFT_BALANCE=1 npx vitest run games/raft-rush/server/room/botBalance.test.ts
 | `RAFT_BALANCE_FAST` | off | `1` = the RAFT_TEST timers: a smoke run of the match flow (bots lose every match there) |
 | `RAFT_BALANCE_TRACE` | off | print every bot goal change, throw and hit |
 | `RAFT_BALANCE_BAND` | — | `lo-hi` win %: assert it. Only for the target scenario (normal, 3 bots, 0 idle humans, real timings); with any other scenario the run fails |
+| `RAFT_BALANCE_GATE` | off | `1` = acceptance gate: 30 seeds × expert + novice cohorts, per-seed boss/launch table, gate assertions |
 
-Target: game4.md §20's test plan asks 55–75 % wins on Normal. No band is agreed yet, so it reports only; the bots
-win nearly every Normal match today. The levers are §1–§2 (bars, waves, raft costs) and the bot pacing in
-`botNeeds.ts`.
+**Acceptance gate** (`npm run balance`, the same command CI runs): the expert cohort is Normal, 3 bots, no idle
+humans; the novice cohort is Normal, 2 bots + 1 idle human (a novice partner who never plays). Each seed prints
+`boss yes/no`, `launch <second>s`, the outcome and downs. The gate holds:
 
-**Nightly CI**: `.github/workflows/balance.yml` ("Raft Rush balance", 03:23 UTC daily and on demand) runs the
-target scenario with 30 seeds and writes the table into the run summary. It fails only when the harness breaks;
-set `RAFT_BALANCE_BAND` there (commented out, `"55-75"`) once a band is agreed.
+| Check | Target |
+|---|---|
+| boss spawn | 100 % in both cohorts |
+| raft launch median (expert) | 440–460 s |
+| expert win rate | 55–75 % |
+| novice win rate | 40–50 % |
+| any cohort | ≥ 15 % |
+
+Any violation is printed as `GATE FAIL: …` and fails the run (CI red). This is an acceptance gate: a red run means
+the beta is not accepted yet. The levers are §1–§2 (bars, waves, raft costs) and the bot pacing in
+`botNeeds.ts`; the harness itself changes no balance value.
+
+**CI**: `.github/workflows/balance.yml` ("Raft Rush acceptance", 03:23 UTC daily, on demand, and on pushes/PRs
+that touch Raft Rush) runs `npm run typecheck` and `npm run balance`, and writes the whole table and summary into
+the run summary.
+
+**Render budget readout**: `?stats=1` on the game page prints draw calls and triangles for the frame just drawn,
+their peak and the quality tier, and mirrors them to `window.__raftPerf`. `?quality=low|medium|high` pins the tier
+before boot so the reading is reproducible (`?stats=1&quality=high`). The budget is ≤ 60 draw calls and ≤ 250k
+triangles (`client/src/render/perfBudget.ts`); the overlay turns red and says `OVER BUDGET` when either is over.
 
 ## 5. `?debug=1`
 
@@ -140,7 +158,7 @@ Colyseus there: only Home works.
 | Hub helpers + `/healthz` | `npx vitest run server/games.test.ts` |
 | Typecheck (game + hub) | `npx tsc --noEmit -p games/raft-rush/tsconfig.json`; whole repo `npm run typecheck` |
 | Client build | `node scripts/build-games.mjs raft-rush` |
-| What CI runs | `npm run typecheck && npx vitest run && npm run build && npm run build:server && node scripts/smoke-hub.mjs` |
+| What CI runs | `npm run typecheck && npm run balance` |
 
 Room tests (`server/RaftRoom.test.ts`, `test/room-smoke.test.ts`):
 - They start an in-process Colyseus server on a free port and talk real WebSockets through colyseus.js. They stub
@@ -199,9 +217,8 @@ live room hasn't completed a fixed tick for `STALL_MS` (5 s): a blocked loop, or
 join codes) and no error text; throws from `health()` are logged throttled. The Docker image's HEALTHCHECK polls
 it every 30 s.
 
-**CI** (`.github/workflows/ci.yml`, every push and PR, Node 22): `npm ci`, typecheck, `npx vitest run`, `npm run
-build`, `npm run build:server`, then `node scripts/smoke-hub.mjs` boots the compiled hub and fails unless
-`/healthz` answers 200 and every game logged `registered`. Nightly balance: §4.
+**CI** (`.github/workflows/balance.yml`, every push/PR that touches Raft Rush, nightly and on demand, Node 22):
+`npm ci`, `npm run typecheck`, `npm run balance`. A red run is a gate violation, not a broken workflow.
 
 **Compiled server**: `npm run build:server` compiles the hub and every game's `server/` + `shared/` with
 `tsconfig.server.json` (NodeNext, tests and clients left out) into `dist/` (`dist/server/index.js`,
