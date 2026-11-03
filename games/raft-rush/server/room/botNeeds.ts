@@ -174,11 +174,22 @@ export function raftSchedule(c: BotClock): number {
 }
 
 /**
- * The raft is in trouble: clearly behind the schedule, or the last day began and it isn't ready. Every bot then
- * works on what the current stage needs, whatever its role.
+ * A crab (or the boss) chewed hull wood off a raft that had already moved past the hull stage: the mast / provision
+ * progress is still there but the hull count is short again. This is repair, not normal building, so the pacing
+ * rules must not park it in the chest.
+ */
+export function raftHullDamaged(team: BotTeam): boolean {
+  if (team.hullWood >= team.cost.hullWood) return false;
+  return team.sail || team.mastWood > 0 || team.mastRope > 0 || team.food > 0 || team.water > 0;
+}
+
+/**
+ * The raft is in trouble: clearly behind the schedule, damaged, or the last day began and it isn't ready. Every bot
+ * then works on what the current stage needs, whatever its role.
  */
 export function raftUrgent(v: BotView): boolean {
   if (v.team.stage >= 3) return false;
+  if (raftHullDamaged(v.team)) return true;
   if (v.clock.day >= DAYS) return true;
   return raftSchedule(v.clock) - raftProgress(v.team) > 0.15;
 }
@@ -274,7 +285,7 @@ export function teamDemand(v: BotView): ResourceCounts {
   const out = zero();
   const r = raftRemaining(v.team);
   const st = v.team.stage;
-  const ahead = aheadOfSchedule(v);
+  const ahead = aheadOfSchedule(v) && !raftHullDamaged(v.team);
   if (!ahead) {
     if (st <= 0) out.wood += r.hull;
     if (st <= 1) {

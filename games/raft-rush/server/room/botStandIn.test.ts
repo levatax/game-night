@@ -257,7 +257,8 @@ describe("reconnect stand-in in the real world (normal timings)", () => {
     const raft = m.world.island.sites[0]!.raft;
     mate.x = raft.x + 2;
     mate.z = raft.z;
-    const events = m.run(secToTicks(8), secToTicks(30));
+    // The bots only board inside the departure gate; the stand-in follows the same rule.
+    const events = m.run(secToTicks(460), secToTicks(465));
     expect(m.h.boarded).toBe(true);
     expect(events.filter((ev) => actorOf(ev) === "h1" && ACTING.has(ev.type))).toEqual([]);
     expect(events.some((ev) => ev.type === "board" && ev.playerId === "h1")).toBe(true);
@@ -277,7 +278,7 @@ describe("reconnect stand-in in the real world (normal timings)", () => {
       atTheRaft(m, 0, angle, dist);
       const inventory = JSON.stringify(slotsOf(m.h));
       expect(resolveInteraction({ island: m.world.island, state: m.state }, m.h)?.kind, label).toBe("pickup");
-      const events = m.run(100, 100 + secToTicks(6));
+      const events = m.run(secToTicks(460), secToTicks(465));
       expect(m.h.boarded, label).toBe(true);
       expect(events.filter((ev) => actorOf(ev) === "h1" && ACTING.has(ev.type)), label).toEqual([]);
       expect(JSON.stringify(slotsOf(m.h)), label).toBe(inventory);
