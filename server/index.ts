@@ -105,7 +105,13 @@ app.get("/api/rooms/:code", (req, res) => {
 // (`throttledHealthLog`).
 app.get("/healthz", (_req, res) => {
   const health = hubHealth(games.length, modules, failed);
-  res.set("Cache-Control", "no-store").status(health.ok ? 200 : 503).json(health);
+  // The revision this image was built from (Dockerfile ARG GIT_SHA, supplied by Easypanel per deployment), so a
+  // deployment can prove which commit is live. Absent outside the container ("unknown").
+  const revision = (process.env.GIT_SHA ?? "").trim();
+  res.set("Cache-Control", "no-store").status(health.ok ? 200 : 503).json({
+    ...health,
+    build: { revision: revision || "unknown" },
+  });
 });
 
 // Share links: /r/ABCD → whichever game owns that room.
