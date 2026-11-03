@@ -3,6 +3,7 @@
 // the boot fails. Owner: client-app.
 
 import { App } from "./app/App";
+import { settings, type Quality } from "./app/settings";
 import { dismissSplash } from "./app/splash";
 import { t } from "./i18n";
 
@@ -40,6 +41,12 @@ const uiRoot = document.getElementById("ui");
 if (!gameRoot || !uiRoot) throw new Error("Raft Rush: missing #game or #ui root");
 
 try {
+  // Acceptance/debug readout: `?quality=low|medium|high` pins the tier before the renderer boots (so
+  // `?stats=1&quality=high` measures a known setting), never override it with Auto.
+  const requested = new URLSearchParams(location.search).get("quality");
+  if (requested === "low" || requested === "medium" || requested === "high") {
+    settings.set({ quality: requested as Quality, autoQuality: false });
+  }
   const app = new App(gameRoot, uiRoot);
   // ?debug=1 on a dev bundle or a page served from this machine only: expose the app for console inspection. The
   // hub's `npm run dev` builds production bundles, hence the localhost case; a deployed host never gets the hook.

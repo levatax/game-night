@@ -111,13 +111,45 @@ RAFT_BALANCE=1 npx vitest run games/raft-rush/server/room/botBalance.test.ts
 | `RAFT_BALANCE_TRACE` | off | print every bot goal change, throw and hit |
 | `RAFT_BALANCE_BAND` | — | `lo-hi` win %: assert it. Only for the target scenario (normal, 3 bots, 0 idle humans, real timings); with any other scenario the run fails |
 
-Target: game4.md §20's test plan asks 55–75 % wins on Normal. No band is agreed yet, so it reports only; the bots
-win nearly every Normal match today. The levers are §1–§2 (bars, waves, raft costs) and the bot pacing in
-`botNeeds.ts`.
+**Acceptance runs — QA's `qa:runs` is the one measurement engine** (`games/raft-rush/qa/`, owner: qa). It plays
+the same real RaftWorld + BotDesk loop and writes one CSV row per match (plus JSON, a Markdown summary and a death
+heatmap). It is not a vitest test and it does not run on every PR: one full cohort of 120 seeds takes ~25–45 min.
 
-**Nightly CI**: `.github/workflows/balance.yml` ("Raft Rush balance", 03:23 UTC daily and on demand) runs the
-target scenario with 30 seeds and writes the table into the run summary. It fails only when the harness breaks;
-set `RAFT_BALANCE_BAND` there (commented out, `"55-75"`) once a band is agreed.
+```
+npm run qa:runs -- --runs 120 --label expert --out qa/out
+npm run qa:runs -- --runs 120 --bots 2 --idle 1 --label novice --out qa/out
+```
+
+The CSV keeps the two clocks apart — this is the number the gate talks about:
+
+| Column | Meaning | Target |
+|---|---|---|
+| `raft_ready_s` | stage 3 is complete and the raft is in the water | 440–460 s (expert median) |
+| `departure_s` | the raft actually left (tide over, `launchRequest`) | 470–495 s (expert median) |
+
+`npm run qa:gate` is a **local diagnostic, not an acceptance count**: it replays no match, reads the newest
+`qa/out/runs-*.csv` (or `--csv <file>`) and prints descriptive numbers only — no PASS/FAIL, no AT table. The beta
+band decision is made only by `scripts/raft-acceptance.mjs` over the same `qa:runs` CSV. `npm run qa:probe`
+drives the real browser client for the client-only observations.
+
+**CSV gate** (`scripts/raft-acceptance.mjs`, owner: devops): reads the two CSVs and checks expert raft-ready
+median 440–460 s, expert departure median 470–495 s, expert win 55–75 %, idle-human cohort 0 wins (the anti-AFK
+rule), and boss spawn 100 % among runs that reach the boss window (`match_seconds >= 450`; the CSV now carries the
+`boss_spawn` 0/1 column as its last column, and shorter runs are out of scope, never a FAIL). It never replays a
+match. A red run means the beta is not accepted yet; the levers are §1–§2 (bars,
+waves, raft costs) and the bot pacing in `botNeeds.ts`.
+
+**CI**: `.github/workflows/balance.yml` ("Raft Rush CI", Node 22). Pushes/PRs that touch Raft Rush run
+`npm run typecheck`, `npx vitest run games/raft-rush --retry 2`, `npm run build`, `npm run build:server` and
+`scripts/smoke-hub.mjs`. Nightly at 03:23 UTC (and on demand, with a `runs` input) the acceptance job runs
+`qa:runs` for both cohorts and the CSV gate, and uploads `qa/out/` as an artifact. Perf decision: the render
+budget is covered by deterministic unit tests; the island-generation wall-clock budget stays in the suite with two
+retries as a load signal, never as a gameplay gate.
+
+**Render budget readout**: `?stats=1` on the game page prints draw calls and triangles for the frame just drawn,
+their peak and the quality tier, and mirrors them to `window.__raftPerf`. `?quality=low|medium|high` pins the tier
+before boot so the reading is reproducible (`?stats=1&quality=high`). The budget is ≤ 60 draw calls and ≤ 250k
+triangles (`client/src/render/perfBudget.ts`); the overlay turns red and says `OVER BUDGET` when either is over.
 
 ## 5. `?debug=1`
 
@@ -140,7 +172,7 @@ Colyseus there: only Home works.
 | Hub helpers + `/healthz` | `npx vitest run server/games.test.ts` |
 | Typecheck (game + hub) | `npx tsc --noEmit -p games/raft-rush/tsconfig.json`; whole repo `npm run typecheck` |
 | Client build | `node scripts/build-games.mjs raft-rush` |
-| What CI runs | `npm run typecheck && npx vitest run && npm run build && npm run build:server && node scripts/smoke-hub.mjs` |
+| What CI runs (push/PR) | `npm run typecheck && npx vitest run games/raft-rush --retry 2 && npm run build && npm run build:server && node scripts/smoke-hub.mjs` |
 
 Room tests (`server/RaftRoom.test.ts`, `test/room-smoke.test.ts`):
 - They start an in-process Colyseus server on a free port and talk real WebSockets through colyseus.js. They stub
@@ -199,9 +231,10 @@ live room hasn't completed a fixed tick for `STALL_MS` (5 s): a blocked loop, or
 join codes) and no error text; throws from `health()` are logged throttled. The Docker image's HEALTHCHECK polls
 it every 30 s.
 
-**CI** (`.github/workflows/ci.yml`, every push and PR, Node 22): `npm ci`, typecheck, `npx vitest run`, `npm run
-build`, `npm run build:server`, then `node scripts/smoke-hub.mjs` boots the compiled hub and fails unless
-`/healthz` answers 200 and every game logged `registered`. Nightly balance: §4.
+**CI** (`.github/workflows/balance.yml`, Node 22): every push/PR that touches Raft Rush runs typecheck, the
+game's tests, the client/server build and the hub smoke; nightly and on demand the acceptance job runs QA's
+`qa:runs` for both cohorts and gates on its CSV (§4). A red acceptance run is a gate violation, not a broken
+workflow.
 
 **Compiled server**: `npm run build:server` compiles the hub and every game's `server/` + `shared/` with
 `tsconfig.server.json` (NodeNext, tests and clients left out) into `dist/` (`dist/server/index.js`,

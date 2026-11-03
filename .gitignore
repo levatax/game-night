@@ -9,3 +9,7 @@ dist/
 .env.*
 !.env.example
 .voice-cache/
+games/raft-rush/qa/out/
+
+# acceptance runs written by npm run qa:runs --out qa/out
+qa/out/
