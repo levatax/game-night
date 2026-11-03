@@ -40,6 +40,7 @@ export type SfxId =
   | "uiClick"
   | "uiHover"
   | "uiToggle"
+  | "uiConfirm"
   | "uiError";
 
 /** Continuous sounds controlled through a LoopHandle. */
@@ -104,7 +105,26 @@ export const SFX: Readonly<Record<SfxId, SfxDef>> = {
   uiClick: { bus: "ui", positional: false, volume: 0.4, sound: "soft bubble click" },
   uiHover: { bus: "ui", positional: false, volume: 0.15, sound: "tiny tick" },
   uiToggle: { bus: "ui", positional: false, volume: 0.35, sound: "two-tone toggle blip" },
+  uiConfirm: { bus: "ui", positional: false, volume: 0.55, sound: "bright two-note confirmation (start / ready / join)" },
   uiError: { bus: "ui", positional: false, volume: 0.4, sound: "low 'bwomp' buzz" },
 };
 
 export const SFX_IDS = Object.keys(SFX) as SfxId[];
+
+/** Short arena-announcer lines recorded in the game's interface language (English). */
+export type AnnouncerLine =
+  | "roundStart"
+  | "bonk"
+  | "ringOut"
+  | "lastOne"
+  | "suddenDeath"
+  | "win";
+
+export const ANNOUNCER_FILES: Readonly<Record<AnnouncerLine, string>> = {
+  roundStart: "announcerRound",
+  bonk: "announcerBonk",
+  ringOut: "announcerRingOut",
+  lastOne: "announcerLastOne",
+  suddenDeath: "announcerSuddenDeath",
+  win: "announcerWin",
+};

@@ -50,6 +50,7 @@ const UI_SOUND: Readonly<Record<UiEventMap["uiSound"]["kind"], SfxId>> = {
   click: "uiClick",
   hover: "uiHover",
   toggle: "uiToggle",
+  confirm: "uiConfirm",
   error: "uiError",
 };
 

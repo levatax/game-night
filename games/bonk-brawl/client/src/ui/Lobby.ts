@@ -135,6 +135,7 @@ export class LobbyScreen {
     this.readyBtn.dataset.sound = "toggle";
     this.readyBtn.addEventListener("click", () => this.toggleReady());
 
+    this.startBtn.dataset.sound = "confirm";
     this.startBtn.append(el("span", "btn__label", "Start match"), el("span", "lobby__start-arrow", "▶"));
     this.startBtn.addEventListener("click", () => this.start());
     this.startHint.id = "bb-start-hint";

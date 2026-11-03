@@ -11,7 +11,7 @@ import type { Jingle, MusicTrack } from "../src/audio/Music";
 import { MusicCore } from "../src/audio/music/MusicCore";
 import { SONG_SOURCES } from "../src/audio/music/songs";
 import { melodyLength, parseChords } from "../src/audio/music/theory";
-import { SFX, SFX_IDS, type LoopId, type SfxId, type VoiceKind } from "../src/audio/Sfx";
+import { SFX, SFX_IDS, type AnnouncerLine, type LoopId, type SfxId, type VoiceKind } from "../src/audio/Sfx";
 import { Synth } from "../src/audio/synth/dsp";
 import { LOOP_LEVEL, createLoop } from "../src/audio/synth/loops";
 import { SFX_RECIPES, sfxGain } from "../src/audio/synth/sfxRecipes";
@@ -97,7 +97,7 @@ const SFX_GROUPS: ReadonlyArray<[string, SfxId[]]> = [
   ["Abilities", ["flapDash", "groundPoundLeap", "shockwave", "bellyBoing", "curveArm", "bellySlide", "headbutt"]],
   ["Power-ups", ["powerUpWarning", "powerUpSparkle", "powerUpPickup", "zoomies"]],
   ["Arena & round", ["ringShake", "crumbleRumble", "countdownTick", "countdownGo", "suddenDeath"]],
-  ["UI", ["uiClick", "uiHover", "uiToggle", "uiError"]],
+  ["UI", ["uiClick", "uiHover", "uiToggle", "uiConfirm", "uiError"]],
 ];
 
 function buildSfxSection(): void {
@@ -114,6 +114,10 @@ function buildSfxSection(): void {
   if (rest.length > 0) {
     s.append(el("h3", { textContent: "Other" }));
     for (const id of rest) s.append(button(id, () => engine.play(id, { pos: sfxPos() })));
+  }
+  s.append(el("h3", { textContent: "Announcer (ElevenLabs voice bank)" }));
+  for (const line of ["roundStart", "bonk", "ringOut", "lastOne", "suddenDeath", "win"] as AnnouncerLine[]) {
+    s.append(button(line, () => engine.announce(line), "alt"));
   }
   s.append(el("h3", { textContent: "Game events (event → feedback table)" }));
   const char = (): CharacterId => voiceChar;

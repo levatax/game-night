@@ -226,6 +226,7 @@ export class GameFeedback {
     fx.popText.show("bonk", above(ev.pos, POP_ABOVE_HIT), this.directory.color(ev.throwerId));
     if (ev.throwerId === me || ev.targetId === me) fx.feel.hitStop(HIT_STOP_MS);
     audio.play("bonk", { pos: ev.pos, volume: strong ? 1 : 0.85 });
+    if (mega) audio.announce?.("bonk");
     const victim = this.directory.character(ev.targetId);
     if (victim) audio.voice(victim, "hit", { pos: ev.pos });
     if (ev.throwerId === me) audio.play("ding");
@@ -298,6 +299,7 @@ export class GameFeedback {
     characters.trigger(ev.playerId, "ringOut", { pos: ev.pos });
     fx.popText.show("out", above(ev.pos, POP_ABOVE_HEAD), this.directory.color(ev.playerId));
     audio.play("slideWhistle", { pos: ev.pos });
+    audio.announce?.("ringOut");
     const victim = this.directory.character(ev.playerId);
     if (victim) audio.voice(victim, "ko", { pos: ev.pos });
     this.pushFeed(ev.creditId ? "ringOut" : "fell", ev.creditId, ev.playerId);

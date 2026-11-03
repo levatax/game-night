@@ -599,6 +599,11 @@ const uiToggle: SfxRecipe = (s) => {
   blip(s, 0.065, 1320, 1320, 0.08, 0.5, "triangle");
 };
 
+const uiConfirm: SfxRecipe = (s) => {
+  blip(s, 0, 660, 990, 0.09, 0.55, "triangle");
+  blip(s, 0.085, 990, 1485, 0.14, 0.5, "sine");
+};
+
 const uiError: SfxRecipe = (s) => {
   [
     [0, 180, 120],
@@ -642,6 +647,7 @@ const SFX_TRIM: Partial<Record<SfxId, number>> = {
   countdownGo: 0.78,
   suddenDeath: 0.75,
   uiToggle: 1.3,
+  uiConfirm: 1.15,
 };
 
 /** Gain for one SFX before PlayOptions.volume and the buses: its mix volume × calibration. */
@@ -687,5 +693,6 @@ export const SFX_RECIPES: Readonly<Record<SfxId, SfxRecipe>> = {
   uiClick,
   uiHover,
   uiToggle,
+  uiConfirm,
   uiError,
 };
