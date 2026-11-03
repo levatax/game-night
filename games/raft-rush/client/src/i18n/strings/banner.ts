@@ -33,6 +33,8 @@ export const en = {
   dayEvent_waveGift: "A GIFT FROM THE SEA",
   dayEvent_waveGiftSub: "A crate washed up on the shore. Finders keepers!",
   // Storm
+  nightWarning: "NIGHT {n} IN {sec} SECONDS!",
+  nightWarningSub: "Feed the fire, grab a torch, get near the raft",
   stormWarning: "STORM IN {sec} SECONDS!",
   stormWarningSub: "Everybody on the raft, NOW!",
   storm: "THE STORM!",
@@ -102,6 +104,8 @@ export const tr: Record<keyof typeof en, string> = {
   dayEvent_monkeysSub: "Kamp sandığını yağmalıyorlar. Cevizle kovalayın!",
   dayEvent_waveGift: "DENİZDEN HEDİYE",
   dayEvent_waveGiftSub: "Kıyıya bir sandık vurdu. Bulan alır!",
+  nightWarning: "GECE {n} — {sec} SANİYE!",
+  nightWarningSub: "Ateşi besleyin, meşale alın, sala yaklaşın",
   stormWarning: "FIRTINAYA {sec} SANİYE!",
   stormWarningSub: "Herkes sala, HEMEN!",
   storm: "FIRTINA!",

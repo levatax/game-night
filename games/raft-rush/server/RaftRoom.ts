@@ -61,7 +61,6 @@
 
 import { Room, ServerError, type Client } from "@colyseus/core";
 import {
-  DAYS,
   EMOTE_COOLDOWN_TICKS,
   MARKER_COOLDOWN_TICKS,
   MAX_BOTS,
@@ -71,12 +70,13 @@ import {
   SOLO_AUTO_BOTS,
   TICK_MS,
   TICK_RATE,
+  WARN_LEADS_SEC,
 } from "../shared/constants.js";
 import { generateIsland } from "../shared/island/generate.js";
 import { mulberry32 } from "../shared/island/noise.js";
 import { CLOSE_CODE, JOIN_ERROR, JOIN_ERROR_TEXT, MSG, PROTOCOL_VERSION } from "../shared/protocol.js";
 import type { CreateOptions, NoticeMsg, ServerMessages, WelcomeMsg } from "../shared/protocol.js";
-import { clockAt, inputLocked, matchTicks, type ClockInfo } from "../shared/rules/schedule.js";
+import { clockAt, inputLocked, matchTicks, warningStage, type ClockInfo } from "../shared/rules/schedule.js";
 import { eyePosition } from "../shared/sim/player.js";
 import type { CharacterId, Phase, RecipeId } from "../shared/types.js";
 import { GAME_ID, getRoomCodes } from "./hub.js";
@@ -109,7 +109,7 @@ import { matchRngs, previewSeed, textRng, type Rng } from "./room/rng.js";
 import { scoreMatch, type ScoreInput } from "./room/scoring.js";
 import { readKnobs, NO_KNOBS, type TestKnobs } from "./room/testing.js";
 import { say } from "./room/text.js";
-import { roomTimings, secondsLeft, type RoomTimings } from "./room/timings.js";
+import { roomTimings, type RoomTimings } from "./room/timings.js";
 import { PlayerState, RaftState } from "./schema.js";
 import { isBroadcastEvent, type GameEvent, type GameEventOf, type LaunchRequestEvent } from "./world/events.js";
 import { RaftWorld } from "./world/World.js";
@@ -173,7 +173,8 @@ export class RaftRoom extends Room<RaftState> {
   private readonly leavers = new Set<string>();
   /** The day clock of the current tick (null outside playing). */
   private dayClock: ClockInfo | null = null;
-  private stormWarned = false;
+  /** Warning-ladder stages already sent this match (0..2). */
+  private warnedStages = [false, false, false];
   /** Ticks that were left before the storm when the raft launched (team score bonus). */
   private launchTicksLeft = 0;
   private readonly aboard = new Set<string>();
@@ -526,9 +527,10 @@ export class RaftRoom extends Room<RaftState> {
       this.sendAll(MSG.DAY_PHASE, { tick: s.tick, day: clock.day, dayPhase: clock.dayPhase });
     }
     s.phaseTicksLeft = clock.phaseLeft;
-    if (!this.stormWarned && !clock.over && clock.day === DAYS && clock.dayPhase === "night" && clock.stormLeft <= this.timings.stormWarnTicks) {
-      this.stormWarned = true;
-      this.sendAll(MSG.STORM_WARNING, { tick: s.tick, secondsLeft: secondsLeft(clock.stormLeft) });
+    const stage = warningStage(clock, this.timings);
+    if (stage >= 0 && !this.warnedStages[stage]) {
+      this.warnedStages[stage] = true;
+      this.sendAll(MSG.STORM_WARNING, { tick: s.tick, secondsLeft: WARN_LEADS_SEC[stage]!, night: stage + 1 });
     }
     if (clock.over) {
       this.enterStorm();
@@ -584,7 +586,7 @@ export class RaftRoom extends Room<RaftState> {
     this.matchIds = ids;
     this.leavers.clear();
     this.aboard.clear();
-    this.stormWarned = false;
+    this.warnedStages = [false, false, false];
     this.launchTicksLeft = 0;
     this.dayClock = null;
     this.lastEmoteTick.clear();
@@ -724,7 +726,7 @@ export class RaftRoom extends Room<RaftState> {
     });
     this.matchIds = [];
     this.aboard.clear();
-    this.stormWarned = false;
+    this.warnedStages = [false, false, false];
     this.launchTicksLeft = 0;
     this.dayClock = null;
     if (s.settings.seed === 0) this.randomPreview = this.rollPreviewSeed();

@@ -361,10 +361,12 @@ export interface DayEventEvent {
   playerId: string;
 }
 
-/** STORM_WARN_SEC before night 3 ends. */
+/** One step of the warning ladder (v4 §3): 30 s before night 1, 20 s before night 2, 15 s before the storm. */
 export interface StormWarningEvent {
   tick: number;
   secondsLeft: number;
+  /** 1 / 2 = a night is coming; 3 = the final storm. */
+  night: number;
 }
 
 export interface RaftReadyEvent {

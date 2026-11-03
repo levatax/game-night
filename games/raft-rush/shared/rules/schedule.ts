@@ -1,7 +1,7 @@
 // The match clock: 3 × (day, dusk, night) after the landing. Owner: architect (complete).
 // Pure functions shared by the server (phase flow, spawns) and the client (sun / sky / HUD clock).
 
-import { DAYS, type Timings } from "../constants.js";
+import { DAYS, WARN_LEADS_SEC, secToTicks, type Timings } from "../constants.js";
 import type { DayPhase, Phase } from "../types.js";
 
 export interface ClockInfo {
@@ -67,6 +67,24 @@ export function clockAt(clockTicks: number, t: Timings): ClockInfo {
     stormLeft: over ? 0 : total - clockTicks,
     over,
   };
+}
+
+/**
+ * Warning stage now due, or -1: 0 = 30 s before night 1, 1 = 20 s before night 2, 2 = 15 s before the
+ * final storm. The night warnings fire at the end of that day's daylight, i.e. phaseLeft + dusk is the
+ * time until the night actually starts (§3 ladder).
+ */
+export function warningStage(clock: ClockInfo, t: Timings): number {
+  for (let stage = 0; stage < WARN_LEADS_SEC.length; stage++) {
+    if (clock.day !== stage + 1) continue;
+    const lead = secToTicks(WARN_LEADS_SEC[stage]!);
+    if (stage < DAYS - 1) {
+      if (clock.dayPhase === "day" && clock.phaseLeft + t.dusk <= lead) return stage;
+    } else if (clock.dayPhase === "night" && clock.stormLeft <= lead) {
+      return stage;
+    }
+  }
+  return -1;
 }
 
 /** Light level 0 (deep night) .. 1 (noon) for a cycle fraction (client sky + server "is it dark" checks). */
