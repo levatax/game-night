@@ -706,7 +706,8 @@ function deliver(v: BotView): Goal | null {
   if (units <= 0) return null;
   // A finished hull and mast wait for the provisioning window: the last load that would complete the raft is
   // held until READY_TARGET_SEC. Partial larder loads still go in, so the final delivery is one short press.
-  if (!finalLoadDue(v) && wouldFinishRaft(v)) return null;
+  // A chewed hull is a repair, not the finishing provisioning load: the hold never applies to damage.
+  if (!finalLoadDue(v) && !raftHullDamaged(v.team) && wouldFinishRaft(v)) return null;
   const stand = raftStand(v);
   // Ordinary night work keeps to the light. Repair is the exception: a chewed hull left until dawn is not ready
   // at the gate, so a bot carrying wood walks to the raft even when the torch is out.

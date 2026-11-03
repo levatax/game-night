@@ -1,20 +1,60 @@
-# Nightly (or on demand from the Actions tab): the Raft Rush bot balance harness, bot-only matches on the real
-# world (games/raft-rush/server/room/botBalance.test.ts) in its target scenario: Normal, the default 3 bots, no
-# idle humans, the real match timings (no RAFT_BALANCE_FAST: the bots lose every match on the RAFT_TEST timers,
-# so that run says nothing about balance), 30 seeds (well under a minute: ~7–20 s locally). Report only: no RAFT_BALANCE_BAND is set
-# until a target win-rate band is agreed, so the job fails only when the harness itself breaks, never on the
-# numbers. The per-seed table and the summary line land in the run's summary.
-name: Raft Rush balance
+# Raft Rush CI. One measurement engine only: QA's `qa:runs` (games/raft-rush/qa/batch.ts) writes the CSV and
+# `scripts/raft-acceptance.mjs` reads that same CSV; nothing here replays matches a second time.
+#
+# On every push/PR touching Raft Rush: typecheck, the game's unit/room tests, client + server build, hub smoke.
+# Nightly (03:23 UTC) and on demand: the full acceptance gate — 120 seeds for each cohort, then the CSV gate.
+#   raft_ready_s  = stage 3 complete, raft in the water (target 440–460 s)
+#   departure_s   = the raft actually left (target 470–495 s)
+# A red gate means the beta is not accepted yet; that is the point of the gate.
+#
+# Perf decision: the render budget is asserted by deterministic unit tests (perfBudget.test.ts) in the test job.
+# The island-generation wall-clock budget is asserted only in the isolated `island-perf` job (RAFT_PERF_GATE=1,
+# --no-file-parallelism, retried); the main test job only prints the warmed median. Wall time on a shared runner
+# is a load signal, not a gameplay gate: on a 12-core host under load 9 the warmed median was 207 ms against the
+# 120 ms budget, while an idle host measured 55 ms. A red island-perf run is a regression only if it repeats.
+name: Raft Rush CI
 
 on:
   schedule:
     - cron: "23 3 * * *"
   workflow_dispatch:
+    inputs:
+      runs:
+        description: "Seeds per cohort (100–150 for a band decision; 30 is smoke only)"
+        type: number
+        default: 120
+      seed_base:
+        description: "First seed (qa:runs adds 7919 per run)"
+        type: number
+        default: 1000
+  push:
+    branches:
+      - feat/raft-rush-fun
+      - feat/raft-rush-acceptance
+      - main
+    paths:
+      - "games/raft-rush/**"
+      - "scripts/raft-acceptance.mjs"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/balance.yml"
+  pull_request:
+    paths:
+      - "games/raft-rush/**"
+      - "scripts/raft-acceptance.mjs"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/balance.yml"
+
+concurrency:
+  group: raft-rush-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  balance:
+  checks:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -22,18 +62,58 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Bot balance report
-        shell: bash
-        env:
-          RAFT_BALANCE: "1"
-          RAFT_BALANCE_SEEDS: "30"
-          # Once a win band for the target scenario is agreed (game4.md §20 asks 55–75 % of Normal), set it here to
-          # turn the report into a check; the harness refuses a band on any other scenario.
-          # RAFT_BALANCE_BAND: "55-75"
-          NO_COLOR: "1"
-        run: |
-          set +e
-          npx vitest run games/raft-rush/server/room/botBalance.test.ts --disableConsoleIntercept 2>&1 | tee balance.txt
-          status=${PIPESTATUS[0]}
-          { echo "## Raft Rush bot balance"; echo '```'; cat balance.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-          exit "$status"
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Raft Rush tests (island median reported here, asserted in island-perf)
+        run: npx vitest run games/raft-rush --retry 2
+      - name: Build clients and server
+        run: npm run build && npm run build:server
+      - name: Boot the compiled hub and check /healthz
+        run: node scripts/smoke-hub.mjs
+
+  island-perf:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RAFT_PERF_GATE: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Island generation budget (isolated, warmed median)
+        run: npx vitest run games/raft-rush/shared/island/generate.test.ts --no-file-parallelism --retry 2
+
+  acceptance:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      RUNS: ${{ inputs.runs || 120 }}
+      SEED_BASE: ${{ inputs.seed_base || 1000 }}
+      NO_COLOR: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Expert cohort (3 bots, no idle humans)
+        run: npm run qa:runs -- --runs "$RUNS" --seed-base "$SEED_BASE" --label expert --out qa/out
+      - name: Idle-human cohort (2 bots + 1 idle human)
+        run: npm run qa:runs -- --runs "$RUNS" --seed-base "$SEED_BASE" --bots 2 --idle 1 --label novice --out qa/out
+      - name: Gate on the same CSV
+        run: node scripts/raft-acceptance.mjs --expert qa/out/runs-expert-*.csv --novice qa/out/runs-novice-*.csv
+      - name: Upload the measurement set
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: raft-rush-acceptance-${{ github.run_id }}
+          path: qa/out/
+          retention-days: 30

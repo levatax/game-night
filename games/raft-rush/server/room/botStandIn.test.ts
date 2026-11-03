@@ -44,8 +44,10 @@ const CHEST: [ItemKind, number][] = [
 const ROLES: BotRole[] = ["asci", "bekci", "hamal", "balikci"];
 const SEED = 16838; // a tropic island: cold nights (warmth matters)
 const T = timingsFor(false);
-/** First ticks of the last night: the only window in which the raft may be boarded. */
+/** First ticks of the last night: the departure window is open from here. */
 const LAST_NIGHT = 2 * (T.day + T.dusk + T.night) + T.day + T.dusk + 5;
+/** Inside the departure gate: the raft watchers leave the sand only this close to the end of night 3. */
+const GATE = LAST_NIGHT + T.night - 150 - secToTicks(2);
 
 interface Match {
   state: RaftState;
@@ -273,7 +275,7 @@ describe("reconnect stand-in in the real world (normal timings)", () => {
     m.h.x = raft.x - 1;
     m.h.z = raft.z;
     m.h.y = heightAt(m.world.island.grid, m.h.x, m.h.z);
-    const events = m.run(LAST_NIGHT, LAST_NIGHT + secToTicks(30));
+    const events = m.run(GATE, GATE + secToTicks(30));
     expect(m.h.boarded).toBe(true);
     expect(events.filter((ev) => actorOf(ev) === "h1" && ACTING.has(ev.type))).toEqual([]);
     expect(events.some((ev) => ev.type === "board" && ev.playerId === "h1")).toBe(true);
@@ -293,7 +295,7 @@ describe("reconnect stand-in in the real world (normal timings)", () => {
       atTheRaft(m, 0, angle, dist);
       const inventory = JSON.stringify(slotsOf(m.h));
       expect(resolveInteraction({ island: m.world.island, state: m.state }, m.h)?.kind, label).toBe("pickup");
-      const events = m.run(LAST_NIGHT, LAST_NIGHT + secToTicks(6));
+      const events = m.run(GATE, GATE + secToTicks(6));
       expect(m.h.boarded, label).toBe(true);
       expect(events.filter((ev) => actorOf(ev) === "h1" && ACTING.has(ev.type)), label).toEqual([]);
       expect(JSON.stringify(slotsOf(m.h)), label).toBe(inventory);

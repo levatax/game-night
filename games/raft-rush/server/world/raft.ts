@@ -142,6 +142,11 @@ export class RaftSystem {
     return !!clock && clock.day === DAYS && clock.dayPhase === "night";
   }
 
+  /** Does this team have a human participant? Bot-only teams may finish the match alone. */
+  private hasHuman(teamIdx: number): boolean {
+    return this.core.participants(teamIdx).some((q) => !q.bot && !q.spectator);
+  }
+
   /** E on a ready raft. */
   board(p: PlayerState): boolean {
     const core = this.core;
@@ -171,7 +176,10 @@ export class RaftSystem {
       core.addScore(p, MVP_POINTS.firstAboard);
     }
     const everyone = this.everyoneAboard(teamIdx);
-    if (!everyone && core.state.launchTicksLeft === 0) core.state.launchTicksLeft = Math.max(1, core.timings.launchWait);
+    // Bots never start the departure: on a team with a human, only a human boarding starts the countdown.
+    // (A bot-only team has nobody else to finish, so its bots may launch.)
+    const botWaits = p.bot && this.hasHuman(teamIdx);
+    if (!everyone && !botWaits && core.state.launchTicksLeft === 0) core.state.launchTicksLeft = Math.max(1, core.timings.launchWait);
     core.emit({ type: "board", tick: core.tick(), playerId: p.id, team: teamIdx, launchTicksLeft: everyone ? 0 : core.state.launchTicksLeft });
     return true;
   }
@@ -237,6 +245,8 @@ export class RaftSystem {
       const parts = core.participants(teamIdx);
       const aboard = parts.filter((q) => q.boarded);
       if (aboard.length === 0) continue;
+      // The launch is the human's to start: with a human on the team, a bot-only crew never leaves.
+      if (this.hasHuman(teamIdx) && !aboard.some((q) => !q.bot)) continue;
       let go = this.everyoneAboard(teamIdx);
       if (!go && core.state.launchTicksLeft > 0) {
         core.state.launchTicksLeft--;

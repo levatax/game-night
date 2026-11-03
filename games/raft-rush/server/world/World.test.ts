@@ -742,6 +742,36 @@ describe("RaftWorld: the raft", () => {
     expect(c.of("launchRequest", now)[0]).toMatchObject({ aboard: ["a"], left: ["b"] });
   });
 
+  it("bots never start the departure: an idle human plus two bots never launches", () => {
+    const b = new Bench([["h1"], ["bot-2"], ["bot-3"]], { fast: true });
+    b.p("bot-2").bot = true;
+    b.p("bot-3").bot = true;
+    readyRaft(b);
+    b.setClock(3, "night");
+    // The human stays idle at the camp; the bots walk to the raft and take their seats.
+    b.place("h1", 0, 0, 0);
+    atRaft(b, "bot-2", -0.6);
+    atRaft(b, "bot-3", 0.6);
+    b.world.drainEvents();
+    b.send("bot-2", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
+    b.tick();
+    b.send("bot-3", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
+    b.tick();
+    expect(b.p("bot-2").boarded).toBe(true);
+    expect(b.p("bot-3").boarded).toBe(true);
+    // Bots aboard do not start the countdown, and the launch never fires while no human is aboard.
+    expect(b.state.launchTicksLeft).toBe(0);
+    const idle = b.run(b.timings.launchWait + 60);
+    expect(b.of("launchRequest", idle)).toHaveLength(0);
+    expect(b.state.phase).toBe("playing");
+    // A human boarding still starts the departure: the rule is about who may begin it, not about the crew.
+    atRaft(b, "h1");
+    b.send("h1", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
+    const human = b.tick();
+    expect(b.p("h1").boarded).toBe(true);
+    expect(b.of("launchRequest", human)).toHaveLength(1);
+  });
+
   it("a raft that isn't ready can't be boarded", () => {
     const b = new Bench([["a"], ["b"]]);
     b.give("a", "wood", 1);

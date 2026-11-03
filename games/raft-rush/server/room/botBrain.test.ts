@@ -168,7 +168,7 @@ describe("chooseGoal priorities", () => {
       v.mates.push({ ...human });
     });
     expect(chooseGoal(countdown).kind).toBe("board");
-    expect(chooseGoal(makeView((v) => (lastNight(v), (v.team.stage = 3)))).kind).toBe("board");
+    expect(chooseGoal(makeView((v) => (lastNight(v), (v.team.stage = 3), (v.clock.stormLeft = secToTicks(4))))).kind).toBe("board");
   });
 
   it("throws at a crab threatening the raft (stones before coconuts), and not without ammo", () => {
@@ -395,8 +395,8 @@ describe("chooseStandInGoal (reconnect stand-in)", () => {
       v.clock.day = 3;
       v.clock.dayPhase = "night";
     };
-    expect(chooseStandInGoal(makeView((v) => (lastNight(v), (v.team.stage = 3), v.mates.push(human({ x: 8, z: 12 })))))).toEqual({ kind: "board" });
-    expect(chooseStandInGoal(makeView((v) => (lastNight(v), (v.team.stage = 3), v.mates.push(human({ x: -30, z: -30 })))))).toMatchObject({ kind: "camp" });
+    expect(chooseStandInGoal(makeView((v) => (lastNight(v), (v.team.stage = 3), (v.clock.stormLeft = secToTicks(4)), v.mates.push(human({ x: 8, z: 12 })))))).toEqual({ kind: "board" });
+    expect(chooseStandInGoal(makeView((v) => (lastNight(v), (v.team.stage = 3), (v.clock.stormLeft = secToTicks(4)), v.mates.push(human({ x: -30, z: -30 })))))).toMatchObject({ kind: "camp" });
   });
 
   it("keeps to the light after dark: the fire's ring, a planted torch, a teammate's torch, else a teammate", () => {

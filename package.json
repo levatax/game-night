@@ -17,7 +17,10 @@
     "test": "vitest run",
     "voices": "tsx scripts/generate-voices.ts",
     "sfx": "node scripts/generate-raft-sfx.mjs",
-    "sfx:kasala": "node scripts/generate-kasala-sfx.mjs"
+    "sfx:kasala": "node scripts/generate-kasala-sfx.mjs",
+    "qa:runs": "tsx games/raft-rush/qa/batch.ts",
+    "qa:gate": "tsx games/raft-rush/qa/gate.ts",
+    "qa:probe": "node games/raft-rush/qa/client-probe.mjs"
   },
   "dependencies": {
     "@colyseus/core": "^0.16.26",
