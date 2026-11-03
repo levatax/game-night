@@ -247,6 +247,21 @@ describe("chooseGoal priorities", () => {
     expect(chooseGoal(makeView(load)).kind).toBe("deliver");
   });
 
+  it("stocks raft wood in the camp chest on a human team instead of keeping it", () => {
+    const g = chooseGoal(
+      makeView((v) => {
+        give(v, 0, "axe");
+        give(v, 1, "wood", 5);
+        give(v, 2, "wood", 5);
+        v.mates.push({ ...botMate("h1", 0, ""), driven: false, human: true });
+        // 26 m from the chest: beyond the old "only when the pockets are full" radius, still inside the camp trip.
+        v.self.x = 20;
+        v.self.z = 0;
+      }),
+    );
+    expect(g).toMatchObject({ kind: "chestPut", items: [{ kind: "wood", count: 10 }] });
+  });
+
   it("Hamal crafts an axe when it can, otherwise chops", () => {
     const craftable = makeView((v) => {
       give(v, 0, "wood", 1);

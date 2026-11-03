@@ -702,12 +702,18 @@ function teamHasHuman(v: BotView): boolean {
   return v.mates.some((m) => m.human || (m.driven && m.role === ""));
 }
 
+/** Bots own the raft objective only when nobody else is there to build it (bot-only crew). */
+function botsBuildRaft(v: BotView): boolean {
+  return !teamHasHuman(v);
+}
+
 function deliver(v: BotView): Goal | null {
   const s = v.self;
   if (v.team.stage >= 3 || v.blocked("deliver")) return null;
-  // On a team with a human the objective loads are the human's: bots carry to the chest instead of the raft.
+  // The raft objective belongs to the humans: on a human team bots never hand goods to the raft.
   // (Server side RaftSystem.deliver refuses a bot's hand-over on such a team; a bot-only team may build alone.)
-  if (teamHasHuman(v)) return null;
+  // Stocking the chest is a different job and stays in `housekeep`/`keepCount`.
+  if (!botsBuildRaft(v)) return null;
   // Hull repair outranks the pacing plan: a gnawed raft must be fed again even when the team is "ahead".
   if (aheadOfSchedule(v) && !raftHullDamaged(v.team)) return null;
   const units = deliverableUnits(s.slots, v.team, s.character);
@@ -751,8 +757,9 @@ function craft(v: BotView): Goal | null {
     if (chestHas(v, out) && !v.blocked(`chestTake:${out}`)) return { kind: "chestTake", items: [{ kind: out, count: 1 }] };
     if (canCraft(v, tool)) return { kind: "craft", recipe: tool, count: 1 };
   }
-  // Hamal turns chest wood into raft parts it can carry (it doesn't carry wood of its own).
-  if (s.role === "hamal" && v.team.stage <= 1 && countIn(s.slots, "wood") === 0 && (!aheadOfSchedule(v) || raftHullDamaged(v.team))) {
+  // Hamal turns chest wood into raft parts it can carry (it doesn't carry wood of its own). On a human crew it
+  // leaves the chest wood alone: building parts is the humans' side of the objective.
+  if (botsBuildRaft(v) && s.role === "hamal" && v.team.stage <= 1 && countIn(s.slots, "wood") === 0 && (!aheadOfSchedule(v) || raftHullDamaged(v.team))) {
     const r = raftRemaining(v.team);
     const need = v.team.stage === 0 ? r.hull : r.mastWood;
     const chestWood = v.team.chest.wood ?? 0;
@@ -774,8 +781,16 @@ function craft(v: BotView): Goal | null {
 function keepCount(v: BotView, kind: ItemKind): number {
   const s = v.self;
   const guard = s.role === "bekci" || owns(v, "guard");
-  // Raft goods are carried to the raft — unless the team is ahead of the schedule, then they wait in the chest.
-  if (deliverBucket(kind, v.team.stage) && (!aheadOfSchedule(v) || raftHullDamaged(v.team))) return Infinity;
+  // Structural raft goods (wood, raft parts, rope) are the objective's loads. A bot-only crew carries them to
+  // the raft — unless the team is ahead of the schedule, then they wait in the chest. On a human crew the bots
+  // never load the raft, so every unit goes to the camp chest for the humans to pick up (that is stocking the
+  // chest, not the objective delivery `deliver()` above). Provisions fall through to their per-kind keeps so a
+  // bot still carries one meal; only the surplus above that goes to the chest.
+  const bucket = deliverBucket(kind, v.team.stage);
+  if (bucket === "wood" || bucket === "rope") {
+    if (!botsBuildRaft(v)) return 0;
+    if (!aheadOfSchedule(v) || raftHullDamaged(v.team)) return Infinity;
+  }
   switch (kind) {
     case "rod":
       return s.role === "balikci" || !v.mates.some((m) => m.driven && m.role === "balikci") ? Infinity : 0;
@@ -832,6 +847,9 @@ function housekeep(v: BotView): Goal | null {
   const chestD = distTo(v, v.site.chest);
   if (chestD < 7) return goal;
   if (emptySlotCount(s.slots) === 0 && chestD < 45) return goal;
+  // On a human crew the bots' raft materials have no other destination: walk them to the chest instead of
+  // sitting on them until the slots fill up.
+  if (!botsBuildRaft(v) && chestD < 45) return goal;
   return null;
 }
 
