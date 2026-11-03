@@ -8,6 +8,8 @@
 //
 // Exit 0 = every check passed (or --report-only); 1 = at least one FAIL. A missing column is a FAIL (schema
 // drift), except boss_spawn: today's QA schema has no boss column, so that check is UNVERIFIED, printed loudly.
+// boss_spawn is only checked on runs that reach the boss window (match_seconds >= 450): a run that ended earlier
+// by launch, wipe or storm is correctly boss_spawn=0 and is reported as out of scope, never as a FAIL.
 import fs from "node:fs";
 
 function parseArgs(argv) {
@@ -54,10 +56,28 @@ function parseCsv(text) {
   return rows.filter((r) => r.length > 1 || (r[0] ?? "").trim() !== "");
 }
 
+function resolveFile(file, label) {
+  if (!/[*?]/.test(file)) return file;
+  const dir = fs.existsSync(file.slice(0, file.lastIndexOf("/"))) ? file.slice(0, file.lastIndexOf("/")) : ".";
+  const base = file.slice(file.lastIndexOf("/") + 1);
+  const rx = new RegExp("^" + base.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$");
+  let names;
+  try {
+    names = fs.readdirSync(dir).filter((n) => rx.test(n));
+  } catch (e) {
+    throw new Error(`${label}: cannot list ${dir}: ${e.message}`);
+  }
+  if (names.length === 0) throw new Error(`${label}: no CSV matches ${file}`);
+  const full = names.map((n) => `${dir}/${n}`);
+  full.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+  if (full.length > 1) process.stderr.write(`${label}: ${full.length} files match ${file}; using newest ${full[0]}\n`);
+  return full[0];
+}
+
 function readRuns(file, label) {
   let text;
   try {
-    text = fs.readFileSync(file, "utf8");
+    text = fs.readFileSync(resolveFile(file, label), "utf8");
   } catch (e) {
     throw new Error(`${label}: cannot read ${file}: ${e.message}`);
   }
@@ -97,6 +117,7 @@ function stats(rows) {
   const ready = rows.map((r) => r.raft_ready_s).filter((x) => x !== null);
   const depart = rows.map((r) => r.departure_s).filter((x) => x !== null);
   const boss = rows.map((r) => r.boss_spawn).filter((x) => x !== undefined && x !== null);
+  const bossScoped = rows.filter((r) => r.boss_spawn !== undefined && r.boss_spawn !== null && (r.match_seconds ?? 0) >= 450);
   return {
     n: rows.length,
     wins,
@@ -109,7 +130,9 @@ function stats(rows) {
     lateReady: ready.filter((s) => s > 460).length,
     earlyDepart: depart.filter((s) => s < 470).length,
     lateDepart: depart.filter((s) => s > 495).length,
-    bossSpawned: boss.length ? boss.filter((v) => v > 0).length : null,
+    bossSpawned: boss.length ? bossScoped.filter((r) => r.boss_spawn > 0).length : null,
+    bossScope: bossScoped.length,
+    bossExcluded: boss.length - bossScoped.length,
     bossRows: boss.length,
   };
 }
@@ -140,11 +163,11 @@ function main() {
   }
   const bossStats = [expert, novice].filter(Boolean).filter((s) => s.bossRows > 0);
   if (bossStats.length) {
-    const all = bossStats.every((s) => s.bossSpawned === s.n);
-    add("AT5", "Boss spawn 100 % per cohort", all ? "PASS" : "FAIL",
-      bossStats.map((s) => `${s.bossSpawned}/${s.n}`).join(", "));
+    const all = bossStats.every((s) => s.bossScope > 0 && s.bossSpawned === s.bossScope);
+    add("AT5", "Boss spawn 100 % on runs reaching 450 s", all ? "PASS" : "FAIL",
+      bossStats.map((s) => `${s.bossSpawned}/${s.bossScope} in scope; ${s.bossExcluded} ended before 450 s (out of scope)`).join(" · "));
   } else {
-    add("AT5", "Boss spawn 100 % per cohort", "UNVERIFIED", "QA CSV has no boss_spawn column yet");
+    add("AT5", "Boss spawn 100 % on runs reaching 450 s", "UNVERIFIED", "QA CSV has no boss_spawn column yet");
   }
 
   const failed = checks.filter((c) => c.verdict === "FAIL");
