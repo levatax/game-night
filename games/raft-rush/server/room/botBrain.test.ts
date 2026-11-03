@@ -104,7 +104,12 @@ describe("chooseGoal priorities", () => {
   });
 
   it("does not board a ready raft before the departure gate, even with nobody else aboard", () => {
+    const lastNight = (v: BotView): void => {
+      v.clock.day = 3;
+      v.clock.dayPhase = "night";
+    };
     const early = makeView((v) => {
+      lastNight(v);
       v.team.stage = 3;
       v.clock.stormLeft = secToTicks(45);
     });
@@ -112,6 +117,7 @@ describe("chooseGoal priorities", () => {
     expect(chooseGoal(early).kind).not.toBe("board");
     // Only the last BOARD_APPROACH_SEC before the gate is spent waiting on the beach.
     const approach = makeView((v) => {
+      lastNight(v);
       v.team.stage = 3;
       v.clock.stormLeft = secToTicks(20);
     });
@@ -119,6 +125,7 @@ describe("chooseGoal priorities", () => {
     // A bot that is not one of the two raft watchers may take its seat early: safe from the night waves, while
     // the watchers keep the hull watch ashore.
     const crew = makeView((v) => {
+      lastNight(v);
       v.team.stage = 3;
       v.clock.stormLeft = secToTicks(300);
       v.self.role = "balikci";
@@ -134,7 +141,12 @@ describe("chooseGoal priorities", () => {
 
   it("boards a ready raft inside the departure gate, but waits for a human who is still far away", () => {
     const human = { id: "h1", seat: 0, x: -30, z: -30, role: "" as const, driven: false, human: true, alive: true, downed: false, downedTicks: 0, washed: false, boarded: false, hp: 100, hunger: 80, thirst: 80, slots: [] };
+    const lastNight = (v: BotView): void => {
+      v.clock.day = 3;
+      v.clock.dayPhase = "night";
+    };
     const waiting = makeView((v) => {
+      lastNight(v);
       v.team.stage = 3;
       v.clock.stormLeft = secToTicks(4);
       v.mates.push({ ...human });
@@ -142,26 +154,21 @@ describe("chooseGoal priorities", () => {
     expect(shouldBoard(waiting)).toBe(false);
     expect(chooseGoal(waiting).kind).toBe("wait");
     const close = makeView((v) => {
+      lastNight(v);
       v.team.stage = 3;
       v.clock.stormLeft = secToTicks(4);
       v.mates.push({ ...human, x: 8, z: 12 });
     });
     expect(chooseGoal(close).kind).toBe("board");
     const countdown = makeView((v) => {
+      lastNight(v);
       v.team.stage = 3;
       v.clock.stormLeft = secToTicks(4);
       v.team.launchTicksLeft = 300;
       v.mates.push({ ...human });
     });
     expect(chooseGoal(countdown).kind).toBe("board");
-    expect(
-      chooseGoal(
-        makeView((v) => {
-          v.team.stage = 3;
-          v.clock.stormLeft = secToTicks(4);
-        }),
-      ).kind,
-    ).toBe("board");
+    expect(chooseGoal(makeView((v) => (lastNight(v), (v.team.stage = 3)))).kind).toBe("board");
   });
 
   it("throws at a crab threatening the raft (stones before coconuts), and not without ammo", () => {
@@ -383,25 +390,13 @@ describe("chooseStandInGoal (reconnect stand-in)", () => {
     expect(downed).toEqual({ kind: "crawl", to: { x: 8, z: 0 } });
   });
 
-  it("boards the ready raft when the bots would (inside the departure gate), else waits by it", () => {
-    expect(
-      chooseStandInGoal(
-        makeView((v) => {
-          v.team.stage = 3;
-          v.clock.stormLeft = secToTicks(4);
-          v.mates.push(human({ x: 8, z: 12 }));
-        }),
-      ),
-    ).toEqual({ kind: "board" });
-    expect(
-      chooseStandInGoal(
-        makeView((v) => {
-          v.team.stage = 3;
-          v.clock.stormLeft = secToTicks(4);
-          v.mates.push(human({ x: -30, z: -30 }));
-        }),
-      ),
-    ).toMatchObject({ kind: "wait" });
+  it("boards the ready raft when the bots would, else waits out the dark by the fire", () => {
+    const lastNight = (v: BotView): void => {
+      v.clock.day = 3;
+      v.clock.dayPhase = "night";
+    };
+    expect(chooseStandInGoal(makeView((v) => (lastNight(v), (v.team.stage = 3), v.mates.push(human({ x: 8, z: 12 })))))).toEqual({ kind: "board" });
+    expect(chooseStandInGoal(makeView((v) => (lastNight(v), (v.team.stage = 3), v.mates.push(human({ x: -30, z: -30 })))))).toMatchObject({ kind: "camp" });
   });
 
   it("keeps to the light after dark: the fire's ring, a planted torch, a teammate's torch, else a teammate", () => {

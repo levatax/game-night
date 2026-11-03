@@ -2,7 +2,7 @@
 // holds, what is worth gathering next, and the raft pacing (ahead of / behind the schedule). Owner: server-bots.
 // Pure functions over BotView data.
 
-import { CHARACTERS, DAYS, FIRE_FUEL_MAX_TICKS, FIRE_WOOD_FUEL_TICKS, RAFT_PART_WOOD, WRECK_HULL_WOOD, secToTicks } from "../../shared/constants.js";
+import { CHARACTERS, DAYS, FIRE_FUEL_MAX_TICKS, FIRE_WOOD_FUEL_TICKS, RAFT_PART_WOOD, TICK_RATE, WRECK_HULL_WOOD, secToTicks } from "../../shared/constants.js";
 import { ITEMS, RECIPES } from "../../shared/items.js";
 import type { BotRole, CharacterId, InvKind, ItemKind, RecipeId } from "../../shared/types.js";
 import type { BotClock, BotSlot, BotTeam, BotView } from "./botTypes.js";
@@ -166,6 +166,62 @@ export function raftProgress(team: BotTeam): number {
   return total > free ? Math.max(0, done - free) / (total - free) : 1;
 }
 
+/**
+ * Bots load the last provisions only this late in the match (seconds since playing began), so a finished hull and
+ * mast do not turn into an early raft: the ready moment lands in the last night, after the boss has spawned.
+ * A human's own deliveries are never held back.
+ */
+export const READY_TARGET_SEC = 448;
+
+/** Seconds since playing began. */
+export function raftElapsedSec(c: BotClock): number {
+  const total = DAYS * (c.dayTicks + c.duskTicks + c.nightTicks);
+  return Math.max(0, total - c.stormLeft) / TICK_RATE;
+}
+
+/** The hull and mast stand and it is time to load the provisions (stage 2 → 3). */
+export function finalLoadDue(v: BotView): boolean {
+  return v.team.stage === 2 && raftElapsedSec(v.clock) >= READY_TARGET_SEC;
+}
+
+/**
+ * True when one more delivery press from these slots would complete the raft (stage 3), mirroring the server's
+ * stage-by-stage plan: hull, then mast, then provisions. Used to hold only the finishing load.
+ */
+export function wouldFinishRaft(v: BotView): boolean {
+  const t = v.team;
+  if (t.stage >= 3) return true;
+  let hull = t.hullWood;
+  let mastWood = t.mastWood;
+  let mastRope = t.mastRope;
+  let food = t.food;
+  let water = t.water;
+  let wood = 0;
+  let rope = 0;
+  let foodUnits = 0;
+  let waterUnits = 0;
+  for (const s of v.self.slots) {
+    if (s.kind === "wood" || s.kind === "raft_part") wood += woodValue(s.kind, v.self.character) * s.count;
+    else if (s.kind === "rope") rope += s.count;
+    else if (s.kind !== "" && ITEMS[s.kind].provision === "food") foodUnits += s.count;
+    else if (s.kind !== "" && ITEMS[s.kind].provision === "water") waterUnits += s.count;
+  }
+  const c = t.cost;
+  const take = (have: number, need: number): number => Math.min(have, Math.max(0, need));
+  const hullUse = take(wood, c.hullWood - hull);
+  hull += hullUse;
+  wood -= hullUse;
+  if (hull < c.hullWood) return false;
+  const mastWoodUse = take(wood, c.mastWood - mastWood);
+  mastWood += mastWoodUse;
+  const mastRopeUse = take(rope, c.mastRope - mastRope);
+  mastRope += mastRopeUse;
+  if (mastWood < c.mastWood || mastRope < c.mastRope) return false;
+  food += take(foodUnits, c.food - food);
+  water += take(waterUnits, c.water - water);
+  return food >= c.food && water >= c.water;
+}
+
 /** Where the raft "should" be by now (0..1). */
 export function raftSchedule(c: BotClock): number {
   const total = DAYS * (c.dayTicks + c.duskTicks + c.nightTicks);
@@ -190,6 +246,7 @@ export function raftHullDamaged(team: BotTeam): boolean {
 export function raftUrgent(v: BotView): boolean {
   if (v.team.stage >= 3) return false;
   if (raftHullDamaged(v.team)) return true;
+  if (finalLoadDue(v)) return true;
   if (v.clock.day >= DAYS) return true;
   return raftSchedule(v.clock) - raftProgress(v.team) > 0.15;
 }
@@ -199,6 +256,8 @@ export const PACE_SLACK_PER_HUMAN = 0.08;
 
 /** The team is comfortably ahead of the schedule: bots ease off the raft. */
 export function aheadOfSchedule(v: BotView): boolean {
+  // Structure is paced; provisions are loaded as they come (their final completing load is held in botBrain).
+  if (v.team.stage >= 2) return false;
   const humans = v.mates.filter((m) => m.human && m.alive && !m.washed).length;
   return raftProgress(v.team) - raftSchedule(v.clock) > PACE_SLACK + PACE_SLACK_PER_HUMAN * humans;
 }

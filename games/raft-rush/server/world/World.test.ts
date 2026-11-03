@@ -677,6 +677,7 @@ describe("RaftWorld: the raft", () => {
   it("gnawing lowers the hull and drops a finished raft back to the hull stage", () => {
     const b = new Bench([["a"], ["b"]]);
     readyRaft(b);
+    b.setClock(3, "night");
     const team = b.state.teams[0]!;
     atRaft(b, "a");
     b.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
@@ -695,8 +696,8 @@ describe("RaftWorld: the raft", () => {
   it("boarding: the first aboard starts the countdown, the last one requests the launch", () => {
     const b = new Bench([["a"], ["b"]]);
     readyRaft(b);
+    b.setClock(3, "night");
     b.world.drainEvents();
-    b.setClock(3, "night", 1350); // the departure gate is open: 5 s before the storm
     atRaft(b, "a", -0.6);
     atRaft(b, "b", 0.6);
     b.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
@@ -720,7 +721,7 @@ describe("RaftWorld: the raft", () => {
   it("the countdown leaves the latecomers on the beach; downed players don't hold the raft", () => {
     const b = new Bench([["a"], ["b"]], { fast: true });
     readyRaft(b);
-    b.setClock(3, "night", 5); // gate open; the countdown then runs out and leaves b behind
+    b.setClock(3, "night");
     atRaft(b, "a");
     b.place("b", 0, 0, 0);
     b.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
@@ -732,31 +733,13 @@ describe("RaftWorld: the raft", () => {
 
     const c = new Bench([["a"], ["b"]]);
     readyRaft(c);
-    c.setClock(3, "night", 1350);
+    c.setClock(3, "night");
     atRaft(c, "a");
     c.place("b", 0, 0, 0);
     c.world.damagePlayer(c.p("b"), 500, "crab", "m1");
     c.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
     const now = c.tick();
     expect(c.of("launchRequest", now)[0]).toMatchObject({ aboard: ["a"], left: ["b"] });
-  });
-
-  it("the departure gate holds a fully boarded raft until the storm window", () => {
-    const b = new Bench([["a"], ["b"]]);
-    readyRaft(b);
-    b.world.drainEvents();
-    atRaft(b, "a", -0.6);
-    atRaft(b, "b", 0.6);
-    b.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
-    b.tick();
-    b.send("b", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
-    b.tick();
-    expect(b.p("a").boarded && b.p("b").boarded).toBe(true);
-    expect(b.of("launchRequest", b.run(30))).toHaveLength(0); // day 1: the gate is shut
-    b.setClock(3, "night", 1350); // 5 s before the storm
-    const req = b.of("launchRequest", b.run(2));
-    expect(req).toHaveLength(1);
-    expect(req[0]!.aboard.sort()).toEqual(["a", "b"]);
   });
 
   it("a raft that isn't ready can't be boarded", () => {

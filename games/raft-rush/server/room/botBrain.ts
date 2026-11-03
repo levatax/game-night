@@ -51,6 +51,8 @@ import {
   deliverBucket,
   deliverableUnits,
   emptySlotCount,
+  finalLoadDue,
+  wouldFinishRaft,
   fireShortfall,
   missingFor,
   missingTools,
@@ -443,6 +445,8 @@ export function raftWatch(v: BotView): ReadonlySet<string> {
  */
 export function shouldBoard(v: BotView): boolean {
   if (v.team.stage !== 3) return false;
+  // The raft only leaves on the last night; before that there is nothing to board for.
+  if (v.clock.day !== DAYS || v.clock.dayPhase !== "night") return false;
   // The guard stays ashore until the gate; the second watcher joins the approach window (one seat filled keeps
   // the hull safe while the guard still covers the sand). Everyone else may take a seat early.
   if (v.clock.stormLeft > DEPARTURE_GATE_TICKS) {
@@ -700,6 +704,9 @@ function deliver(v: BotView): Goal | null {
   if (aheadOfSchedule(v) && !raftHullDamaged(v.team)) return null;
   const units = deliverableUnits(s.slots, v.team, s.character);
   if (units <= 0) return null;
+  // A finished hull and mast wait for the provisioning window: the last load that would complete the raft is
+  // held until READY_TARGET_SEC. Partial larder loads still go in, so the final delivery is one short press.
+  if (!finalLoadDue(v) && wouldFinishRaft(v)) return null;
   const stand = raftStand(v);
   // Ordinary night work keeps to the light. Repair is the exception: a chewed hull left until dawn is not ready
   // at the gate, so a bot carrying wood walks to the raft even when the torch is out.
