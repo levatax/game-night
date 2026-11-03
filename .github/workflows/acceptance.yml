@@ -1,0 +1,65 @@
+# Raft Rush acceptance gates + isolated perf measurement (owner: devops).
+#
+# Nightly and on demand. Four shards of the headless acceptance harness (120 matches total across 40 islands x 3
+# attempts; the novice gate runs on shard 0), then the island generator's time budget in its own job with
+# --no-file-parallelism so the number is not a measure of how many test files run at once.
+name: Raft Rush acceptance
+
+on:
+  schedule:
+    - cron: "41 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Acceptance shard ${{ matrix.shard }}
+        shell: bash
+        env:
+          RAFT_ACCEPT: "1"
+          RAFT_ACCEPT_RUNS: "120"
+          RAFT_ACCEPT_ISLANDS: "40"
+          RAFT_ACCEPT_NOVICE_RUNS: "20"
+          RAFT_ACCEPT_SHARD: ${{ matrix.shard }}
+          RAFT_ACCEPT_SHARDS: "4"
+          NO_COLOR: "1"
+        run: |
+          set +e
+          npx vitest run games/raft-rush/server/room/botAcceptance.test.ts --disableConsoleIntercept --no-file-parallelism 2>&1 | tee acceptance-${{ matrix.shard }}.txt
+          status=${PIPESTATUS[0]}
+          { echo "## Raft Rush acceptance — shard ${{ matrix.shard }}"; echo '```'; cat acceptance-${{ matrix.shard }}.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+  perf:
+    # The generator's budget on an idle runner: median of warmed-up runs, no parallel test files.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Island generation budget (isolated)
+        shell: bash
+        env:
+          NO_COLOR: "1"
+        run: |
+          set +e
+          npx vitest run games/raft-rush/shared/island/generate.test.ts -t "solo and duel generation stay within the time budget" --disableConsoleIntercept --no-file-parallelism 2>&1 | tee perf.txt
+          status=${PIPESTATUS[0]}
+          { echo "## Island generation budget"; echo '```'; cat perf.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
