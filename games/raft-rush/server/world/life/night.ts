@@ -180,7 +180,6 @@ function crewAboard(env: LifeEnv, team: number): boolean {
     if (p.boarded && p.alive && !p.washed && !p.spectator) found = true;
   });
   return found;
-  return false;
 }
 
 /** The closest eligible player guarding the raft (within RAFT_GUARD_RADIUS of its center). */
