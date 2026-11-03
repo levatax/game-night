@@ -32,6 +32,7 @@
 
 import {
   BOT_AIM_NOISE_DEG,
+  DAYS,
   FIRE_FUEL_MAX_TICKS,
   FIRE_LIGHT_RADIUS,
   FIRE_WOOD_FUEL_TICKS,
@@ -49,6 +50,8 @@ import {
   deliverBucket,
   deliverableUnits,
   emptySlotCount,
+  finalLoadDue,
+  wouldFinishRaft,
   fireShortfall,
   missingFor,
   missingTools,
@@ -406,6 +409,8 @@ function revive(v: BotView): Goal | null {
 /** Board now, or wait so the humans aren't stranded on the beach (§2.5 boarding countdown). */
 export function shouldBoard(v: BotView): boolean {
   if (v.team.stage !== 3) return false;
+  // The raft only leaves on the last night; before that there is nothing to board for.
+  if (v.clock.day !== DAYS || v.clock.dayPhase !== "night") return false;
   if (v.team.launchTicksLeft > 0) return true;
   if (v.clock.stormLeft <= secToTicks(45)) return true;
   const humans = v.mates.filter((m) => m.human && m.alive && !m.washed);
@@ -630,6 +635,9 @@ function deliver(v: BotView): Goal | null {
   if (v.team.stage >= 3 || v.blocked("deliver") || aheadOfSchedule(v)) return null;
   const units = deliverableUnits(s.slots, v.team, s.character);
   if (units <= 0) return null;
+  // A finished hull and mast wait for the provisioning window: the last load that would complete the raft is
+  // held until READY_TARGET_SEC. Partial larder loads still go in, so the final delivery is one short press.
+  if (!finalLoadDue(v) && wouldFinishRaft(v)) return null;
   const stand = raftStand(v);
   if (isNight(v) && !lit(v, stand.x, stand.z, 0)) return null;
   const want = stageTotal(stageWants(v.team));

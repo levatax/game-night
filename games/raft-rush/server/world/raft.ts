@@ -11,7 +11,7 @@
 // (state.launchTicksLeft) and at 0 the raft leaves with whoever is aboard. The room turns launchRequest into the
 // launch phase.
 
-import { CHANNEL, MVP_POINTS, WATER_Y, WRECK_HULL_WOOD } from "../../shared/constants.js";
+import { CHANNEL, DAYS, MVP_POINTS, WATER_Y, WRECK_HULL_WOOD } from "../../shared/constants.js";
 import { heightAt } from "../../shared/island/heightfield.js";
 import type { RaftCost } from "../../shared/items.js";
 import { planRaftDelivery, raftPartValue, raftStageFor, teamRaftCost } from "../../shared/rules/interact.js";
@@ -134,6 +134,14 @@ export class RaftSystem {
 
   /* ---------------------------------------------------------------- boarding */
 
+  /**
+   * The raft may only leave on the last night (the storm window). Until then it waits at the shore even when the
+   * stage is complete, so night 3 and its boss always happen.
+   */
+  private launchWindowOpen(clock: ClockInfo | null = this.core.dayClock): boolean {
+    return !!clock && clock.day === DAYS && clock.dayPhase === "night";
+  }
+
   /** E on a ready raft. */
   board(p: PlayerState): boolean {
     const core = this.core;
@@ -141,6 +149,10 @@ export class RaftSystem {
     const team = core.team(teamIdx);
     if (team.stage < 3) {
       core.reject(p, "board", "notReady", "board");
+      return false;
+    }
+    if (!this.launchWindowOpen()) {
+      core.reject(p, "board", "busy", "board");
       return false;
     }
     if (p.boarded || this.launched.has(teamIdx)) return false;
@@ -216,7 +228,7 @@ export class RaftSystem {
   /** RaftWorld step 8: boarding countdown and the launch condition. */
   step(clock: ClockInfo | null): void {
     const core = this.core;
-    if (!clock) return;
+    if (!clock || !this.launchWindowOpen(clock)) return;
     for (const site of core.island.sites) {
       const teamIdx = site.team;
       if (this.launched.has(teamIdx)) continue;

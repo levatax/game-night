@@ -677,6 +677,7 @@ describe("RaftWorld: the raft", () => {
   it("gnawing lowers the hull and drops a finished raft back to the hull stage", () => {
     const b = new Bench([["a"], ["b"]]);
     readyRaft(b);
+    b.setClock(3, "night");
     const team = b.state.teams[0]!;
     atRaft(b, "a");
     b.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
@@ -695,6 +696,7 @@ describe("RaftWorld: the raft", () => {
   it("boarding: the first aboard starts the countdown, the last one requests the launch", () => {
     const b = new Bench([["a"], ["b"]]);
     readyRaft(b);
+    b.setClock(3, "night");
     b.world.drainEvents();
     atRaft(b, "a", -0.6);
     atRaft(b, "b", 0.6);
@@ -719,6 +721,7 @@ describe("RaftWorld: the raft", () => {
   it("the countdown leaves the latecomers on the beach; downed players don't hold the raft", () => {
     const b = new Bench([["a"], ["b"]], { fast: true });
     readyRaft(b);
+    b.setClock(3, "night");
     atRaft(b, "a");
     b.place("b", 0, 0, 0);
     b.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
@@ -730,6 +733,7 @@ describe("RaftWorld: the raft", () => {
 
     const c = new Bench([["a"], ["b"]]);
     readyRaft(c);
+    c.setClock(3, "night");
     atRaft(c, "a");
     c.place("b", 0, 0, 0);
     c.world.damagePlayer(c.p("b"), 500, "crab", "m1");
