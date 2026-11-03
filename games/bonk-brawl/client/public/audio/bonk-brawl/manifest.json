@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "model": "eleven_text_to_sound_v3",
+  "voiceModel": "eleven_multilingual_v2",
+  "voiceId": "pNInz6obpgDQGcFmaJgB",
+  "generatedAt": "2026-11-03T16:54:23.081Z",
+  "sfx": {
+    "bonk1": {
+      "file": "sfx/bonk1.mp3",
+      "duration": 0.549,
+      "hash": "582ef18e378e9a29"
+    },
+    "bonk2": {
+      "file": "sfx/bonk2.mp3",
+      "duration": 0.731,
+      "hash": "2ab2f9ff004fffa7"
+    },
+    "bonk3": {
+      "file": "sfx/bonk3.mp3",
+      "duration": 0.914,
+      "hash": "7d16afb66ee4436f"
+    },
+    "whiff": {
+      "file": "sfx/whiff.mp3",
+      "duration": 0.549,
+      "hash": "14b5abb544325e76"
+    },
+    "ballDrop": {
+      "file": "sfx/ballDrop.mp3",
+      "duration": 1.045,
+      "hash": "1db851d6b1e7cbe5"
+    },
+    "ko": {
+      "file": "sfx/ko.mp3",
+      "duration": 0.836,
+      "hash": "c9696e5344aa2a0c"
+    },
+    "ringOut": {
+      "file": "sfx/ringOut.mp3",
+      "duration": 1.228,
+      "hash": "fd50dd4d992fd4ea"
+    },
+    "countdownTick": {
+      "file": "sfx/countdownTick.mp3",
+      "duration": 0.522,
+      "hash": "fe558eab7c816aec"
+    },
+    "countdownGo": {
+      "file": "sfx/countdownGo.mp3",
+      "duration": 1.123,
+      "hash": "b474b69da4010aae"
+    },
+    "uiClick": {
+      "file": "sfx/uiClick.mp3",
+      "duration": 0.522,
+      "hash": "bcb8854939f7f06d"
+    },
+    "uiConfirm": {
+      "file": "sfx/uiConfirm.mp3",
+      "duration": 0.836,
+      "hash": "eafed40dab030739"
+    },
+    "crowdOoh": {
+      "file": "sfx/crowdOoh.mp3",
+      "duration": 1.228,
+      "hash": "212fb8d5f00b1bbd"
+    }
+  },
+  "loops": {
+    "arena": {
+      "file": "loops/arena.mp3",
+      "duration": 20.036,
+      "hash": "337671b6e3125ecb"
+    },
+    "crowd": {
+      "file": "loops/crowd.mp3",
+      "duration": 20.036,
+      "hash": "cc3ba945ca6f0db7"
+    }
+  },
+  "voices": {
+    "announcerRound": {
+      "file": "voices/announcerRound.mp3",
+      "duration": 1.489,
+      "hash": "218c67da6ed11245",
+      "text": "Round one! Let's brawl!"
+    },
+    "announcerBonk": {
+      "file": "voices/announcerBonk.mp3",
+      "duration": 1.097,
+      "hash": "5ff966b8425b5cf9",
+      "text": "Ohhh, bonk!"
+    },
+    "announcerRingOut": {
+      "file": "voices/announcerRingOut.mp3",
+      "duration": 0.862,
+      "hash": "37d3aaef983c3833",
+      "text": "Ring out!"
+    },
+    "announcerLastOne": {
+      "file": "voices/announcerLastOne.mp3",
+      "duration": 1.489,
+      "hash": "49a1a3c43efadd92",
+      "text": "Last one standing!"
+    },
+    "announcerSuddenDeath": {
+      "file": "voices/announcerSuddenDeath.mp3",
+      "duration": 1.202,
+      "hash": "9b654a1673fd4021",
+      "text": "Sudden death!"
+    },
+    "announcerWin": {
+      "file": "voices/announcerWin.mp3",
+      "duration": 1.097,
+      "hash": "844c69bbccb3a7b9",
+      "text": "What a match!"
+    }
+  }
+}

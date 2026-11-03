@@ -253,5 +253,5 @@ export interface UiEventMap {
   /** Emote picked from the settings/emote wheel (Q also emotes directly via Input). */
   emote: { emote: EmoteId };
   /** UI interaction sounds for the audio engine. */
-  uiSound: { kind: "click" | "hover" | "toggle" | "error" };
+  uiSound: { kind: "click" | "hover" | "toggle" | "confirm" | "error" };
 }

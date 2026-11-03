@@ -17,7 +17,8 @@
     "test": "vitest run",
     "voices": "tsx scripts/generate-voices.ts",
     "sfx": "node scripts/generate-raft-sfx.mjs",
-    "sfx:kasala": "node scripts/generate-kasala-sfx.mjs"
+    "sfx:kasala": "node scripts/generate-kasala-sfx.mjs",
+    "sfx:bonk": "node scripts/generate-bonk-sfx.mjs"
   },
   "dependencies": {
     "@colyseus/core": "^0.16.26",

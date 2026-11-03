@@ -6,7 +6,8 @@ import { buildGraph, disposeGraph, rampGain, sliderToGain, type EngineGraph } fr
 import { createPanner, setListenerPose, setPannerPosition } from "./engine/spatial";
 import { VoicePool } from "./engine/VoicePool";
 import { Music, type Jingle, type MusicTrack } from "./Music";
-import { SFX, type LoopId, type SfxBus, type SfxId, type VoiceKind } from "./Sfx";
+import { ANNOUNCER_FILES, SFX, type AnnouncerLine, type LoopId, type SfxBus, type SfxId, type VoiceKind } from "./Sfx";
+import { SampleBank } from "./SampleBank";
 import { Synth, safeDisconnect } from "./synth/dsp";
 import { LOOP_LEVEL, createLoop } from "./synth/loops";
 import { SFX_RECIPES, sfxGain } from "./synth/sfxRecipes";
@@ -88,6 +89,7 @@ interface Spawn {
   pos: Vec3Like | undefined;
   opts: PlayOptions | undefined;
   recipe: Recipe;
+  sampleName?: string | null;
 }
 
 /**
@@ -104,6 +106,8 @@ export class AudioEngine {
   private graph: EngineGraph | null = null;
   private music: Music | null = null;
   private readonly pool = new VoicePool(MAX_VOICES);
+  private readonly bank = new SampleBank();
+  private announcerSource: AudioBufferSourceNode | null = null;
   private readonly loops = new Set<LoopHandle>();
   private volumes = { ...DEFAULT_VOLUMES };
   private desiredTrack: MusicTrack = "none";
@@ -149,6 +153,7 @@ export class AudioEngine {
       pos: def.positional ? opts?.pos : undefined,
       opts,
       recipe,
+      sampleName: this.bank.pickSfx(id),
     });
   }
 
@@ -165,6 +170,39 @@ export class AudioEngine {
       opts,
       recipe: (s) => void synthVoice(s, preset, kind),
     });
+  }
+
+  /** Play one short arena-announcer line. A new line cuts the previous one. */
+  announce(line: AnnouncerLine): void {
+    const ctx = this.runningContext();
+    const graph = this.graph;
+    if (!ctx || !graph) return;
+    const previous = this.announcerSource;
+    if (previous) {
+      this.announcerSource = null;
+      try {
+        previous.stop();
+      } catch {
+        /* already ended */
+      }
+    }
+    const out = ctx.createGain();
+    out.gain.value = 0.9;
+    out.connect(graph.ui);
+    const started = this.bank.startVoice(ANNOUNCER_FILES[line], ctx, out, ctx.currentTime + START_DELAY);
+    if (!started) {
+      safeDisconnect(out);
+      return;
+    }
+    this.announcerSource = started.source;
+    started.source.addEventListener(
+      "ended",
+      () => {
+        safeDisconnect(out);
+        if (this.announcerSource === started.source) this.announcerSource = null;
+      },
+      { once: true },
+    );
   }
 
   /** Returns a handle even before unlock (a no-op handle). */
@@ -299,6 +337,8 @@ export class AudioEngine {
     this.music = new Music(ctx, this.graph.music);
     this.music.setTempo(this.tempo);
     this.music.play(this.desiredTrack);
+    this.bank.prime(ctx);
+    void this.bank.startAmbience(ctx, this.graph.sfx);
     return ctx;
   }
 
@@ -343,8 +383,19 @@ export class AudioEngine {
       out.connect(bus);
     }
 
+    const start = now + START_DELAY;
+    const pitch = pitchOf(sp.opts);
+    const sample = sp.sampleName ? this.bank.startSfx(sp.sampleName, ctx, out, start, pitch, sp.bus === "ui" ? null : graph.bend) : null;
+    if (sample) {
+      this.pool.add(
+        { key: sp.key, startedAt: now, endsAt: sample.endTime, output: out, chain, sources: [sample.source] },
+        sample.source,
+      );
+      return;
+    }
+
     const bend = sp.bus === "ui" ? null : graph.bend;
-    const synth = new Synth(ctx, out, now + START_DELAY, pitchOf(sp.opts), bend);
+    const synth = new Synth(ctx, out, start, pitch, bend);
     sp.recipe(synth);
     this.pool.add(
       { key: sp.key, startedAt: now, endsAt: synth.endTime, output: out, chain, sources: synth.sources },

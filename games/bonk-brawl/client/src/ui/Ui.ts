@@ -270,7 +270,8 @@ export class Ui {
           this.events.emit("uiSound", { kind: "error" });
           return;
         }
-        this.events.emit("uiSound", { kind: target.dataset.sound === "toggle" ? "toggle" : "click" });
+        const kind = target.dataset.sound === "toggle" ? "toggle" : target.dataset.sound === "confirm" ? "confirm" : "click";
+        this.events.emit("uiSound", { kind });
       },
       true,
     );

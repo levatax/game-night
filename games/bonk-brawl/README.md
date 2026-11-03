@@ -64,6 +64,20 @@ npx vite --config games/bonk-brawl/client/dev/vite.client-ui.config.ts
 The URL is `http://localhost:<port>/games/bonk-brawl/dev/<page>`, with the port from that
 page's config.
 
+## Generated sound bank
+
+`client/public/audio/bonk-brawl/` holds the ElevenLabs bank: `sfx/` one-shots, `loops/` arena and
+crowd beds, `voices/` the short English announcer lines, and `manifest.json`. The client loads it
+lazily over the procedural synth and falls back to the old Web Audio recipe whenever a file is
+missing or still decoding, so the bank never blocks gameplay. Regenerate with a key:
+
+```bash
+ELEVENLABS_API_KEY=sk_… npm run sfx:bonk            # only missing files
+ELEVENLABS_API_KEY=sk_… npm run sfx:bonk -- --force # re-render everything
+```
+
+The generator (`scripts/generate-bonk-sfx.mjs`) never writes the key to the repo.
+
 ## Layout
 
 ```
