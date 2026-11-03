@@ -7,9 +7,9 @@
 //   node scripts/raft-acceptance.mjs --expert ... --report-only
 //
 // Exit 0 = every check passed (or --report-only); 1 = at least one FAIL. A missing column is a FAIL (schema
-// drift), except boss_spawn: today's QA schema has no boss column, so that check is UNVERIFIED, printed loudly.
-// boss_spawn is only checked on runs that reach the boss window (match_seconds >= 450): a run that ended earlier
-// by launch, wipe or storm is correctly boss_spawn=0 and is reported as out of scope, never as a FAIL.
+// drift). boss_spawn is only checked on runs that reach the boss window (match_seconds >= 450): a run that ended
+// earlier by launch, wipe or storm is correctly boss_spawn=0 and is reported as out of scope, never as a FAIL.
+// If no run in a cohort reaches 450 s, AT5 is UNVERIFIED, not FAIL: a 0/0 sample is absent evidence.
 import fs from "node:fs";
 
 function parseArgs(argv) {
@@ -163,9 +163,16 @@ function main() {
   }
   const bossStats = [expert, novice].filter(Boolean).filter((s) => s.bossRows > 0);
   if (bossStats.length) {
-    const all = bossStats.every((s) => s.bossScope > 0 && s.bossSpawned === s.bossScope);
-    add("AT5", "Boss spawn 100 % on runs reaching 450 s", all ? "PASS" : "FAIL",
-      bossStats.map((s) => `${s.bossSpawned}/${s.bossScope} in scope; ${s.bossExcluded} ended before 450 s (out of scope)`).join(" · "));
+    const scoped = bossStats.filter((s) => s.bossScope > 0);
+    const detail = bossStats
+      .map((s) => `${s.bossSpawned}/${s.bossScope} in scope; ${s.bossExcluded} ended before 450 s (out of scope)`)
+      .join(" · ");
+    if (scoped.length === 0) {
+      add("AT5", "Boss spawn 100 % on runs reaching 450 s", "UNVERIFIED", `${detail} — no run reached the 450 s boss window`);
+    } else {
+      const all = scoped.every((s) => s.bossSpawned === s.bossScope);
+      add("AT5", "Boss spawn 100 % on runs reaching 450 s", all ? "PASS" : "FAIL", detail);
+    }
   } else {
     add("AT5", "Boss spawn 100 % on runs reaching 450 s", "UNVERIFIED", "QA CSV has no boss_spawn column yet");
   }
