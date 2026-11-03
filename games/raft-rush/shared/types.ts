@@ -348,6 +348,10 @@ export interface PlayerView extends PlayerSimFields {
   cnt3: number;
   /** Ticks left before a downed player washes ashore (0 when not downed). */
   downedTicks: number;
+  /** The match's one free second wind is still available (the first down gets up alone). */
+  secondWind?: boolean;
+  /** Why hp last hit 0 ("" until the first down): the readable line on the death screen. */
+  downCause?: string;
   /** Washed ashore ("Dalgalar seni kıyıya attı"): alive=false, inventory lost, respawns at the next dawn. */
   washed: boolean;
   /** 0 none, 1 line cast (waiting), 2 bite (click now!), 3 reeling (result pending). FISH_STATE.* */

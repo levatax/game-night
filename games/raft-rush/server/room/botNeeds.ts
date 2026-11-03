@@ -245,11 +245,7 @@ export function raftHullDamaged(team: BotTeam): boolean {
  */
 export function raftUrgent(v: BotView): boolean {
   if (v.team.stage >= 3) return false;
-<<<<<<< HEAD
-  if (finalLoadDue(v)) return true;
-=======
-  if (raftHullDamaged(v.team)) return true;
->>>>>>> 92df2c6 (Raft Rush fixes: hidden DDA, 30/20/15 storm rungs, bot delivery share, raft survives to the gate)
+  if (finalLoadDue(v) || raftHullDamaged(v.team)) return true;
   if (v.clock.day >= DAYS) return true;
   return raftSchedule(v.clock) - raftProgress(v.team) > 0.15;
 }

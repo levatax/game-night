@@ -68,11 +68,6 @@ function atRaft(b: Bench, id: string, dx = 0): PlayerState {
 }
 
 function readyRaft(b: Bench): void {
-<<<<<<< HEAD
-=======
-  // The departure gate: put the bench's clock inside the storm window so these tests exercise the hand-over.
-  b.clockTicks = matchTicks(b.timings) - DEPARTURE_GATE_TICKS;
->>>>>>> 92df2c6 (Raft Rush fixes: hidden DDA, 30/20/15 storm rungs, bot delivery share, raft survives to the gate)
   const team = b.state.teams[0]!;
   const cost = raftCost(team.seats, b.timings.cheapRaft);
   Object.assign(team, { hullWood: cost.hullWood, mastWood: cost.mastWood, mastRope: cost.mastRope, food: cost.food, water: cost.water });
@@ -778,6 +773,7 @@ describe("RaftWorld: downed, revive, wash, respawn", () => {
   it("hp 0 downs a player; a teammate holding E for 3 s revives them at half hp", () => {
     const b = new Bench([["a"], ["b"]]);
     const down = b.place("b", 0, 0, 0);
+    down.secondWind = false; // second wind has its own behaviour; this test covers the normal down
     b.placeFacing("a", 0, 0, 0, 1.2);
     b.world.damagePlayer(down, 120, "crab", "m1");
     const evs = b.world.drainEvents();
@@ -801,6 +797,7 @@ describe("RaftWorld: downed, revive, wash, respawn", () => {
   it("the timer running out washes the player ashore; the next dawn brings them back at the wreck", () => {
     const b = new Bench([["a"], ["b"]]);
     const p = b.place("b", 0, 0, 0);
+    p.secondWind = false;
     b.give("b", "wood", 4);
     b.world.damagePlayer(p, 200, "puffer", "m2");
     const evs = b.run(DOWNED_TICKS);
@@ -828,6 +825,7 @@ describe("RaftWorld: downed, revive, wash, respawn", () => {
     const b = new Bench([["a"]]);
     b.setClock(3, "day");
     b.tick();
+    b.p("a").secondWind = false;
     b.world.damagePlayer(b.p("a"), 200, "crab", "m1");
     const evs = b.run(DOWNED_TICKS + 1);
     expect(b.of("playerWashed", evs)[0]!.willRespawn).toBe(false);

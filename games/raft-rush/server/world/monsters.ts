@@ -57,6 +57,13 @@ export class MonsterSystem {
   /** Same-tick dedupe between a puffer's direct hit and its blast (a monster takes the puffer damage once). */
   private pufferHits = new Map<string, number>();
   private blastHits = new Map<string, number>();
+  /** Visible DDA: wave size multiplier (1 = dengeli, 0.8 yardım, 1.25 sert). */
+  private waveMult = 1;
+
+  /** RaftWorld: the director's level sets tonight's wave size (announced, not smoothed). */
+  setWaveMult(mult: number): void {
+    if (Number.isFinite(mult) && mult > 0) this.waveMult = mult;
+  }
 
   constructor(protected ctx: WorldContext) {
     this.env = new LifeEnv(ctx);
@@ -269,6 +276,7 @@ export class MonsterSystem {
         biome: BIOMES[this.ctx.island.biome],
         fullMoon: this.ctx.state.weather === "fullmoon",
         flare: team.flare,
+        strength: this.waveMult,
       });
       if (team.flare) team.flare = false;
       this.plans.set(t, plan);

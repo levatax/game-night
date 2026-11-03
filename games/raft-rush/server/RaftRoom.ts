@@ -77,6 +77,7 @@ import { mulberry32 } from "../shared/island/noise.js";
 import { CLOSE_CODE, JOIN_ERROR, JOIN_ERROR_TEXT, MSG, PROTOCOL_VERSION } from "../shared/protocol.js";
 import type { CreateOptions, NoticeMsg, ServerMessages, WelcomeMsg } from "../shared/protocol.js";
 import { clockAt, inputLocked, matchTicks, type ClockInfo } from "../shared/rules/schedule.js";
+import { matchLeftSec } from "../shared/rules/tempo.js";
 import { eyePosition } from "../shared/sim/player.js";
 import type { CharacterId, Phase, RecipeId } from "../shared/types.js";
 import { GAME_ID, getRoomCodes } from "./hub.js";
@@ -545,10 +546,7 @@ export class RaftRoom extends Room<RaftState> {
         else if (isBroadcastEvent(ev)) this.broadcast(ev.type, ev);
         else if (ev.type === "launchRequest") this.onLaunchRequest(ev);
         else if (ev.type === "teamWiped") this.onTeamWiped();
-<<<<<<< HEAD
-=======
         else if (ev.type === "supplyCache") this.notice(say.supplyCache());
->>>>>>> 92df2c6 (Raft Rush fixes: hidden DDA, 30/20/15 storm rungs, bot delivery share, raft survives to the gate)
       } catch (err) {
         this.logError(`event ${ev.type}`, err);
       }

@@ -10,6 +10,12 @@
 import {
   BERRY_FOOD,
   BERRY_REGROW_TICKS,
+  DDA_RESOURCE_MULT,
+  COAST_WOOD_BY_BUCKET,
+  RESOURCE_CACHE_AT,
+  RESOURCE_CACHE_MAX,
+  RESOURCE_MIN_UNITS,
+  RESOURCE_RAMP,
   COCONUT_DROP_HEIGHT,
   EAT_HEAL,
   INTERACT_CONE_COS,
@@ -19,12 +25,30 @@ import {
   PALM_REGROW_TICKS,
   PALM_THROW_DROPS,
   PALM_TRUNK_RADIUS,
+  type Timings,
 } from "../../shared/constants.js";
+import { heightAt } from "../../shared/island/heightfield.js";
 import type { NodeDef } from "../../shared/island/types.js";
+import { raftCost } from "../../shared/items.js";
+import { matchTicks, type ClockInfo } from "../../shared/rules/schedule.js";
 import { gatherYield } from "../../shared/rules/interact.js";
+import type { ItemKind } from "../../shared/types.js";
 import type { PlayerState } from "./context.js";
 import type { WorldCore } from "./core.js";
 import { dist, point } from "./rules.js";
+
+/** The share of the island's nodes still on offer at match progress `p` (0..1). Pure, unit-tested. */
+export function resourceShareAt(p: number, ddaMult = 1): number {
+  let share = RESOURCE_RAMP[0]!.share;
+  for (const step of RESOURCE_RAMP) if (p >= step.from) share = step.share;
+  return Math.max(0, share * ddaMult);
+}
+
+/** Match progress 0..1 on the day clock (0 before the clock exists). `stormLeft` counts down the whole match. */
+function progressOf(clock: ClockInfo | null, timings: Timings): number {
+  if (!clock) return 0;
+  return Math.min(1, Math.max(0, 1 - clock.stormLeft / Math.max(1, matchTicks(timings))));
+}
 
 /** Fallen coconuts drift a little toward whoever knocked them loose. */
 const COCONUT_SCATTER_SPEED = 0.9;
@@ -34,8 +58,58 @@ const COCONUT_TRUNK_CLEARANCE = 0.35;
 export class NodeSystem {
   /** Node index → tick at which it regrows to full. */
   private readonly regrowAt = new Map<number, number>();
+  /** Last ramp bucket applied (-1 = none yet this match). */
+  private bucket = -1;
+  /** Current node share of the island (RESOURCE_RAMP × the visible DDA level). */
+  private share = 1;
+  /** The visible DDA level's resource multiplier (set by RaftWorld from the director). */
+  private ddaMult: number = DDA_RESOURCE_MULT.even;
+  /** Supply caches already dropped this match, keyed `team:threshold` (two per team: 45 % and 78 %). */
+  private readonly cached = new Set<string>();
 
   constructor(private readonly core: WorldCore) {}
+
+  /** RaftWorld: the visible DDA level's resource multiplier (help keeps a little more on the island). */
+  setDda(level: number, assistSteps = 0): void {
+    const next = level > 0
+      ? assistSteps >= 2 ? DDA_RESOURCE_MULT.help2 : DDA_RESOURCE_MULT.help
+      : level < 0
+        ? DDA_RESOURCE_MULT.hard
+        : DDA_RESOURCE_MULT.even;
+    if (next === this.ddaMult) return;
+    this.ddaMult = next;
+    this.applyShare();
+  }
+
+  /** Match reset: full island, no cache, ramp bucket forgotten. */
+  resetRamp(): void {
+    this.bucket = -1;
+    this.share = 1;
+    this.ddaMult = DDA_RESOURCE_MULT.even;
+    this.cached.clear();
+  }
+
+  /** The current share of the island's nodes (0..1). */
+  currentShare(): number {
+    return this.share;
+  }
+
+  /** Cap every node at `share` of its island amount (never raises a harvested node). */
+  private applyShare(): void {
+    const nodes = this.core.state.nodes;
+    const defs = this.core.island.nodes;
+    for (let i = 0; i < defs.length; i++) {
+      const def = defs[i]!;
+      if (def.amount <= 0) continue;
+      const cap = Math.max(RESOURCE_MIN_UNITS, Math.ceil(def.amount * this.share));
+      if (nodes[i]! > cap) nodes[i] = cap;
+    }
+  }
+
+  /** The amount an emptied palm / bush regrows to under the current share. */
+  private regrowAmount(base: number): number {
+    return Math.max(RESOURCE_MIN_UNITS, Math.round(base * this.share));
+  }
 
   /** Live amount of node `i`. */
   amount(i: number): number {
@@ -150,20 +224,103 @@ export class NodeSystem {
     core.emit({ type: "palmShake", tick: core.tick(), playerId: byId, node: palm.i, projectileIds: ids, pos: point(palm.x, palm.y + COCONUT_DROP_HEIGHT, palm.z) });
   }
 
-  /** Regrow emptied palms / berry bushes whose timer is due. */
-  step(): void {
+  /**
+   * RaftWorld step 5: the scarcity ramp (100 → 75 → 50 → 35 % of the island as the match runs out) plus the
+   * once-per-match anti-soft-lock supply cache, then regrowth of emptied palms / berry bushes whose timer is due.
+   */
+  step(clock: ClockInfo | null = null): void {
+    if (clock) this.ramp(clock);
     if (this.regrowAt.size === 0) return;
     const now = this.core.tick();
     for (const [i, due] of this.regrowAt) {
       if (now < due) continue;
       this.regrowAt.delete(i);
       const def = this.core.island.nodes[i];
-      if (def) this.core.state.nodes[i] = def.kind === "palm" ? NODE_AMOUNT.palm : def.amount > 0 ? def.amount : NODE_AMOUNT.bush;
+      if (def) this.core.state.nodes[i] = this.regrowAmount(def.kind === "palm" ? NODE_AMOUNT.palm : def.amount > 0 ? def.amount : NODE_AMOUNT.bush);
     }
+  }
+
+  /** Step the economy ramp on a bucket change and drop the guaranteed caches at 45 % / 78 %. */
+  private ramp(clock: ClockInfo): void {
+    const progress = progressOf(clock, this.core.timings);
+    const share = resourceShareAt(progress, this.ddaMult);
+    let bucket = 0;
+    for (let i = 0; i < RESOURCE_RAMP.length; i++) if (progress >= RESOURCE_RAMP[i]!.from) bucket = i;
+    if (bucket !== this.bucket) {
+      this.bucket = bucket;
+      this.share = share;
+      this.applyShare();
+    }
+    for (const at of RESOURCE_CACHE_AT) if (progress >= at) this.dropCache(progress, at, bucket);
+  }
+
+  /**
+   * Anti-soft-lock cache: exactly what the raft still needs, once per team, on the beach by the wreck. If the
+   * team already has the materials the cache is skipped (no free lunch), and its total is capped.
+   */
+  private dropCache(progressForCache: number, threshold: number, bucket: number): void {
+    const core = this.core;
+    core.state.teams.forEach((team) => {
+      const key = `${team.index}:${threshold}`;
+      if (this.cached.has(key)) return;
+      this.cached.add(key);
+      const cost = raftCost(team.seats, core.state.fast);
+      // Provisions are carried by real item kinds: a coconut counts as food, a gourd as water.
+      const need: ReadonlyArray<{ item: ItemKind; n: number }> = [
+        { item: "wood", n: Math.max(0, cost.hullWood - team.hullWood) + Math.max(0, cost.mastWood - team.mastWood) },
+        { item: "rope", n: Math.max(0, cost.mastRope - team.mastRope) },
+        { item: "coconut", n: Math.max(0, cost.food - team.food) },
+        { item: "water", n: Math.max(0, cost.water - team.water) },
+      ];
+      const needWood = need.find((r) => r.item === "wood")?.n ?? 0;
+      const needRope = need.find((r) => r.item === "rope")?.n ?? 0;
+      // Soft-lock guard only: the cache lands when the island can no longer pay for the raft, not as a gift for
+      // a team that is merely behind. Food / water are never a soft lock (fishing and the spring always exist).
+      const nodeDefs = core.island.nodes;
+      const nodes = core.state.nodes;
+      let woodLeft = 0;
+      let ropeLeft = 0;
+      for (let i = 0; i < nodeDefs.length; i++) {
+        const def = nodeDefs[i]!;
+        if (def.kind === "tree") woodLeft += nodes[i] ?? 0;
+        else if (def.kind === "bush" && def.yield === "rope") ropeLeft += nodes[i] ?? 0;
+      }
+      const chestWood = team.chest.get("wood") ?? 0;
+      const chestRope = team.chest.get("rope") ?? 0;
+      const short = needWood > woodLeft + chestWood || needRope > ropeLeft + chestRope;
+      // Guaranteed caches (v4b): both land whatever the island still holds, sized by the coast-wood table; wood is
+      // the resource the raft cannot do without, rope only rides along when the team is short of it.
+      const coastWood = COAST_WOOD_BY_BUCKET[Math.min(bucket, COAST_WOOD_BY_BUCKET.length - 1)] ?? 0;
+      const woodQuota = Math.max(short ? needWood : 0, coastWood);
+      let left = RESOURCE_CACHE_MAX;
+      const items: Array<{ item: ItemKind; n: number }> = [];
+      for (const { item, n: wantRaw } of need) {
+        const want = item === "wood" ? Math.max(wantRaw, woodQuota) : wantRaw;
+        const n = Math.min(left, want);
+        if (n > 0) items.push({ item, n });
+        left -= n;
+      }
+      if (left === RESOURCE_CACHE_MAX) return;
+      const site = core.site(team.index);
+      const wreckY = heightAt(core.island.grid, site.wreck.x, site.wreck.z);
+      const made: Record<string, number> = {};
+      let k = 0;
+      for (const { item, n } of items) {
+        made[item] = n;
+        for (let i = 0; i < n; i++) {
+          const a = (k++ * 0.9) % (Math.PI * 2);
+          const x = site.wreck.x + Math.cos(a) * (1.2 + 0.25 * k);
+          const z = site.wreck.z + Math.sin(a) * (1.2 + 0.25 * k);
+          core.spawnProjectile(item, point(x, wreckY + 0.6, z), point(0, 0, 0), { state: "loose" });
+        }
+      }
+      core.emit({ type: "supplyCache", tick: core.tick(), team: team.index, pos: point(site.wreck.x, wreckY, site.wreck.z), items: made });
+    });
   }
 
   /** Every node back to its initial amount, regrowth timers forgotten. */
   reset(): void {
+    this.resetRamp();
     this.regrowAt.clear();
     const nodes = this.core.state.nodes;
     const defs = this.core.island.nodes;

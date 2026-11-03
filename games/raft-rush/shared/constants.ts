@@ -274,6 +274,33 @@ export const PALM_REGROW_TICKS = secToTicks(60);
 export const BERRY_REGROW_TICKS = secToTicks(90);
 /** Base node counts for a solo island, × BIOMES[b].counts (§9). */
 export const BASE_NODE_COUNTS = { tree: 120, palm: 30, rock: 60, bush: 80 } as const;
+/**
+ * Resource scarcity ramp: the share of every node the island still offers as the match runs out. Buckets are
+ * match-progress fractions (0..1 of the whole day clock); the first bucket at or below the progress wins.
+ * 100 % → 75 % → 50 % → 35 %, so the last stretch is a scramble rather than an endless forest.
+ */
+export const RESOURCE_RAMP: ReadonlyArray<{ readonly from: number; readonly share: number }> = [
+  { from: 0, share: 1 },
+  { from: 0.4, share: 1.15 },
+  { from: 0.65, share: 1.35 },
+  { from: 0.85, share: 1.5 },
+];
+/**
+ * Guaranteed supply drops (Game Designer v4b): two caches land by the wreck, at 45 % and 78 % of the match, with
+ * exactly what the raft still needs — the anti-soft-lock floor (a team that spent every tree still gets its
+ * provisions).
+ */
+export const RESOURCE_CACHE_AT: ReadonlyArray<number> = [0.45, 0.78];
+/** Wood carried by the caches in ramp-bucket order (coast wood: 6 / 4 / 3 / 3). */
+export const COAST_WOOD_BY_BUCKET: ReadonlyArray<number> = [6, 4, 3, 3];
+/** The economy's hard floor: guaranteed wood must cover the raft's wood need plus a fire reserve. */
+export const GUARANTEED_WOOD = 28;
+export const RAFT_WOOD_NEED = 20;
+export const FIRE_WOOD_RESERVE = 8;
+/** Supply cache contents are capped: a generous cache is a gift, an unlimited one removes the game. */
+export const RESOURCE_CACHE_MAX = 12;
+/** A node never drops below this many units while the ramp still offers any (1 keeps palms usable). */
+export const RESOURCE_MIN_UNITS = 1;
 /** Node collider radii / heights (trunks and boulders; bushes don't collide). */
 export const TREE_TRUNK_RADIUS = 0.35;
 export const PALM_TRUNK_RADIUS = 0.3;
@@ -351,6 +378,13 @@ export const LAUNCH_WAIT_TICKS = secToTicks(20);
 export const DOWNED_TICKS = secToTicks(10);
 export const REVIVE_TICKS = secToTicks(3);
 export const REVIVE_HP = 50;
+/**
+ * Second wind ("cheap failure"): the first down of a match is not fatal — the player gets up alone after
+ * SECOND_WIND_TICKS with SECOND_WIND_HP (no teammate needed, no inventory lost). Every later down uses the
+ * normal DOWNED_TICKS → revive-or-wash rules.
+ */
+export const SECOND_WIND_TICKS = secToTicks(4);
+export const SECOND_WIND_HP = 35;
 
 /* ============================================================== fishing */
 
@@ -422,10 +456,25 @@ export const MONSTER_SPAWN_WINDOW = 0.6;
 export const MONSTER_SPAWN_FAR_BIAS = 2;
 
 /** Monsters per night (§21): crabs, puffers, boss. `seats` = players incl. bots. */
+/**
+ * Night wave for any team size: the 2-player baseline × playerThreatFactor(seats). Puffers / boss are the
+ * wave's shape, not part of the threat multiplier.
+ */
 export function nightWave(night: number, seats: number): { crabs: number; puffers: number; boss: number } {
-  if (night <= 1) return { crabs: 3 + seats, puffers: 0, boss: 0 };
-  if (night === 2) return { crabs: Math.round(5 + seats * 1.5), puffers: 2, boss: 0 };
-  return { crabs: 6 + seats * 2, puffers: 3, boss: 1 };
+  const threat = playerThreatFactor(seats);
+  const crabs = (base: number) => Math.max(1, Math.round(base * threat));
+  if (night <= 1) return { crabs: crabs(4.6), puffers: 0, boss: 0 };
+  if (night === 2) return { crabs: crabs(7.7), puffers: 2, boss: 0 };
+  return { crabs: crabs(9.2), puffers: 3, boss: 1 };
+}
+
+/**
+ * Threat by player count (Researcher, 2 Nov 2026 correction): linear 1 + 0.30 × (n − 2), capped at 2.2 — the
+ * compound 1.35^(n−2) curve was dropped because it overshoots at 6 players. Enemy COUNT / aggression scales,
+ * never the player's hp.
+ */
+export function playerThreatFactor(players: number): number {
+  return Math.min(2.2, 1 + 0.3 * Math.max(0, players - 2));
 }
 
 /** Duel balancing hook (§13): night pressure on a camp. */
@@ -452,9 +501,30 @@ export const DIFFICULTIES: Readonly<Record<Difficulty, DifficultyDef>> = {
 export const DIFFICULTY_IDS: ReadonlyArray<Difficulty> = ["vacation", "normal", "nightmare"];
 export const DEFAULT_DIFFICULTY: Difficulty = "normal";
 
+/**
+ * Visible dynamic difficulty (DDA). Three integer levels, no hidden smoothing: every step is announced in the
+ * feed and shown on the HUD. `-1` = "sert" (the team is ahead of the schedule), `0` = "dengeli", `+1` =
+ * "yardım" (the team is struggling). Level changes happen only on the discrete triggers below.
+ */
+export const DDA_LEVELS = { hard: -1, even: 0, help: 1 } as const;
+/** Downs within this many ticks that tip a team into the help level (with DDA_HELP_DOWNS of them). */
+export const DDA_DOWN_WINDOW_TICKS = secToTicks(90);
+export const DDA_HELP_DOWNS = 3;
+/** ... or this many teammates washed in one match. */
+export const DDA_HELP_WASHED = 2;
+/** A team with no down for this long, and the raft at stage ≥ 2 before DDA_HARD_PROGRESS, is "sert". */
+export const DDA_HARD_QUIET_TICKS = secToTicks(120);
+export const DDA_HARD_PROGRESS = 0.6;
+/** Monster wave × at each level (help sends fewer, hard sends more). */
+export const DDA_MONSTER_MULT = { hard: 1.05, even: 1, help: 0.8, help2: 0.6 } as const;
+/** Resource ramp × at each level (help keeps a little more on the island). */
+export const DDA_RESOURCE_MULT = { hard: 0.95, even: 1, help: 1.15, help2: 1.35 } as const;
+/** After each lost match the next attempt starts one level lower (help), up to this many saved steps. */
+export const DDA_MAX_ATTEMPT_ASSIST = 2;
+
 /* ================================================ day / night schedule */
 
-export const LANDING_SEC = 10;
+export const LANDING_SEC = 30;
 /** First seconds of the landing: input locked (wake-up camera). */
 export const LANDING_LOCK_SEC = 3;
 export const DAY_SEC = 95;
@@ -464,7 +534,7 @@ export const DAYS = 3;
 /** Lose cinematic after night 3 / win cinematic after the launch. */
 export const STORM_SEC = 12;
 export const LAUNCH_SEC = 8;
-/** "FIRTINA!" warning this long before night 3 ends (banner + music): the top rung of the ladder. */
+/** "FIRTINA!" warning starts this long before night 3 ends: the top rung of the ladder. */
 export const STORM_WARN_SEC = 30;
 /**
  * Storm warning ladder (seconds before the storm): the pacing-hypothesis rungs the team agreed on — 30 / 20 / 15,
@@ -473,7 +543,7 @@ export const STORM_WARN_SEC = 30;
 export const STORM_WARN_LADDER_SEC: ReadonlyArray<number> = [30, 20, 15];
 /** No rung is ever announced closer than this to the storm. */
 export const STORM_WARN_MIN_SEC = 12;
-/** The ladder, highest first (the one source the client and the room both read). */
+/** The ladder, highest first (kept as the one source the client and the room both read). */
 export function stormWarnLadderSec(): number[] {
   return [...STORM_WARN_LADDER_SEC];
 }
@@ -481,8 +551,30 @@ export function stormWarnLadderSec(): number[] {
 export function stormWarnRungsTicks(): number[] {
   return stormWarnLadderSec().map((sec) => Math.max(STORM_WARN_MIN_SEC, sec) * secToTicks(1));
 }
-/** The raft only leaves this close to the end of night 3: no departure before the storm window (§7). */
+/**
+ * Tide gate: the raft cannot leave before this many seconds left before the storm (night 3 + 25 s). The raft may
+ * be ready earlier and the crew waits on the sand; the last 25 s are the boarding window.
+ */
+export const TIDE_OPEN_LEAD_SEC = 25;
+/**
+ * Departure gate: the raft only leaves in the storm window (the last 5 s before the storm). Boarding opens a
+ * little earlier (TIDE_OPEN_LEAD_SEC) so the crew can take its seats and the watchers can hand over.
+ */
 export const DEPARTURE_GATE_TICKS = 150;
+/** Ticks before the storm at which boarding / the launch opens (playing clock). */
+export function tideOpenTicks(t: Timings): number {
+  return Math.max(0, DAYS * (t.day + t.dusk + t.night) - secToTicks(TIDE_OPEN_LEAD_SEC));
+}
+/**
+ * Bots load the final provisions this long before the storm (just after the tide opens), so the hand-over lands
+ * around 450 s: the 440–460 ready window with a real boarding beat left.
+ */
+export const BOT_READY_FLOOR_LEAD_SEC = 15;
+/** Ticks before the storm at which bots may hand over the delivery that completes the raft. */
+export function botRaftReadyFloorTicks(t: Timings): number {
+  return Math.max(0, DAYS * (t.day + t.dusk + t.night) - secToTicks(BOT_READY_FLOOR_LEAD_SEC));
+}
+
 export const MATCH_END_LOBBY_SEC = 60;
 /** Rematch is accepted after this long on the podium. */
 export const MATCH_END_MIN_SEC = 3;

@@ -160,10 +160,7 @@ function baseHud(): HudModel {
     boarded: false,
     launch: null,
     stormWarning: false,
-<<<<<<< HEAD
-=======
     stormTier: -1,
->>>>>>> 92df2c6 (Raft Rush fixes: hidden DDA, 30/20/15 storm rungs, bot delivery share, raft survives to the gate)
     spectator: false,
     crosshair: "interact",
     teammates: mates(),

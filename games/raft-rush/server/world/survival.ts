@@ -38,6 +38,8 @@ import {
   RESPAWN_BARS,
   RESPAWN_HP,
   REVIVE_HP,
+  SECOND_WIND_HP,
+  SECOND_WIND_TICKS,
   SHADE_RADIUS,
   SHELTER_RADIUS,
   TICK_RATE,
@@ -134,12 +136,15 @@ export class SurvivalSystem {
     if (rt.hp <= 0) this.down(p, cause);
   }
 
-  /** hp reached 0: downed (crawl, waits DOWNED_TICKS for a revive). */
+  /** hp reached 0: downed (crawl, waits DOWNED_TICKS for a revive; the first down is a free second wind). */
   private down(p: PlayerState, cause: HurtCause): void {
     const core = this.core;
     core.fishing.cancel(p, "cancel");
+    const secondWind = p.secondWind;
+    p.secondWind = false;
+    p.downCause = cause;
     p.downed = true;
-    p.downedTicks = DOWNED_TICKS;
+    p.downedTicks = secondWind ? SECOND_WIND_TICKS : DOWNED_TICKS;
     p.hp = 0;
     p.channel = CHANNEL.NONE;
     p.channelTicks = 0;
@@ -151,6 +156,7 @@ export class SurvivalSystem {
     rt.hp = 0;
     rt.reviveTarget = "";
     rt.catchOpen = false;
+    rt.selfRevive = secondWind;
     p.stats.downs = Math.min(65535, p.stats.downs + 1);
     core.emit({ type: "playerDowned", tick: core.tick(), playerId: p.id, cause, pos: posOf(p) });
   }
@@ -161,6 +167,7 @@ export class SurvivalSystem {
     const core = this.core;
     p.downed = false;
     p.downedTicks = 0;
+    core.runtime.of(p).selfRevive = false;
     const rt = core.runtime.of(p);
     this.adopt(p, rt);
     rt.hp = REVIVE_HP;
@@ -318,7 +325,10 @@ export class SurvivalSystem {
     core.state.players.forEach((p) => {
       if (!p.alive || !p.downed) return;
       if (p.downedTicks > 0) p.downedTicks--;
-      if (p.downedTicks === 0) this.wash(p, clock);
+      if (p.downedTicks === 0) {
+        if (core.runtime.of(p).selfRevive) this.secondWind(p);
+        else this.wash(p, clock);
+      }
     });
     if (clock.day < DAYS) return;
     for (const site of core.island.sites) {
@@ -328,6 +338,19 @@ export class SurvivalSystem {
       this.wiped.add(site.team);
       core.emit({ type: "teamWiped", tick: core.tick(), team: site.team });
     }
+  }
+
+  /** The free second wind: the player gets up alone with SECOND_WIND_HP, inventory kept (no wash). */
+  private secondWind(p: PlayerState): void {
+    const core = this.core;
+    p.downed = false;
+    p.downedTicks = 0;
+    const rt = core.runtime.of(p);
+    rt.selfRevive = false;
+    this.adopt(p, rt);
+    rt.hp = SECOND_WIND_HP;
+    this.write(p, rt);
+    core.emit({ type: "playerRevived", tick: core.tick(), playerId: p.id, byId: "", pos: posOf(p) });
   }
 
   /** "Dalgalar seni kıyıya attı": inventory lost, out until the next dawn. */

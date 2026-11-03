@@ -115,6 +115,10 @@ export class PlayerState extends Schema implements PlayerView {
 
   // ------------------------------------------------------------------ status (11)
   @type("uint16") downedTicks = 0;
+  /** The match's one free second wind is still available (first down gets up alone). */
+  @type("boolean") secondWind = true;
+  /** Why hp last hit 0 ("" until the first down): the one-line reason on the death screen. */
+  @type("string") downCause = "";
   @type("boolean") washed = false;
   @type("uint8") fishState = 0;
   @type("int8") fishSpot = -1;

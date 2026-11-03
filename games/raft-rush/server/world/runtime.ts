@@ -27,6 +27,8 @@ export interface PlayerRuntime {
   reviveTarget: string;
   /** Raft seat while boarded (-1 = none). */
   seat: number;
+  /** This down is the match's free second wind: the player gets up alone when the timer runs out. */
+  selfRevive: boolean;
 }
 
 /** Fresh runtime mirroring the schema bars of `p`. */
@@ -41,6 +43,7 @@ export function createRuntime(p: Pick<PlayerState, "hp" | "hunger" | "thirst" | 
     catchOpen: false,
     reviveTarget: "",
     seat: -1,
+    selfRevive: false,
   };
 }
 

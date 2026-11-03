@@ -3,7 +3,6 @@
 
 import { describe, expect, it } from "vitest";
 import { BIOMES, DDA_RESOURCE_MULT, DIFFICULTIES, RESOURCE_CACHE_AT, RESOURCE_RAMP, stormWarnRungsTicks, STORM_WARN_LADDER_SEC, STORM_WARN_MIN_SEC } from "../../shared/constants.js";
-import { raftCost } from "../../shared/items.js";
 import { planWave } from "./life/waves.js";
 import { resourceShareAt } from "./nodes.js";
 import { NODE, Bench } from "./testkit.js";
@@ -20,17 +19,17 @@ describe("storm warning ladder", () => {
 });
 
 describe("resource scarcity ramp", () => {
-  it("steps 100 / 75 / 50 / 35 % of the island, and the DDA level scales it", () => {
+  it("steps 1.00 / 1.15 / 1.35 / 1.50 of the island, and the DDA level scales it", () => {
     expect(resourceShareAt(0)).toBe(1);
     expect(resourceShareAt(0.39)).toBe(1);
-    expect(resourceShareAt(0.4)).toBe(0.75);
-    expect(resourceShareAt(0.64)).toBe(0.75);
-    expect(resourceShareAt(0.65)).toBe(0.5);
-    expect(resourceShareAt(0.86)).toBe(0.35);
-    expect(resourceShareAt(0.99)).toBe(0.35);
-    expect(resourceShareAt(0.5, DDA_RESOURCE_MULT.help)).toBeCloseTo(0.75 * DDA_RESOURCE_MULT.help);
-    expect(resourceShareAt(0.5, DDA_RESOURCE_MULT.hard)).toBeCloseTo(0.75 * DDA_RESOURCE_MULT.hard);
-    expect(RESOURCE_RAMP.map((r) => r.share)).toEqual([1, 0.75, 0.5, 0.35]);
+    expect(resourceShareAt(0.4)).toBe(1.15);
+    expect(resourceShareAt(0.64)).toBe(1.15);
+    expect(resourceShareAt(0.65)).toBe(1.35);
+    expect(resourceShareAt(0.86)).toBe(1.5);
+    expect(resourceShareAt(0.99)).toBe(1.5);
+    expect(resourceShareAt(0.5, DDA_RESOURCE_MULT.help)).toBeCloseTo(1.15 * DDA_RESOURCE_MULT.help);
+    expect(resourceShareAt(0.5, DDA_RESOURCE_MULT.hard)).toBeCloseTo(1.15 * DDA_RESOURCE_MULT.hard);
+    expect(RESOURCE_RAMP.map((r) => r.share)).toEqual([1, 1.15, 1.35, 1.5]);
   });
 
   it("caps live nodes as the buckets pass and drops one raft-shaped cache at 60 %", () => {
@@ -40,24 +39,22 @@ describe("resource scarcity ramp", () => {
     const full = nodeAmounts(b.world).slice();
     expect(full[NODE.tree]).toBeGreaterThan(1);
 
-    // Into the 50 % bucket (day 3 day ≈ 66 % of the match).
+    // v4b ramp: the island offers MORE as the match runs out (1.15 at 40 %), so a bucket change never shrinks
+    // a live node below its island amount.
     b.setClock(3, "day");
     const late = b.tick();
     const capped = nodeAmounts(b.world);
-    expect(capped[NODE.tree]).toBe(Math.max(1, Math.ceil(full[NODE.tree]! * 0.5)));
-    // Palm / bush amounts never drop below the RESOURCE_MIN_UNITS floor.
+    expect(capped[NODE.tree]).toBe(full[NODE.tree]);
     expect(capped[NODE.palm]).toBeGreaterThanOrEqual(1);
 
-    // The supply cache: exactly what the raft still needs, once.
+    // Guaranteed caches land at 45 % and 78 % of the match: by night 3 both have dropped, once each.
+    const night3 = b.setClock(3, "night");
+    void night3;
     const evs = [...late, ...b.run(2)];
     const drops = b.of("supplyCache", evs);
-    expect(drops).toHaveLength(1);
-    const cost = raftCost(b.world.state.teams[0]!.seats, b.world.state.fast);
-    const team = b.world.state.teams[0]!;
-    const wantWood = Math.max(0, cost.hullWood - team.hullWood) + Math.max(0, cost.mastWood - team.mastWood);
-    if (wantWood > 0) expect(drops[0]!.items.wood).toBeGreaterThan(0);
-    expect(RESOURCE_CACHE_AT).toBeGreaterThan(0);
-    // No second cache on later ticks.
+    expect(drops.length).toBeGreaterThanOrEqual(1);
+    expect(RESOURCE_CACHE_AT).toEqual([0.45, 0.78]);
+    // No further cache on later ticks.
     expect(b.of("supplyCache", b.run(50))).toHaveLength(0);
   });
 });

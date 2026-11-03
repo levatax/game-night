@@ -40,10 +40,7 @@ export const NOTICE_EN = {
   rematch: "🔁 {n} wants a rematch! Everyone back to the beach, a fresh island is on its way.",
   backToLobby: "🏖️ {n} headed back to the lobby.",
   lobbyAuto: "🏖️ Back to the lobby. New island, same sunburn.",
-<<<<<<< HEAD
-=======
   supply_cache: "📦 A supply crate washed up by the wreck: exactly what the raft was missing.",
->>>>>>> 92df2c6 (Raft Rush fixes: hidden DDA, 30/20/15 storm rungs, bot delivery share, raft survives to the gate)
 } as const;
 
 export type NoticeKey = keyof typeof NOTICE_EN;
@@ -93,8 +90,5 @@ export const say = {
   rematch: (n: string) => notice("rematch", { n }),
   backToLobby: (n: string) => notice("backToLobby", { n }),
   lobbyAuto: () => notice("lobbyAuto"),
-<<<<<<< HEAD
-=======
   supplyCache: () => notice("supply_cache"),
->>>>>>> 92df2c6 (Raft Rush fixes: hidden DDA, 30/20/15 storm rungs, bot delivery share, raft survives to the gate)
 };

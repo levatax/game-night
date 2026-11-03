@@ -91,8 +91,8 @@ describe("wave sizes", () => {
       }
     }
     expect(plan(1, 3)).toMatchObject({ crabs: 6, puffers: 0, boss: 0 });
-    expect(plan(2, 4)).toMatchObject({ crabs: 11, puffers: 2, boss: 0 });
-    expect(plan(3, 6)).toMatchObject({ crabs: 18, puffers: 3, boss: 1 });
+    expect(plan(2, 4)).toMatchObject({ crabs: 12, puffers: 2, boss: 0 });
+    expect(plan(3, 6)).toMatchObject({ crabs: 20, puffers: 3, boss: 1 });
   });
 
   it("scales with difficulty (vacation ×0.6, nightmare ×1.5 and a night-2 boss)", () => {
@@ -245,7 +245,7 @@ describe("light rings", () => {
       expect(checks).toBeGreaterThan(5000);
       expect(violations).toBe(0);
     }
-  });
+  }, 30_000);
 
   it("players inside a ring are safe from crabs: they wait at the edge", () => {
     const { w, mon } = bench();

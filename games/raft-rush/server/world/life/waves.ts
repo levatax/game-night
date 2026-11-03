@@ -24,6 +24,8 @@ export interface WaveInput {
   fullMoon: boolean;
   /** A flare was found: no monsters tonight. */
   flare: boolean;
+  /** Visible DDA strength multiplier (1 = level 0; help 0.8, hard 1.25). Default 1. */
+  strength?: number;
 }
 
 export interface WavePlan {
@@ -43,7 +45,8 @@ export function planWave(i: WaveInput): WavePlan {
   if (i.flare) return { crabs: 0, puffers: 0, boss: 0, skipped: true };
   const base = nightWave(i.night, i.seats);
   const moon = i.fullMoon ? FULLMOON_MONSTER_MULT : 1;
-  const scaled = (n: number, mult: number) => (n > 0 ? Math.max(1, Math.round(n * i.difficulty.monsters * mult * moon)) : 0);
+  const strength = i.strength ?? 1;
+  const scaled = (n: number, mult: number) => (n > 0 ? Math.max(1, Math.round(n * i.difficulty.monsters * mult * moon * strength)) : 0);
   const boss = base.boss > 0 || (i.difficulty.bossNight2 && i.night === 2) ? 1 : 0;
   return { crabs: scaled(base.crabs, i.biome.crabMult), puffers: scaled(base.puffers, i.biome.pufferMult), boss, skipped: false };
 }

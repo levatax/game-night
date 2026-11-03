@@ -21,6 +21,7 @@ import {
   REVIVE_TICKS,
   SOLO_AUTO_BOTS,
   STORM_WARN_SEC,
+  stormWarnRungsTicks,
   TICK_RATE,
   TORCH_BURN_TICKS,
   playerColor,
@@ -32,6 +33,7 @@ import type { MatchEndEvent, StandingEntry } from "../../../shared/protocol";
 import { channelTicksFor, type Interaction } from "../../../shared/rules/interact";
 import { countOf, roomFor, slotCount, slotKind, SLOTS, type Inventory } from "../../../shared/rules/inventory";
 import { clockAt, matchTicks, type ClockInfo } from "../../../shared/rules/schedule";
+import { matchLeftSec } from "../../../shared/rules/tempo";
 import { wrapAngle, yawFromDir } from "../../../shared/sim/math";
 import { chargeFraction, heldKind } from "../../../shared/sim/player";
 import type {
@@ -304,6 +306,17 @@ export function hudClock(phase: Phase, state: RaftStateView, timings: Readonly<T
   return clockAt(Math.max(0, clockTicks), timings);
 }
 
+/**
+ * Rung of the storm ladder at `stormLeft` ticks (-1 = the first rung has not started yet). Each rung is a
+ * separate channel step: the sky pulse, the sound and the HUD counter all move down this index.
+ */
+export function stormTierAt(stormLeft: number): number {
+  const rungs = stormWarnRungsTicks();
+  let tier = -1;
+  for (let i = 0; i < rungs.length; i++) if (stormLeft <= rungs[i]!) tier = i;
+  return tier;
+}
+
 /** Ticks from `clock` until the next dawn (end of the current day cycle). */
 export function ticksToDawn(clock: ClockInfo, timings: Readonly<Timings>): number {
   if (clock.dayPhase === "day") return clock.phaseLeft + timings.dusk + timings.night;
@@ -375,10 +388,7 @@ export function buildHudModel(i: HudInputs): HudModel {
     stormWarning:
       i.phase === "storm" ||
       (i.phase === "playing" && clock.day >= DAYS && clock.dayPhase === "night" && clock.stormLeft <= STORM_WARN_SEC * TICK_RATE),
-<<<<<<< HEAD
-=======
     stormTier: stormTierAt(clock.stormLeft),
->>>>>>> 92df2c6 (Raft Rush fixes: hidden DDA, 30/20/15 storm rungs, bot delivery share, raft survives to the gate)
     spectator: !!me?.spectator,
     crosshair,
     teammates: buildTeammates(state, me),

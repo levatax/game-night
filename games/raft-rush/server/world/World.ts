@@ -27,6 +27,7 @@ import {
   BAR_MAX,
   CHANNEL,
   DEFAULT_CHARACTER,
+  DDA_MONSTER_MULT,
   DIFFICULTIES,
   DT,
   FIRE_LIGHT_RADIUS,
@@ -54,6 +55,7 @@ import { Bag } from "./bag.js";
 import type { LightRing, ProjectileEntity, SpawnProjectileOptions } from "./context.js";
 import type { RejectAction, WorldCore } from "./core.js";
 import { CraftSystem } from "./crafting.js";
+import { DifficultyDirector } from "./director.js";
 import { EffectSystem } from "./effects.js";
 import { EventBuffer, type EventBufferStats } from "./eventBuffer.js";
 import type { GameEvent } from "./events.js";
@@ -74,6 +76,8 @@ export interface WorldOptions {
   difficulty: Difficulty;
   /** Gameplay rng (loot, weather, spawns, starter items). The room seeds it per match. Never Math.random. */
   rng: () => number;
+  /** Saved visible-DDA help steps from previous lost attempts (0..DDA_MAX_ATTEMPT_ASSIST). */
+  assist?: number;
 }
 
 export interface WorldStepOptions {
@@ -142,6 +146,7 @@ export class RaftWorld implements WorldCore {
   readonly monsters: MonsterSystem;
   readonly fishing: FishingSystem;
   readonly weather: WeatherSystem;
+  readonly director: DifficultyDirector;
 
   /** Day clock of the step in progress (null outside playing). */
   dayClock: ClockInfo | null = null;
@@ -189,6 +194,7 @@ export class RaftWorld implements WorldCore {
     this.monsters = new MonsterSystem(this);
     this.fishing = new FishingSystem(this);
     this.weather = new WeatherSystem(this, this.monsters);
+    this.director = new DifficultyDirector(this);
     this.setIsland(island);
   }
 
@@ -278,6 +284,7 @@ export class RaftWorld implements WorldCore {
       else this.leaveMatch(p);
     });
     this.fishing.startMatch(st.seed, st.biome);
+    this.director.reset(this.opts.assist ?? 0);
     this.lightsChanged();
   }
 
@@ -344,6 +351,8 @@ export class RaftWorld implements WorldCore {
     p.downedTicks = 0;
     p.fuseTicks = 0;
     p.torchTicks = 0;
+    p.secondWind = true;
+    p.downCause = "";
     p.cosmetic = "";
     p.golden = false;
     p.score = 0;
@@ -373,7 +382,16 @@ export class RaftWorld implements WorldCore {
     const clock = opts.clock;
     this.dayClock = clock;
     // 1. clock transitions
-    if (clock) this.onClock(clock);
+    if (clock) {
+      this.onClock(clock);
+      // 1b. visible DDA: discrete, announced steps that feed tonight's wave and the resource ramp.
+      this.director.step(clock);
+      const level = this.director.of(0);
+      const steps = this.director.assistSteps();
+      const waveMult = level > 0 ? (steps >= 2 ? DDA_MONSTER_MULT.help2 : DDA_MONSTER_MULT.help) : level < 0 ? DDA_MONSTER_MULT.hard : DDA_MONSTER_MULT.even;
+      this.monsters.setWaveMult(waveMult);
+      this.nodes.setDda(level, steps);
+    }
     // 2. players
     this.structures.syncCover();
     this.stepPlayers(opts.locked);
@@ -390,7 +408,7 @@ export class RaftWorld implements WorldCore {
     // 5. structures, node regrowth
     this.structures.syncCover();
     this.structures.step(clock);
-    this.nodes.step();
+    this.nodes.step(clock);
     // 6–8. survival, downed / wash, boarding / launch
     if (clock) {
       this.survival.step(clock);

@@ -32,6 +32,7 @@
 
 import {
   BOT_AIM_NOISE_DEG,
+  DAYS,
   DEPARTURE_GATE_TICKS,
   FIRE_FUEL_MAX_TICKS,
   FIRE_LIGHT_RADIUS,
@@ -444,15 +445,13 @@ export function raftWatch(v: BotView): ReadonlySet<string> {
  */
 export function shouldBoard(v: BotView): boolean {
   if (v.team.stage !== 3) return false;
-<<<<<<< HEAD
-  // The raft only leaves on the last night; before that there is nothing to board for.
-  if (v.clock.day !== DAYS || v.clock.dayPhase !== "night") return false;
-=======
-  // Watchers stay ashore until the departure gate; the rest may take their seats early.
-  if (v.clock.stormLeft > DEPARTURE_GATE_TICKS && raftWatch(v).has(v.self.id)) return false;
-  // Inside the gate a running countdown means someone is already aboard: the rest follow before it leaves.
->>>>>>> 92df2c6 (Raft Rush fixes: hidden DDA, 30/20/15 storm rungs, bot delivery share, raft survives to the gate)
+  const lastNight = v.clock.day === DAYS && v.clock.dayPhase === "night";
+  // Before the last night the two raft watchers stay ashore (hull watch) while the rest may take their seats
+  // early — safe from the night waves, and the raft is not leaving anyway.
+  if (!lastNight) return !raftWatch(v).has(v.self.id);
   if (v.team.launchTicksLeft > 0) return true;
+  // Inside the departure gate the raft may leave at once.
+  if (v.clock.stormLeft <= DEPARTURE_GATE_TICKS) return true;
   const humans = v.mates.filter((m) => m.human && m.alive && !m.washed);
   if (!humans.length || humans.some((h) => h.boarded)) return true;
   const raft = v.site.raft;
@@ -678,18 +677,14 @@ function evening(v: BotView): Goal | null {
 
 function deliver(v: BotView): Goal | null {
   const s = v.self;
-<<<<<<< HEAD
-  if (v.team.stage >= 3 || v.blocked("deliver") || aheadOfSchedule(v)) return null;
-=======
   if (v.team.stage >= 3 || v.blocked("deliver")) return null;
   // Hull repair outranks the pacing plan: a gnawed raft must be fed again even when the team is "ahead".
   if (aheadOfSchedule(v) && !raftHullDamaged(v.team)) return null;
->>>>>>> 92df2c6 (Raft Rush fixes: hidden DDA, 30/20/15 storm rungs, bot delivery share, raft survives to the gate)
   const units = deliverableUnits(s.slots, v.team, s.character);
   if (units <= 0) return null;
   // A finished hull and mast wait for the provisioning window: the last load that would complete the raft is
   // held until READY_TARGET_SEC. Partial larder loads still go in, so the final delivery is one short press.
-  if (!finalLoadDue(v) && wouldFinishRaft(v)) return null;
+  if (!finalLoadDue(v) && wouldFinishRaft(v) && !raftHullDamaged(v.team)) return null;
   const stand = raftStand(v);
   // Ordinary night work keeps to the light. Repair is the exception: a chewed hull left until dawn is not ready
   // at the gate, so a bot carrying wood walks to the raft even when the torch is out.
@@ -1102,21 +1097,11 @@ export function chooseGoal(v: BotView): Goal {
     const g = tier(v);
     if (g) return g;
   }
-<<<<<<< HEAD
   if (v.team.stage === 3) return { kind: "wait", at: spreadSpot(raftStand(v, 3), s.seat, 1.4) };
-  const late: ((v: BotView) => Goal | null)[] = [evening, deliver, craft, housekeep];
-=======
-  // A ready raft still waits for the departure gate. Until the approach window opens, keep the camp running
-  // (fire, food, ammo) instead of standing on the exposed beach for minutes: only the last few seconds belong to
-  // boarding. Inside the window the whole crew waits by the raft, then boards as soon as the gate opens.
-  if (v.team.stage === 3 && v.clock.stormLeft <= DEPARTURE_GATE_TICKS + secToTicks(BOARD_APPROACH_SEC)) {
-    return { kind: "wait", at: spreadSpot(raftStand(v, 3), s.seat, 1.4) };
-  }
   // A damaged hull goes in before the camp chores; otherwise the fire and cooking come first.
   const late: ((v: BotView) => Goal | null)[] = raftHullDamaged(v.team)
     ? [deliver, evening, craft, housekeep]
     : [evening, deliver, craft, housekeep];
->>>>>>> 92df2c6 (Raft Rush fixes: hidden DDA, 30/20/15 storm rungs, bot delivery share, raft survives to the gate)
   for (const tier of late) {
     const g = tier(v);
     if (g) return g;

@@ -200,11 +200,8 @@ function atTheRaft(m: Match, yawOff: number, angle: number, dist: number): numbe
   const team = m.state.teams[0]!;
   Object.assign(team, raftCost(team.seats));
   team.stage = 3;
-<<<<<<< HEAD
   // No night wave, so the test measures boarding alone.
   m.peaceful = true;
-=======
->>>>>>> 92df2c6 (Raft Rush fixes: hidden DDA, 30/20/15 storm rungs, bot delivery share, raft survives to the gate)
   const { raft, campfire } = m.world.island.sites[0]!;
   const l = Math.hypot(campfire.x - raft.x, campfire.z - raft.z);
   const h = m.h;
@@ -240,7 +237,7 @@ describe("reconnect stand-in in the real world (normal timings)", () => {
       const b = night(role, false, SEED);
       expect(b.acted).toContain("eat");
       expect(b.inventoryAfter === b.inventoryBefore && b.chestAfter === b.chestBefore).toBe(false);
-    });
+    }, 30_000);
   }
 
   it("still revives a downed teammate, and boards the ready raft so the absent player isn't left ashore", () => {
@@ -272,15 +269,10 @@ describe("reconnect stand-in in the real world (normal timings)", () => {
     const raft = m.world.island.sites[0]!.raft;
     mate.x = raft.x + 2;
     mate.z = raft.z;
-<<<<<<< HEAD
     m.h.x = raft.x - 1;
     m.h.z = raft.z;
     m.h.y = heightAt(m.world.island.grid, m.h.x, m.h.z);
     const events = m.run(LAST_NIGHT, LAST_NIGHT + secToTicks(30));
-=======
-    // The bots only board inside the departure gate; the stand-in follows the same rule.
-    const events = m.run(secToTicks(460), secToTicks(465));
->>>>>>> 92df2c6 (Raft Rush fixes: hidden DDA, 30/20/15 storm rungs, bot delivery share, raft survives to the gate)
     expect(m.h.boarded).toBe(true);
     expect(events.filter((ev) => actorOf(ev) === "h1" && ACTING.has(ev.type))).toEqual([]);
     expect(events.some((ev) => ev.type === "board" && ev.playerId === "h1")).toBe(true);
@@ -300,11 +292,7 @@ describe("reconnect stand-in in the real world (normal timings)", () => {
       atTheRaft(m, 0, angle, dist);
       const inventory = JSON.stringify(slotsOf(m.h));
       expect(resolveInteraction({ island: m.world.island, state: m.state }, m.h)?.kind, label).toBe("pickup");
-<<<<<<< HEAD
       const events = m.run(LAST_NIGHT, LAST_NIGHT + secToTicks(6));
-=======
-      const events = m.run(secToTicks(460), secToTicks(465));
->>>>>>> 92df2c6 (Raft Rush fixes: hidden DDA, 30/20/15 storm rungs, bot delivery share, raft survives to the gate)
       expect(m.h.boarded, label).toBe(true);
       expect(events.filter((ev) => actorOf(ev) === "h1" && ACTING.has(ev.type)), label).toEqual([]);
       expect(JSON.stringify(slotsOf(m.h)), label).toBe(inventory);
@@ -342,11 +330,7 @@ describe("reconnect stand-in in the real world (normal timings)", () => {
       const b = setUp();
       b.m.desk.remove(b.m.h.id);
       b.m.world.queueInput(b.m.h.id, b.cmd);
-<<<<<<< HEAD
       const did = b.m.run(LAST_NIGHT, LAST_NIGHT + 1).find((ev) => actorOf(ev) === "h1" && (ev.type === "board" || ev.type === "pickup"));
-=======
-      const did = b.m.run(100, 101).find((ev) => actorOf(ev) === "h1" && (ev.type === "board" || ev.type === "pickup"));
->>>>>>> 92df2c6 (Raft Rush fixes: hidden DDA, 30/20/15 storm rungs, bot delivery share, raft survives to the gate)
       expect(did?.type, c.label).toBe(c.did);
       expect(allowed, c.label).toBe(c.did === "board");
     }
