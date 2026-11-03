@@ -413,11 +413,28 @@ export const MONSTER_SPAWN_WINDOW = 0.6;
 /** Spawns prefer shore cells on the far side of the camp (weight ∝ distance^this). */
 export const MONSTER_SPAWN_FAR_BIAS = 2;
 
-/** Monsters per night (§21): crabs, puffers, boss. `seats` = players incl. bots. */
+/**
+ * Per-player threat multiplier (v4 §4.1): linear, `min(2.2, 1 + 0.30 × (seats − 2))`, so 2p 1.00 /
+ * 3p 1.30 / 4p 1.60 / 5p 1.90 / 6p 2.20. Enemy HP never scales; only the count of crabs does.
+ */
+export function threatMult(seats: number): number {
+  return Math.min(2.2, 1 + 0.3 * (Math.max(2, seats) - 2));
+}
+
+/** Base crab counts at 2 seats, one per night. */
+export const NIGHT_BASE_CRABS: ReadonlyArray<number> = [5, 8, 10];
+
+/**
+ * Monsters per night (§21): crabs, puffers, boss. `seats` = players incl. bots.
+ * Crabs = ceil(base × threatMult(seats)); at 2 seats this is the old 5 / 8 / 10. Puffers and the boss
+ * are fixed wave add-ons (2 / 3 puffers on nights 2 / 3, boss on night 3), not seat-scaled.
+ */
 export function nightWave(night: number, seats: number): { crabs: number; puffers: number; boss: number } {
-  if (night <= 1) return { crabs: 3 + seats, puffers: 0, boss: 0 };
-  if (night === 2) return { crabs: Math.round(5 + seats * 1.5), puffers: 2, boss: 0 };
-  return { crabs: 6 + seats * 2, puffers: 3, boss: 1 };
+  const base = NIGHT_BASE_CRABS[Math.min(Math.max(1, night), NIGHT_BASE_CRABS.length) - 1]!;
+  const crabs = Math.max(1, Math.ceil(base * threatMult(seats)));
+  if (night <= 1) return { crabs, puffers: 0, boss: 0 };
+  if (night === 2) return { crabs, puffers: 2, boss: 0 };
+  return { crabs, puffers: 3, boss: 1 };
 }
 
 /** Duel balancing hook (§13): night pressure on a camp. */
@@ -458,6 +475,11 @@ export const STORM_SEC = 12;
 export const LAUNCH_SEC = 8;
 /** "FIRTINA!" warning this long before night 3 ends (banner + music). */
 export const STORM_WARN_SEC = 30;
+/**
+ * Warning ladder (v4 §3): lead seconds before night 1, night 2 and the final storm. A pacing hypothesis,
+ * not a readability finding; the floor is 12 s (measured p95 traverse + 3–5 s, provisional).
+ */
+export const WARN_LEADS_SEC: ReadonlyArray<number> = [30, 20, 15];
 /** The raft only leaves this close to the end of night 3: no departure before the storm window (§7). */
 export const DEPARTURE_GATE_TICKS = 150;
 export const MATCH_END_LOBBY_SEC = 60;

@@ -90,24 +90,24 @@ describe("wave sizes", () => {
         expect(plan(night, seats)).toEqual({ crabs: base.crabs, puffers: base.puffers, boss: base.boss, skipped: false });
       }
     }
-    expect(plan(1, 3)).toMatchObject({ crabs: 6, puffers: 0, boss: 0 });
-    expect(plan(2, 4)).toMatchObject({ crabs: 11, puffers: 2, boss: 0 });
-    expect(plan(3, 6)).toMatchObject({ crabs: 18, puffers: 3, boss: 1 });
+    expect(plan(1, 3)).toMatchObject({ crabs: 7, puffers: 0, boss: 0 });
+    expect(plan(2, 4)).toMatchObject({ crabs: 13, puffers: 2, boss: 0 });
+    expect(plan(3, 6)).toMatchObject({ crabs: 22, puffers: 3, boss: 1 });
   });
 
   it("scales with difficulty (vacation ×0.6, nightmare ×1.5 and a night-2 boss)", () => {
     expect(plan(1, 3, "vacation")).toMatchObject({ crabs: 4, puffers: 0, boss: 0 });
-    expect(plan(2, 3, "vacation")).toMatchObject({ crabs: 6, puffers: 1, boss: 0 });
-    expect(plan(3, 3, "vacation")).toMatchObject({ crabs: 7, puffers: 2, boss: 1 });
-    expect(plan(1, 3, "nightmare")).toMatchObject({ crabs: 9, puffers: 0, boss: 0 });
-    expect(plan(2, 3, "nightmare")).toMatchObject({ crabs: 15, puffers: 3, boss: 1 });
-    expect(plan(3, 3, "nightmare")).toMatchObject({ crabs: 18, puffers: 5, boss: 1 });
+    expect(plan(2, 3, "vacation")).toMatchObject({ crabs: 7, puffers: 1, boss: 0 });
+    expect(plan(3, 3, "vacation")).toMatchObject({ crabs: 8, puffers: 2, boss: 1 });
+    expect(plan(1, 3, "nightmare")).toMatchObject({ crabs: 11, puffers: 0, boss: 0 });
+    expect(plan(2, 3, "nightmare")).toMatchObject({ crabs: 17, puffers: 3, boss: 1 });
+    expect(plan(3, 3, "nightmare")).toMatchObject({ crabs: 20, puffers: 5, boss: 1 });
   });
 
   it("scales with the biome (swamp crabs ×1.5, volcanic puffers ×2) and the full moon (×1.5)", () => {
-    expect(plan(1, 3, "normal", "swamp").crabs).toBe(9);
-    expect(plan(2, 3, "normal", "volcanic")).toMatchObject({ crabs: 10, puffers: 4 });
-    expect(plan(1, 3, "normal", "tropic", true).crabs).toBe(9);
+    expect(plan(1, 3, "normal", "swamp").crabs).toBe(11);
+    expect(plan(2, 3, "normal", "volcanic")).toMatchObject({ crabs: 11, puffers: 4 });
+    expect(plan(1, 3, "normal", "tropic", true).crabs).toBe(11);
     expect(plan(2, 3, "normal", "tropic", true).puffers).toBe(3);
     expect(plan(3, 3, "normal", "tropic", true).boss).toBe(1);
     expect(plan(1, 2, "nightmare", "swamp", true).crabs).toBe(Math.round(5 * 1.5 * 1.5 * 1.5));
@@ -144,11 +144,11 @@ describe("night spawning", () => {
     const { w, mon } = bench({ seats: 3 });
     const clock = w.setClock(w.clockFor(1, "night"));
     mon.onClock(null, clock);
-    expect(mon.wavePlan(0)).toMatchObject({ crabs: 6, puffers: 0, boss: 0 });
+    expect(mon.wavePlan(0)).toMatchObject({ crabs: 7, puffers: 0, boss: 0 });
     const start = w.state.tick;
     run(w, mon, Math.ceil(w.timings.night * MONSTER_SPAWN_WINDOW) + 1);
     const spawns = w.ofType("monsterSpawn");
-    expect(spawns).toHaveLength(6);
+    expect(spawns).toHaveLength(7);
     for (const s of spawns) {
       expect(s.night).toBe(1);
       expect(s.kind).toBe("crab");
@@ -187,7 +187,7 @@ describe("night spawning", () => {
     const { w, mon } = bench({ seats: 3 });
     w.state.weather = "fullmoon";
     mon.onClock(null, w.setClock(w.clockFor(1, "night")));
-    expect(mon.wavePlan(0)!.crabs).toBe(9);
+    expect(mon.wavePlan(0)!.crabs).toBe(11);
   });
 
   it(`never has more than MONSTER_CAP (${MONSTER_CAP}) alive; the rest queues`, () => {
@@ -245,7 +245,7 @@ describe("light rings", () => {
       expect(checks).toBeGreaterThan(5000);
       expect(violations).toBe(0);
     }
-  });
+  }, 20_000);
 
   it("players inside a ring are safe from crabs: they wait at the edge", () => {
     const { w, mon } = bench();

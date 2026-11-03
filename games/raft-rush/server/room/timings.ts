@@ -5,7 +5,6 @@
 import {
   EMPTY_ROOM_DISPOSE_SEC,
   RECONNECT_GRACE_SEC,
-  STORM_WARN_SEC,
   TICK_RATE,
   secToTicks,
   timingsFor,
@@ -42,8 +41,6 @@ export interface RoomTimings extends Timings {
   emptyDisposeSec: number;
   /** A room nobody ever joined disposes this long after its creation (seconds). */
   neverJoinedSec: number;
-  /** "FIRTINA!" warning: this many ticks before the last night ends (clamped to the night's length). */
-  stormWarnTicks: number;
   /** Lobby seed changes regenerate the preview island at most once per this many ticks. */
   previewCooldownTicks: number;
   /** A human's craft / chest messages refill one per this many ticks (each kind); bots are not throttled. */
@@ -60,7 +57,6 @@ export function roomTimings(fast: boolean): Readonly<RoomTimings> {
     reconnectGraceSec: RECONNECT_GRACE_SEC,
     emptyDisposeSec: EMPTY_ROOM_DISPOSE_SEC,
     neverJoinedSec: NEVER_JOINED_DISPOSE_SEC,
-    stormWarnTicks: Math.min(secToTicks(STORM_WARN_SEC), t.night),
     previewCooldownTicks: secToTicks(PREVIEW_COOLDOWN_SEC),
     actionCooldownTicks: ACTION_COOLDOWN_TICKS,
     actionBurst: ACTION_BURST,

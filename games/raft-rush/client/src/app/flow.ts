@@ -134,7 +134,12 @@ export class FlowFeedback {
     this.ctx.audio.play("stormWarn");
     this.ctx.audio.duck(2.5);
     this.ctx.renderer.fp.shake(0.25);
-    bannerLine(this.ctx, "stormWarning", "bad", { params: { sec: Math.ceil(ev.secondsLeft) }, sub: "stormWarningSub", duration: LONG_BANNER_SEC });
+    const final = ev.night >= DAYS;
+    bannerLine(this.ctx, final ? "stormWarning" : "nightWarning", "bad", {
+      params: { sec: Math.ceil(ev.secondsLeft), n: ev.night },
+      sub: final ? "stormWarningSub" : "nightWarningSub",
+      duration: LONG_BANNER_SEC,
+    });
   }
 
   private onStorm(ev: StormEvent): void {
