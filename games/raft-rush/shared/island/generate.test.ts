@@ -575,10 +575,12 @@ describe("performance", () => {
   // Budget: < 40 ms solo / < 80 ms duel on average (§5.3). CI machines are slow and noisy: ×3 slack.
   //
   // Wall time in a shared vitest worker measures the machine's load as much as the generator (the full suite
-  // runs many files at once; CI measured 174 ms for a solo generation that takes ~35 ms alone). So this test
-  // takes the MEDIAN of warmed-up generations — robust to one GC pause or a noisy neighbour — keeps the same
-  // budget, and CI retries it. If a real regression ever shows up here, fix the generator, not the number.
+  // runs many files at once; CI measured 174 ms for a solo generation that takes ~35 ms alone; on a 12-core
+  // host under load 9 the warmed median was still 207 ms). So the default suite only REPORTS the median, and
+  // the assertion runs in the isolated `island-perf` job (RAFT_PERF_GATE=1, no file parallelism, retried).
+  // If a real regression ever shows up in that job, fix the generator, not the number.
   const CI = 3;
+  const GATE = process.env.RAFT_PERF_GATE === "1";
   it("solo and duel generation stay within the time budget", () => {
     generateIsland(123);
     generateIsland(123, "duel");
@@ -595,8 +597,10 @@ describe("performance", () => {
     const solo = time("solo", 21);
     const duel = time("duel", 9);
     console.info(`island generation (median): solo ${solo.toFixed(1)} ms, duel ${duel.toFixed(1)} ms`);
-    expect(solo).toBeLessThan(40 * CI);
-    expect(duel).toBeLessThan(80 * CI);
+    if (GATE) {
+      expect(solo).toBeLessThan(40 * CI);
+      expect(duel).toBeLessThan(80 * CI);
+    }
   });
 });
 

@@ -8,8 +8,10 @@
 # A red gate means the beta is not accepted yet; that is the point of the gate.
 #
 # Perf decision: the render budget is asserted by deterministic unit tests (perfBudget.test.ts) in the test job.
-# The island-generation wall-clock budget stays in the suite with two retries: on shared CI runners it is a
-# load signal, not a gate, and a red run there is never taken as a gameplay regression on its own.
+# The island-generation wall-clock budget is asserted only in the isolated `island-perf` job (RAFT_PERF_GATE=1,
+# --no-file-parallelism, retried); the main test job only prints the warmed median. Wall time on a shared runner
+# is a load signal, not a gameplay gate: on a 12-core host under load 9 the warmed median was 207 ms against the
+# 120 ms budget, while an idle host measured 55 ms. A red island-perf run is a regression only if it repeats.
 name: Raft Rush CI
 
 on:
@@ -62,12 +64,28 @@ jobs:
       - run: npm ci
       - name: Typecheck
         run: npm run typecheck
-      - name: Raft Rush tests (wall-clock perf retried, not a gate)
+      - name: Raft Rush tests (island median reported here, asserted in island-perf)
         run: npx vitest run games/raft-rush --retry 2
       - name: Build clients and server
         run: npm run build && npm run build:server
       - name: Boot the compiled hub and check /healthz
         run: node scripts/smoke-hub.mjs
+
+  island-perf:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RAFT_PERF_GATE: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Island generation budget (isolated, warmed median)
+        run: npx vitest run games/raft-rush/shared/island/generate.test.ts --no-file-parallelism --retry 2
 
   acceptance:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
