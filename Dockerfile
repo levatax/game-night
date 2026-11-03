@@ -13,8 +13,10 @@ RUN npm run build && npm run build:server && npm prune --omit=dev
 
 # ---- run: plain node on the compiled hub and game servers (dist/, see tsconfig.server.json)
 FROM node:22-slim
+ARG GIT_SHA=""
 ENV NODE_ENV=production \
-    PORT=3000
+    PORT=3000 \
+    GIT_SHA=${GIT_SHA}
 WORKDIR /app
 COPY --from=build --chown=node:node /app ./
 USER node
