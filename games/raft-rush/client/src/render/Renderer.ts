@@ -14,7 +14,7 @@
 // night (swamp 30, fog weather 25). Everything is driven by shared data (IslandDef + WorldFrame) only.
 //
 // Context loss (GPU reset, long background): ContextWatch flags it, render() / prewarm() pause, `onContextChange`
-// tells the app (reload card); on restore three.js rebuilds its GL state and re-uploads everything lazily, and
+// tells the app (reload card); on restore three.js rebuilds its GL state, re-uploads everything lazily, and
 // this facade re-applies its size and prewarms the shaders again (or, when three's rebuild failed, stays lost so
 // the card keeps offering the reload).
 
@@ -32,6 +32,7 @@ import { IslandView } from "./island/IslandView";
 import type { RaftPose } from "./island/Raft";
 import { Weather } from "./island/Weather";
 import { LightPool } from "./LightPool";
+import { PerfOverlay } from "./PerfOverlay";
 import { PostFx } from "./PostFx";
 import { pixelRatioFor, QUALITY_PROFILES } from "./quality";
 import { computeLighting, createLighting, type Lighting, type WeatherWeights } from "./sky/DayNight";
@@ -87,6 +88,8 @@ export class Renderer {
   private contextWatch: ContextWatch | null = null;
   /** three's `info` before a restore: a successful rebuild replaces it (see onContextRestored). */
   private glInfo: THREE.WebGLRenderer["info"] | null = null;
+  /** `?stats=1`: per-frame draw call / triangle readout and the `window.__raftPerf` mirror. */
+  private perf: PerfOverlay | null = null;
 
   constructor(container: HTMLElement, quality: Quality) {
     this.fp = new FpCamera(this.camera);
@@ -125,6 +128,9 @@ export class Renderer {
     this.resizeObserver?.observe(container);
     this.applyQuality();
     this.resize();
+    if (typeof location !== "undefined" && new URLSearchParams(location.search).has("stats")) {
+      this.perf = new PerfOverlay(container, quality);
+    }
   }
 
   /* ------------------------------------------------------------- extra API */
@@ -322,12 +328,17 @@ export class Renderer {
     const gl = this.gl;
     // Lost context: draw nothing (the app shows the reload card) until the browser restores it.
     if (!gl || this.contextLost) return;
+    // Keep three's counters for the whole frame: the scene pass, the shadow map and every post pass. stats()
+    // and the `?stats=1` overlay then report what the GPU was actually asked to draw, not the last post quad.
+    gl.info.autoReset = false;
+    gl.info.reset();
     this.followCamera();
     this.applyUnderwater();
     this.applyDesaturation();
     if (this.needsPrewarm) this.prewarm();
     if (this.post) this.post.render();
     else gl.render(this.scene, this.camera);
+    this.perf?.sample({ calls: gl.info.render.calls, triangles: gl.info.render.triangles }, this.quality);
     this.governor.frame(now());
   }
 
