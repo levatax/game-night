@@ -142,9 +142,12 @@ function main(): void {
     return;
   }
   describe("all rows", rows);
+  const skillOf = (r: Row): string => r.skill ?? ((num(r.humans) ?? 0) > 0 ? "idle" : "bot");
   for (const [kind, subset] of [
-    ["experts (no idle humans)", rows.filter((r) => (num(r.humans) ?? 0) === 0)],
-    ["novices (idle humans)", rows.filter((r) => (num(r.humans) ?? 0) > 0)],
+    ["expert pilot", rows.filter((r) => skillOf(r) === "expert")],
+    ["novice pilot", rows.filter((r) => skillOf(r) === "novice")],
+    ["idle human", rows.filter((r) => skillOf(r) === "idle")],
+    ["bot focal", rows.filter((r) => skillOf(r) === "bot")],
   ] as Array<[string, Row[]]>) {
     describe(kind, subset);
   }

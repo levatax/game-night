@@ -12,6 +12,7 @@ import {
   TICK_RATE,
   timingsFor,
 } from "../shared/constants.js";
+import { slotsOf } from "../shared/rules/inventory.js";
 import { generateIsland } from "../shared/island/generate.js";
 import { mulberry32 } from "../shared/island/noise.js";
 import { clockAt, inputLocked, matchTicks, type ClockInfo } from "../shared/rules/schedule.js";
@@ -19,6 +20,7 @@ import type { Difficulty } from "../shared/types.js";
 import { PlayerState, RaftState } from "../server/schema.js";
 import { RaftWorld } from "../server/world/World.js";
 import { BotDesk, type BotHost } from "../server/room/bots.js";
+import { HumanPilot, PILOT_ROLE, type PilotSkill } from "./humanPilot.js";
 import type { RunRow } from "./telemetry.js";
 
 export interface Scenario {
@@ -27,6 +29,11 @@ export interface Scenario {
   difficulty: Difficulty;
   /** fast = RAFT_TEST timers (smoke only; never for the timing gate). */
   fast: boolean;
+  /**
+   * When set, the first human seat is driven by this pilot policy instead of standing idle. `idleHumans` then
+   * counts extra keyboard-less humans after the pilot (0 in the skill cohorts).
+   */
+  pilot?: PilotSkill;
 }
 
 export interface RunResult {
@@ -34,6 +41,8 @@ export interface RunResult {
   /** Diagnostics that are not part of the CSV schema. */
   debug: {
     outcome: string;
+    stageTrace: string[];
+    inventories: string[];
     rejects: Record<string, number>;
     goals: Record<string, number>;
     spawned: number;
@@ -59,7 +68,7 @@ function groupEndReason(outcome: string, downs: Array<{ cause: string }>): RunRo
 
 /** Play one match; returns the telemetry row (one row per run). */
 export function runOne(seed: number, scenario: Scenario, runIndex = 0, runIdPrefix = "run"): RunResult {
-  const { bots, idleHumans, difficulty, fast } = scenario;
+  const { bots, idleHumans, difficulty, fast, pilot: pilotSkill } = scenario;
   const timings = timingsFor(fast);
   const state = new RaftState();
   const island = generateIsland(seed, "solo");
@@ -83,19 +92,20 @@ export function runOne(seed: number, scenario: Scenario, runIndex = 0, runIdPref
     ids.push(p.id);
     botIds.add(p.id);
   }
-  // Humans who joined and never touched the keyboard (the worst-case solo partner).
-  for (let k = 0; k < idleHumans; k++) {
+  // Humans: the first one is the pilot seat when a skill is set, the rest never touch the keyboard.
+  const humanCount = idleHumans + (pilotSkill ? 1 : 0);
+  for (let k = 0; k < humanCount; k++) {
     const p = new PlayerState();
     p.id = `human-${k + 1}`;
-    p.nickname = `Human ${k + 1}`;
+    p.nickname = pilotSkill && k === 0 ? "Pilot" : `Human ${k + 1}`;
     p.character = CHARACTER_IDS[(bots + k) % CHARACTER_IDS.length]!;
     p.seat = bots + k;
     p.ready = true;
     state.players.set(p.id, p);
     ids.push(p.id);
   }
-  const focalId = idleHumans > 0 ? "human-1" : ids[0]!;
-  const focalIsHuman = idleHumans > 0;
+  const focalId = idleHumans > 0 || pilotSkill ? "human-1" : ids[0]!;
+  const focalIsHuman = idleHumans > 0 || !!pilotSkill;
 
   const host: BotHost = {
     state,
@@ -112,6 +122,11 @@ export function runOne(seed: number, scenario: Scenario, runIndex = 0, runIdPref
 
   world.startMatch(ids, Math.max(2, ids.length));
   desk.reset();
+  let pilot: HumanPilot | null = null;
+  if (pilotSkill) {
+    pilot = new HumanPilot("human-1", pilotSkill, world, state, seed);
+    pilot.attach(PILOT_ROLE);
+  }
   state.phase = "landing";
   state.phaseTicksLeft = timings.landing;
   state.clockTicks = 0;
@@ -140,6 +155,7 @@ export function runOne(seed: number, scenario: Scenario, runIndex = 0, runIdPref
   let kills = 0;
   let crafted = 0;
   let throws = 0;
+  const stageTrace: string[] = [];
 
   const limit = timings.landing + matchTicks(timings) + 60;
   for (let t = 0; t < limit; t++) {
@@ -165,6 +181,7 @@ export function runOne(seed: number, scenario: Scenario, runIndex = 0, runIdPref
       }
     }
     desk.tick();
+    pilot?.tick();
     for (let k = 0; k < bots; k++) {
       const key = desk.goalOf(ids[k]!);
       const g = key.split(":")[0] || "-";
@@ -238,6 +255,7 @@ export function runOne(seed: number, scenario: Scenario, runIndex = 0, runIdPref
           break;
       }
     }
+    if (state.phase === "playing" && state.clockTicks % 900 === 0) { const q = state.players.get("human-1"); stageTrace.push(`${Math.round(state.clockTicks / TICK_RATE)}s stage=${state.teams[0]!.stage} del=${totalDelivered} ready=${raftReadyTick} pilot=${q ? `hp${Math.round(q.hp)} alive${q.alive} down${q.downed} wash${q.washed} x${Math.round(q.x)}z${Math.round(q.z)}` : "?"} goal=${pilot?.currentGoal() ?? "-"}`); };
     // A stage can reach 3 through a path that emitted no raftReady (e.g. sail + hull in one refresh).
     if (raftReadyTick === null && state.teams[0]?.stage === 3) raftReadyTick = state.tick;
     if (done) break;
@@ -283,6 +301,9 @@ export function runOne(seed: number, scenario: Scenario, runIndex = 0, runIdPref
     difficulty,
     humans: idleHumans,
     player_kind: focalIsHuman ? "human" : "bot",
+    skill: pilotSkill ?? (idleHumans > 0 ? "idle" : "bot"),
+    pilot_drops: pilot?.pilotStats.dropped ?? 0,
+    pilot_fumbles: pilot?.pilotStats.fumbled ?? 0,
     seconds_left: secondsLeft,
     team_score: teamScore,
     stage: team.stage,
@@ -301,7 +322,19 @@ export function runOne(seed: number, scenario: Scenario, runIndex = 0, runIdPref
 
   return {
     row,
-    debug: { outcome, rejects, goals, spawned, kills, crafted, throws },
+    debug: {
+      outcome,
+      stageTrace,
+      inventories: [...state.players.values()].map(
+        (p) => `${p.id}${p.bot ? "(bot)" : ""} ${slotsOf(p).map((s) => `${s.kind}x${s.count}`).filter((x) => !x.startsWith("x")).join(",")}`,
+      ),
+      rejects,
+      goals,
+      spawned,
+      kills,
+      crafted,
+      throws,
+    },
   };
 }
 
