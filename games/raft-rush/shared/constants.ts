@@ -458,6 +458,8 @@ export const STORM_SEC = 12;
 export const LAUNCH_SEC = 8;
 /** "FIRTINA!" warning this long before night 3 ends (banner + music). */
 export const STORM_WARN_SEC = 30;
+/** The raft only leaves this close to the end of night 3: no departure before the storm window (§7). */
+export const DEPARTURE_GATE_TICKS = 150;
 export const MATCH_END_LOBBY_SEC = 60;
 /** Rematch is accepted after this long on the podium. */
 export const MATCH_END_MIN_SEC = 3;
