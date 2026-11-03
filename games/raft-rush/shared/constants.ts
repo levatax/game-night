@@ -332,8 +332,13 @@ export const RAFT_COSTS: Readonly<Record<number, { hullWood: number; mastWood: n
 export const WRECK_HULL_WOOD = 3;
 /** A raft part counts as this much wood (Kaptan's count +1). */
 export const RAFT_PART_WOOD = 3;
-/** Crabs gnaw 1 hull wood per this many ticks when nobody guards the raft (§7). */
-export const RAFT_GNAW_TICKS = secToTicks(4);
+/**
+ * Crabs gnaw 1 hull wood per this many ticks when nobody guards the raft (§7). Raised 4 s → 5 s with the
+ * departure gate (PR #3): the finished raft now waits on the sand through the whole storm window, and a crew
+ * split between boarding seats and a two-bot hull watch needs one more beat to answer a last-night gnaw. The
+ * per-minute pressure is 20 % lower; the boss still takes 2 hull per beat.
+ */
+export const RAFT_GNAW_TICKS = secToTicks(5);
 export const RAFT_GUARD_RADIUS = 6;
 /** Once the first player boards a ready raft, the rest have this long; then it leaves anyway. */
 export const LAUNCH_WAIT_TICKS = secToTicks(20);

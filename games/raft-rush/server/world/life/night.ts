@@ -172,6 +172,16 @@ function nearestPlayer(env: LifeEnv, m: MonsterState, radius: number, ok: (p: Pl
   return best;
 }
 
+/** Someone is on the raft right now (a boarding seat counts as a guard: they sit on the hull). */
+function crewAboard(env: LifeEnv, team: number): boolean {
+  let found = false;
+  env.ctx.state.players.forEach((p) => {
+    if (found || p.team !== team) return;
+    if (p.boarded && p.alive && !p.washed && !p.spectator) found = true;
+  });
+  return found;
+}
+
 /** The closest eligible player guarding the raft (within RAFT_GUARD_RADIUS of its center). */
 export function raftGuard(env: LifeEnv, raft: XZ, team: number): PlayerState | null {
   let best: PlayerState | null = null;
@@ -381,6 +391,15 @@ function raftWork(env: LifeEnv, m: MonsterState, b: MonsterBrain, raft: XZ, team
   if (dist2(m.x, m.z, raft.x, raft.z) > RAFT_GNAW_REACH) {
     b.gnaw = 0;
     if (m.mode === "bite") m.mode = "hunt";
+    return;
+  }
+  // A crew already on the raft is a guard too: someone is sitting right on the hull and can shoo a crab off.
+  // Without this, `board` parked the whole crew on the seats and crabs chewed the finished raft out from under
+  // them (the stage dropped, everyone unboarded on the beach, and the gate found an empty, broken raft).
+  if (crewAboard(env, team)) {
+    b.gnaw = 0;
+    if (m.mode === "bite") m.mode = "hunt";
+    b.forceThink = true;
     return;
   }
   const guard = raftGuard(env, raft, team);

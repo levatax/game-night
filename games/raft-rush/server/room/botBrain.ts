@@ -32,6 +32,8 @@
 
 import {
   BOT_AIM_NOISE_DEG,
+  DAYS,
+  DEPARTURE_GATE_TICKS,
   FIRE_FUEL_MAX_TICKS,
   FIRE_LIGHT_RADIUS,
   FIRE_WOOD_FUEL_TICKS,
@@ -53,6 +55,7 @@ import {
   missingFor,
   missingTools,
   palmHandSlot,
+  raftHullDamaged,
   raftRemaining,
   raftUrgent,
   RESOURCES,
@@ -89,6 +92,8 @@ export const ENGAGE_RANGE = 16;
 export const ENGAGE_RANGE_BEKCI = 22;
 /** Seconds before dusk the evening duties start. */
 export const EVENING_SEC = 14;
+/** With a ready raft, bots keep the camp going until this long before the departure gate, then walk to the raft. */
+export const BOARD_APPROACH_SEC = 20;
 /** Sprint speed assumed when judging whether a revive can be reached in time (m/s). */
 const RESCUE_SPEED = 6.2;
 /** Night: a flipped crab is worth collecting when it lies this close to a light ring. */
@@ -403,11 +408,49 @@ function revive(v: BotView): Goal | null {
   return target ? { kind: "revive", playerId: target.id } : null;
 }
 
-/** Board now, or wait so the humans aren't stranded on the beach (§2.5 boarding countdown). */
+/**
+ * The two bots that hold the raft watch while the rest take their seats: the guard-owner first, then the next
+ * bot in the same role preference order. With two watchers one can be lured or bitten while the other still
+ * keeps crabs off the hull; a single guard was not enough on the last night.
+ */
+export function raftWatch(v: BotView): ReadonlySet<string> {
+  const candidates: { id: string; role: BotRole; seat: number }[] = [{ id: v.self.id, role: v.self.role, seat: v.self.seat }];
+  for (const m of v.mates) {
+    if (!m.driven || !m.alive || m.washed || m.downed || m.boarded || m.role === "") continue;
+    candidates.push({ id: m.id, role: m.role, seat: m.seat });
+  }
+  const order = DUTY_ORDER.guard;
+  const rank = (c: { role: BotRole; seat: number }): number => order.indexOf(c.role) * 10 + c.seat;
+  candidates.sort((a, b) => rank(a) - rank(b));
+  const out = new Set<string>();
+  const owner = dutyOwner(v, "guard");
+  out.add(owner);
+  for (const c of candidates) {
+    if (out.size >= 2) break;
+    out.add(c.id);
+  }
+  return out;
+}
+
+/**
+ * Board now, or wait so the humans aren't stranded on the beach (§2.5 boarding countdown).
+ *
+ * The raft cannot leave before the departure gate (DEPARTURE_GATE_TICKS, the same window RaftSystem.step uses),
+ * and a bot on a seat is no longer a monster target. The crew therefore splits: the two raft watchers stay on the
+ * sand until the gate, while everyone else boards as soon as the raft is ready and sits out the last night's
+ * waves. The watchers are what keep crabs from chewing the hull for free; if the hull is damaged anyway, the
+ * stage drop unboards everyone and the team leads the repair before boarding again.
+ */
 export function shouldBoard(v: BotView): boolean {
   if (v.team.stage !== 3) return false;
+  // The guard stays ashore until the gate; the second watcher joins the approach window (one seat filled keeps
+  // the hull safe while the guard still covers the sand). Everyone else may take a seat early.
+  if (v.clock.stormLeft > DEPARTURE_GATE_TICKS) {
+    if (dutyOwner(v, "guard") === v.self.id) return false;
+    if (v.clock.stormLeft > DEPARTURE_GATE_TICKS + secToTicks(BOARD_APPROACH_SEC) && raftWatch(v).has(v.self.id)) return false;
+  }
+  // Inside the gate a running countdown means someone is already aboard: the rest follow before it leaves.
   if (v.team.launchTicksLeft > 0) return true;
-  if (v.clock.stormLeft <= secToTicks(45)) return true;
   const humans = v.mates.filter((m) => m.human && m.alive && !m.washed);
   if (!humans.length || humans.some((h) => h.boarded)) return true;
   const raft = v.site.raft;
@@ -417,6 +460,31 @@ export function shouldBoard(v: BotView): boolean {
 function board(v: BotView): Goal | null {
   if (v.team.stage !== 3 || v.blocked("board")) return null;
   return shouldBoard(v) ? { kind: "board" } : null;
+}
+
+/**
+ * The gate is open and a ready raft is within reach: take the seat before anything else. A last-second repair
+ * that restores stage 3 must be followed by a boarding, not by a fight on the sand, or the same wave simply
+ * chews the hull back down in the seconds that are left.
+ */
+function boardNow(v: BotView): Goal | null {
+  if (v.team.stage !== 3 || v.clock.stormLeft > DEPARTURE_GATE_TICKS) return null;
+  const raft = v.site.raft;
+  return d2(v.self.x, v.self.z, raft.x, raft.z) <= 5 ? { kind: "board" } : null;
+}
+
+/**
+ * Repair is urgent only once the last day has begun: before that a chewed hull can wait for daylight and the
+ * normal pacing, and rushing every bot to the raft in the dark is how a night wave picks the team off.
+ */
+function urgentRepair(v: BotView): boolean {
+  return v.clock.day >= DAYS && raftHullDamaged(v.team);
+}
+
+/** A chewed hull on the last day: deliver the wood / parts we already carry before the next chore or fight. */
+function repair(v: BotView): Goal | null {
+  if (!urgentRepair(v)) return null;
+  return deliver(v);
 }
 
 function attack(v: BotView): Goal | null {
@@ -627,11 +695,15 @@ function evening(v: BotView): Goal | null {
 
 function deliver(v: BotView): Goal | null {
   const s = v.self;
-  if (v.team.stage >= 3 || v.blocked("deliver") || aheadOfSchedule(v)) return null;
+  if (v.team.stage >= 3 || v.blocked("deliver")) return null;
+  // Hull repair outranks the pacing plan: a gnawed raft must be fed again even when the team is "ahead".
+  if (aheadOfSchedule(v) && !raftHullDamaged(v.team)) return null;
   const units = deliverableUnits(s.slots, v.team, s.character);
   if (units <= 0) return null;
   const stand = raftStand(v);
-  if (isNight(v) && !lit(v, stand.x, stand.z, 0)) return null;
+  // Ordinary night work keeps to the light. Repair is the exception: a chewed hull left until dawn is not ready
+  // at the gate, so a bot carrying wood walks to the raft even when the torch is out.
+  if (isNight(v) && !lit(v, stand.x, stand.z, 0) && !urgentRepair(v)) return null;
   const want = stageTotal(stageWants(v.team));
   if (units >= want) return { kind: "deliver" };
   if (isEvening(v) || distTo(v, v.site.raft) < 10) return { kind: "deliver" };
@@ -664,7 +736,7 @@ function craft(v: BotView): Goal | null {
     if (canCraft(v, tool)) return { kind: "craft", recipe: tool, count: 1 };
   }
   // Hamal turns chest wood into raft parts it can carry (it doesn't carry wood of its own).
-  if (s.role === "hamal" && v.team.stage <= 1 && countIn(s.slots, "wood") === 0 && !aheadOfSchedule(v)) {
+  if (s.role === "hamal" && v.team.stage <= 1 && countIn(s.slots, "wood") === 0 && (!aheadOfSchedule(v) || raftHullDamaged(v.team))) {
     const r = raftRemaining(v.team);
     const need = v.team.stage === 0 ? r.hull : r.mastWood;
     const chestWood = v.team.chest.wood ?? 0;
@@ -687,7 +759,7 @@ function keepCount(v: BotView, kind: ItemKind): number {
   const s = v.self;
   const guard = s.role === "bekci" || owns(v, "guard");
   // Raft goods are carried to the raft — unless the team is ahead of the schedule, then they wait in the chest.
-  if (deliverBucket(kind, v.team.stage) && !aheadOfSchedule(v)) return Infinity;
+  if (deliverBucket(kind, v.team.stage) && (!aheadOfSchedule(v) || raftHullDamaged(v.team))) return Infinity;
   switch (kind) {
     case "rod":
       return s.role === "balikci" || !v.mates.some((m) => m.driven && m.role === "balikci") ? Infinity : 0;
@@ -702,10 +774,10 @@ function keepCount(v: BotView, kind: ItemKind): number {
     case "puffer":
       return Infinity;
     case "wood":
-      return s.role === "hamal" || owns(v, "fire") ? (aheadOfSchedule(v) ? 5 : Infinity) : 0;
+      return s.role === "hamal" || owns(v, "fire") ? (aheadOfSchedule(v) && !raftHullDamaged(v.team) ? 5 : Infinity) : 0;
     case "rope":
       if (guard && isEvening(v)) return 1;
-      return s.role === "hamal" && !aheadOfSchedule(v) ? Infinity : missingTools(s.role, s.slots).length ? 1 : 0;
+      return s.role === "hamal" && (!aheadOfSchedule(v) || raftHullDamaged(v.team)) ? Infinity : missingTools(s.role, s.slots).length ? 1 : 0;
     case "stone":
       return guard ? 3 : missingTools(s.role, s.slots).length ? 1 : 0;
     case "coconut":
@@ -824,7 +896,7 @@ function sourceFor(v: BotView, res: Resource): Goal | null {
 
 /** Current-stage needs the chest could cover right now, as a chestTake for this bot. */
 function chestFetch(v: BotView): Goal | null {
-  if (aheadOfSchedule(v)) return null;
+  if (aheadOfSchedule(v) && !raftHullDamaged(v.team)) return null;
   const want = stageWants(v.team);
   if (stageTotal(want) === 0) return null;
   const items: { kind: ItemKind; count: number }[] = [];
@@ -986,7 +1058,14 @@ function campOrPost(v: BotView): Goal {
   const s = v.self;
   const raft = v.site.raft;
   if (isNight(v) || isEvening(v)) {
-    if (owns(v, "guard") && raftTorchLife(v) > 0) return { kind: "guard", at: spreadSpot(raftStand(v, 2.2), s.seat, 1.2) };
+    // Night watch: the designated guard holds the sand next to the raft, inside RAFT_GUARD_RADIUS, so a crab or
+    // the boss has to deal with a person instead of chewing the hull for free. A planted torch is what makes the
+    // post survivable (crabs stay out of the light); on the last night it holds the post even when the torch is
+    // out, because a hull chewed below cost is no longer ready at the gate. The rest warm up at the fire.
+    const lastNightWatch = isNight(v) && v.clock.day >= DAYS && v.team.stage >= 2;
+    if (owns(v, "guard") && (raftTorchLife(v) > 0 || lastNightWatch)) {
+      return { kind: "guard", at: spreadSpot(raftStand(v, 2.2), s.seat, 1.2) };
+    }
     return { kind: "camp", at: spreadSpot(v.site.campfire, s.seat, 2.2) };
   }
   // Daytime idle: near the fire, or by the raft when it's close to done.
@@ -1021,10 +1100,12 @@ export function chooseGoal(v: BotView): Goal {
   const starving = s.hunger < STARVING || s.thirst < STARVING;
   const night = isNight(v);
   const tiers: ((v: BotView) => Goal | null)[] = [
+    boardNow,
     puffer,
     flee,
     revive,
     board,
+    repair,
     ...(starving ? [selfCare, attack] : [attack, selfCare]),
     pass,
   ];
@@ -1032,15 +1113,28 @@ export function chooseGoal(v: BotView): Goal {
     const g = tier(v);
     if (g) return g;
   }
-  if (v.team.stage === 3) return { kind: "wait", at: spreadSpot(raftStand(v, 3), s.seat, 1.4) };
-  const late: ((v: BotView) => Goal | null)[] = [evening, deliver, craft, housekeep];
+  // A ready raft still waits for the departure gate. Until the approach window opens, keep the camp running
+  // (fire, food, ammo) instead of standing on the exposed beach for minutes: only the last few seconds belong to
+  // boarding. Inside the window the whole crew waits by the raft, then boards as soon as the gate opens.
+  if (v.team.stage === 3 && v.clock.stormLeft <= DEPARTURE_GATE_TICKS + secToTicks(BOARD_APPROACH_SEC)) {
+    return { kind: "wait", at: spreadSpot(raftStand(v, 3), s.seat, 1.4) };
+  }
+  // A damaged hull goes in before the camp chores; otherwise the fire and cooking come first.
+  const late: ((v: BotView) => Goal | null)[] = urgentRepair(v)
+    ? [deliver, evening, craft, housekeep]
+    : [evening, deliver, craft, housekeep];
   for (const tier of late) {
     const g = tier(v);
     if (g) return g;
   }
   const near = pickup(v, 5);
   if (near) return near;
-  if (!night) {
+  // Night repair: fetch the chest's spare wood / parts (the chest sits at the lit camp) and carry it to the raft.
+  if (night && urgentRepair(v)) {
+    const fetch = chestFetch(v);
+    if (fetch) return fetch;
+  }
+  if (!night || urgentRepair(v)) {
     const w = work(v);
     if (w) return w;
   }
