@@ -307,6 +307,14 @@ export const TORCH_BURN_TICKS = secToTicks(90);
 export const CRAFT_RANGE = 3.5;
 export const CHEST_RANGE = 3;
 export const RAFT_RANGE = 4.5;
+/**
+ * Bot delivery share of the raft's objective cost (team rule, 3 Nov 2026): bots never deliver the raft on their
+ * own — a human completes it. Unmanaged bots carry at most 25 % of the cost; when a human is at the raft asking
+ * (standing in RAFT_RANGE with goods, or simply present at the raft) up to 40 %. Bot-only matches (no human at
+ * all) are the exception: there is nobody else to finish it.
+ */
+export const BOT_DELIVERY_SHARE = 0.25;
+export const BOT_DELIVERY_SHARE_ORDERED = 0.4;
 export const SPRING_RANGE = 2.6;
 export const COLLECTOR_RANGE = 2.2;
 export const SECRET_CHEST_RANGE = 2.4;
@@ -456,8 +464,23 @@ export const DAYS = 3;
 /** Lose cinematic after night 3 / win cinematic after the launch. */
 export const STORM_SEC = 12;
 export const LAUNCH_SEC = 8;
-/** "FIRTINA!" warning this long before night 3 ends (banner + music). */
+/** "FIRTINA!" warning this long before night 3 ends (banner + music): the top rung of the ladder. */
 export const STORM_WARN_SEC = 30;
+/**
+ * Storm warning ladder (seconds before the storm): the pacing-hypothesis rungs the team agreed on — 30 / 20 / 15,
+ * with 12 s as the floor. Each rung is announced once on three channels (sky/light, sound, HUD counter).
+ */
+export const STORM_WARN_LADDER_SEC: ReadonlyArray<number> = [30, 20, 15];
+/** No rung is ever announced closer than this to the storm. */
+export const STORM_WARN_MIN_SEC = 12;
+/** The ladder, highest first (the one source the client and the room both read). */
+export function stormWarnLadderSec(): number[] {
+  return [...STORM_WARN_LADDER_SEC];
+}
+/** The ladder in ticks, clamped so no rung is closer than STORM_WARN_MIN_SEC (server and client agree). */
+export function stormWarnRungsTicks(): number[] {
+  return stormWarnLadderSec().map((sec) => Math.max(STORM_WARN_MIN_SEC, sec) * secToTicks(1));
+}
 /** The raft only leaves this close to the end of night 3: no departure before the storm window (§7). */
 export const DEPARTURE_GATE_TICKS = 150;
 export const MATCH_END_LOBBY_SEC = 60;

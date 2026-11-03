@@ -12,7 +12,7 @@
 // the raft waits (and the countdown pauses) until the last DEPARTURE_GATE_TICKS of night 3, so the match always
 // reaches the storm and the boss. The room turns launchRequest into the launch phase.
 
-import { CHANNEL, DEPARTURE_GATE_TICKS, MVP_POINTS, WATER_Y, WRECK_HULL_WOOD } from "../../shared/constants.js";
+import { BOT_DELIVERY_SHARE, BOT_DELIVERY_SHARE_ORDERED, CHANNEL, DEPARTURE_GATE_TICKS, MVP_POINTS, RAFT_RANGE, WATER_Y, WRECK_HULL_WOOD } from "../../shared/constants.js";
 import { heightAt } from "../../shared/island/heightfield.js";
 import type { RaftCost } from "../../shared/items.js";
 import { planRaftDelivery, raftPartValue, raftStageFor, teamRaftCost } from "../../shared/rules/interact.js";
@@ -27,6 +27,8 @@ export class RaftSystem {
   private readonly firstAboardPaid = new Set<number>();
   /** Teams whose launch was requested (once per match). */
   private readonly launched = new Set<number>();
+  /** Objective cost units teams' bots have delivered this match (the bot share cap). */
+  private readonly botUnits = new Map<number, number>();
 
   constructor(private readonly core: WorldCore) {}
 
@@ -52,6 +54,42 @@ export class RaftSystem {
   reset(): void {
     this.firstAboardPaid.clear();
     this.launched.clear();
+    this.botUnits.clear();
+  }
+
+  /* ------------------------------------------------------- bot delivery cap */
+
+  /** Objective cost units (every raft requirement counts 1). */
+  private costUnits(team: TeamState): number {
+    const c = this.cost(team);
+    return c.hullWood + c.mastWood + c.mastRope + c.food + c.water;
+  }
+
+  /** Is there a human participant on this team at all? (Bot-only teams may finish the raft alone.) */
+  private hasHuman(teamIdx: number): boolean {
+    let human = false;
+    this.core.participants(teamIdx).forEach((q) => {
+      if (!q.bot && !q.spectator) human = true;
+    });
+    return human;
+  }
+
+  /** A human is at the raft just now: their presence raises the bots' allowance to the "ordered" share. */
+  private humanAtRaft(teamIdx: number): boolean {
+    const site = this.core.site(teamIdx);
+    let at = false;
+    this.core.participants(teamIdx).forEach((q) => {
+      if (at || q.bot || !q.alive || q.washed || q.spectator) return;
+      if (Math.hypot(q.x - site.raft.x, q.z - site.raft.z) <= RAFT_RANGE) at = true;
+    });
+    return at;
+  }
+
+  /** Units the bots of this team may still deliver (0 = the bots hold the last load for the human). */
+  private botAllowance(teamIdx: number): number {
+    const team = this.core.team(teamIdx);
+    const share = this.humanAtRaft(teamIdx) ? BOT_DELIVERY_SHARE_ORDERED : BOT_DELIVERY_SHARE;
+    return Math.floor(this.costUnits(team) * share) - (this.botUnits.get(teamIdx) ?? 0);
   }
 
   /** A launch was requested this match (for any team). */
@@ -73,12 +111,17 @@ export class RaftSystem {
     for (let pass = 0; pass < 3; pass++) {
       const plan = planRaftDelivery(p, team, cost, partValue);
       if (!plan) break;
+      const units = plan.hullWood + plan.mastWood + plan.mastRope + plan.food + plan.water;
+      // Team rule: bots never carry the raft home. Their share is capped (25 %, 40 % when a human is at the
+      // raft); the last load is the human's. A bot-only team has nobody else, so it is exempt.
+      if (p.bot && this.hasHuman(teamIdx) && units > this.botAllowance(teamIdx)) break;
       for (const it of plan.items) core.bag.take(p, it.kind, it.count);
       team.hullWood = Math.min(255, team.hullWood + plan.hullWood);
       team.mastWood = Math.min(255, team.mastWood + plan.mastWood);
       team.mastRope = Math.min(255, team.mastRope + plan.mastRope);
       team.food = Math.min(255, team.food + plan.food);
       team.water = Math.min(255, team.water + plan.water);
+      if (p.bot) this.botUnits.set(teamIdx, (this.botUnits.get(teamIdx) ?? 0) + units);
       p.stats.delivered = Math.min(65535, p.stats.delivered + plan.credited);
       core.addScore(p, MVP_POINTS.deliver * plan.credited);
       const newStage = this.refreshStage(teamIdx, false);
@@ -135,6 +178,7 @@ export class RaftSystem {
 
   /* ---------------------------------------------------------------- boarding */
 
+  /** Boarding is open all match; the launch itself waits for the departure gate in step(). */
   /** E on a ready raft. */
   board(p: PlayerState): boolean {
     const core = this.core;
@@ -142,6 +186,11 @@ export class RaftSystem {
     const team = core.team(teamIdx);
     if (team.stage < 3) {
       core.reject(p, "board", "notReady", "board");
+      return false;
+    }
+    // Bots never start the departure: with a human on the team, boarding (and the launch it triggers) is theirs.
+    if (p.bot && this.hasHuman(teamIdx)) {
+      core.reject(p, "board", "botsWait", "board");
       return false;
     }
     if (p.boarded || this.launched.has(teamIdx)) return false;

@@ -375,6 +375,10 @@ export function buildHudModel(i: HudInputs): HudModel {
     stormWarning:
       i.phase === "storm" ||
       (i.phase === "playing" && clock.day >= DAYS && clock.dayPhase === "night" && clock.stormLeft <= STORM_WARN_SEC * TICK_RATE),
+<<<<<<< HEAD
+=======
+    stormTier: stormTierAt(clock.stormLeft),
+>>>>>>> 92df2c6 (Raft Rush fixes: hidden DDA, 30/20/15 storm rungs, bot delivery share, raft survives to the gate)
     spectator: !!me?.spectator,
     crosshair,
     teammates: buildTeammates(state, me),

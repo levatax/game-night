@@ -30,6 +30,10 @@ export const en = {
   rematch: "🔁 {n} wants a rematch! Everyone back to the beach, a fresh island is on its way.",
   backToLobby: "🏖️ {n} headed back to the lobby.",
   lobbyAuto: "🏖️ Back to the lobby. New island, same sunburn.",
+<<<<<<< HEAD
+=======
+  supply_cache: "📦 A supply crate washed up by the wreck: exactly what the raft was missing.",
+>>>>>>> 92df2c6 (Raft Rush fixes: hidden DDA, 30/20/15 storm rungs, bot delivery share, raft survives to the gate)
 };
 
 export const tr: Record<keyof typeof en, string> = {
@@ -60,4 +64,8 @@ export const tr: Record<keyof typeof en, string> = {
   rematch: "🔁 {n} rövanş istiyor! Herkes kumsala, yeni bir ada yolda.",
   backToLobby: "🏖️ {n} lobiye döndü.",
   lobbyAuto: "🏖️ Lobiye dönüş. Ada yeni, güneş yanığı aynı.",
+<<<<<<< HEAD
+=======
+  supply_cache: "📦 Salın yanına bir erzak sandığı vurdu: tam da salın eksiklerini taşıyor.",
+>>>>>>> 92df2c6 (Raft Rush fixes: hidden DDA, 30/20/15 storm rungs, bot delivery share, raft survives to the gate)
 };

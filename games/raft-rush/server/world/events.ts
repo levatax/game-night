@@ -25,13 +25,30 @@ export interface TeamWipedEvent {
   team: number;
 }
 
+<<<<<<< HEAD
 export type InternalWorldEvent = LaunchRequestEvent | TeamWipedEvent;
+=======
+/** The anti-soft-lock supply cache landed by the wreck (the room tells the players). */
+export interface SupplyCacheEvent {
+  type: "supplyCache";
+  tick: number;
+  team: number;
+  pos: { x: number; y: number; z: number };
+  items: Record<string, number>;
+}
+
+export type InternalWorldEvent = LaunchRequestEvent | TeamWipedEvent | SupplyCacheEvent;
+>>>>>>> 92df2c6 (Raft Rush fixes: hidden DDA, 30/20/15 storm rungs, bot delivery share, raft survives to the gate)
 
 export type GameEvent = BroadcastWorldEvent | InternalWorldEvent;
 export type GameEventType = GameEvent["type"];
 export type GameEventOf<T extends GameEventType> = Extract<GameEvent, { type: T }>;
 
+<<<<<<< HEAD
 const INTERNAL: ReadonlySet<string> = new Set(["launchRequest", "teamWiped"]);
+=======
+const INTERNAL: ReadonlySet<string> = new Set(["launchRequest", "teamWiped", "supplyCache"]);
+>>>>>>> 92df2c6 (Raft Rush fixes: hidden DDA, 30/20/15 storm rungs, bot delivery share, raft survives to the gate)
 
 export function isBroadcastEvent(ev: GameEvent): ev is BroadcastWorldEvent {
   return !INTERNAL.has(ev.type);

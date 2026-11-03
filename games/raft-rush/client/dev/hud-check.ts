@@ -95,6 +95,7 @@ function stormModel(sec: number): HudModel {
     boarded: false,
     launch: null,
     stormWarning: true,
+    stormTier: 2,
     spectator: false,
     crosshair: "dot",
     teammates: [],

@@ -10,6 +10,7 @@ import {
   COCONUT_BALL_COUNT,
   COLLECTOR_FILL_TICKS,
   DIFFICULTIES,
+  DEPARTURE_GATE_TICKS,
   DOWNED_TICKS,
   DROWN_DAMAGE_PER_SEC,
   DROWN_TICKS,
@@ -43,6 +44,7 @@ import {
 import { raftCost } from "../../shared/items.js";
 import { BTN } from "../../shared/protocol.js";
 import { countOf, slotCount, slotKind } from "../../shared/rules/inventory.js";
+import { matchTicks } from "../../shared/rules/schedule.js";
 import { snapYaw8, type CoverCircle } from "../../shared/sim/cover.js";
 import { computeThrowVelocities } from "../../shared/sim/throw.js";
 import { RaftState, PlayerState } from "../schema.js";
@@ -66,6 +68,11 @@ function atRaft(b: Bench, id: string, dx = 0): PlayerState {
 }
 
 function readyRaft(b: Bench): void {
+<<<<<<< HEAD
+=======
+  // The departure gate: put the bench's clock inside the storm window so these tests exercise the hand-over.
+  b.clockTicks = matchTicks(b.timings) - DEPARTURE_GATE_TICKS;
+>>>>>>> 92df2c6 (Raft Rush fixes: hidden DDA, 30/20/15 storm rungs, bot delivery share, raft survives to the gate)
   const team = b.state.teams[0]!;
   const cost = raftCost(team.seats, b.timings.cheapRaft);
   Object.assign(team, { hullWood: cost.hullWood, mastWood: cost.mastWood, mastRope: cost.mastRope, food: cost.food, water: cost.water });

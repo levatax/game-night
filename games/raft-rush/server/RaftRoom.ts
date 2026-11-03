@@ -545,6 +545,10 @@ export class RaftRoom extends Room<RaftState> {
         else if (isBroadcastEvent(ev)) this.broadcast(ev.type, ev);
         else if (ev.type === "launchRequest") this.onLaunchRequest(ev);
         else if (ev.type === "teamWiped") this.onTeamWiped();
+<<<<<<< HEAD
+=======
+        else if (ev.type === "supplyCache") this.notice(say.supplyCache());
+>>>>>>> 92df2c6 (Raft Rush fixes: hidden DDA, 30/20/15 storm rungs, bot delivery share, raft survives to the gate)
       } catch (err) {
         this.logError(`event ${ev.type}`, err);
       }

@@ -58,6 +58,11 @@ interface MatchReport {
   hits: number;
   rejects: Record<string, number>;
   goals: Record<string, number>;
+<<<<<<< HEAD
+=======
+  /** Last visible DDA level of the match. */
+
+>>>>>>> 92df2c6 (Raft Rush fixes: hidden DDA, 30/20/15 storm rungs, bot delivery share, raft survives to the gate)
 }
 
 function runMatch(seed: number, bots: number, difficulty: Difficulty, fast: boolean, idleHumans = 0): MatchReport {
@@ -112,7 +117,11 @@ function runMatch(seed: number, bots: number, difficulty: Difficulty, fast: bool
   state.day = 1;
   state.dayPhase = "day";
 
+<<<<<<< HEAD
   const report: MatchReport = { seed, biome: island.biome, outcome: "timeout", seconds: 0, stage: 0, raft: "", delivered: 0, downs: 0, kills: 0, fish: 0, crafted: 0, spawns: 0, bossSpawns: 0, readyS: -1, launchS: -1, endS: -1, hurt: 0, gnawed: 0, throws: 0, hits: 0, rejects: {}, goals: {} };
+=======
+  const report: MatchReport = { seed, biome: island.biome, outcome: "timeout", seconds: 0, readySeconds: null, launchSeconds: null, humanWins: 0, earlyLaunch: false, stage: 0, raft: "", delivered: 0, downs: 0, kills: 0, fish: 0, crafted: 0, spawns: 0, hurt: 0, gnawed: 0, throws: 0, hits: 0, rejects: {}, goals: {} };
+>>>>>>> 92df2c6 (Raft Rush fixes: hidden DDA, 30/20/15 storm rungs, bot delivery share, raft survives to the gate)
   const limit = timings.landing + matchTicks(timings) + 60;
   const trace = !!process.env.RAFT_BALANCE_TRACE;
   const lastGoal = new Map<string, string>();
@@ -283,6 +292,52 @@ describe("bot balance harness", () => {
     }
   });
 
+<<<<<<< HEAD
+=======
+  /**
+   * The repeated-attempt ladder (visible DDA): each seed plays RAFT_BALANCE_RUNS matches back to back, and a lost
+   * match carries one saved help step into the next (DDA_MAX_ATTEMPT_ASSIST). The novice scenario — 2 bots + 1
+   * human who never touches the keyboard — is the harness' stand-in for a first-run player. Bands (failure %):
+   * run 1 50–60, run 5 25–35; set RAFT_BALANCE_DDA_BAND=0 to only report.
+   */
+  it.skipIf(!enabled || Number(env.RAFT_BALANCE_RUNS ?? 0) < 5)("plays the attempt ladder and asserts the novice failure bands", { timeout: timeoutMs * 3 }, () => {
+    const runs = Number(env.RAFT_BALANCE_RUNS);
+    const { bots, difficulty, fast, idle } = scenario;
+    const failures: number[] = Array.from({ length: runs }, () => 0);
+    // Sparse mode (slow CI): play only the first and the last attempt, assuming the four losses in between buy
+    // the full two help steps (the real carry is at most that). Same scenarios, a fifth of the sim time.
+    const sparse = env.RAFT_BALANCE_LADDER_SPARSE === "1";
+    const started = performance.now();
+    for (let i = 0; i < seeds; i++) {
+      const seed = env.RAFT_BALANCE_SEED ? Number(env.RAFT_BALANCE_SEED) + i : 1000 + i * 7919;
+      let assist = 0;
+      for (let run = 0; run < runs; run++) {
+        if (sparse && run !== 0 && run !== runs - 1) {
+          assist = Math.min(2, assist + 1);
+          continue;
+        }
+        const startAssist = sparse && run > 0 ? 2 : assist;
+        const r = runMatch(seed, bots, difficulty, fast, idle, startAssist, run);
+        if (env.RAFT_BALANCE_TRACE) out(`  seed ${seed} run ${run + 1} assist ${startAssist} → ${r.outcome} spawns ${r.spawns} downs ${r.downs} secs ${r.seconds}`);
+        if (r.outcome !== "launched") failures[run]!++;
+        assist = r.outcome === "launched" ? 0 : Math.min(2, assist + 1);
+      }
+    }
+    const rows = failures.map((n, i) => `run ${i + 1}: ${n}/${seeds} failed = ${((100 * n) / seeds).toFixed(0)} %`);
+    out(`attempt ladder (${scenarioName(scenario)}, assist saves one step after each loss)\n  ${rows.join("\n  ")}`);
+    const pct = (n: number) => (100 * n) / seeds;
+    if (env.RAFT_BALANCE_DDA_BAND !== "1") {
+      out("no band: report only");
+      return;
+    }
+    expect(pct(failures[0]!), "first-run failure % (50–60)").toBeGreaterThanOrEqual(50);
+    expect(pct(failures[0]!), "first-run failure % (50–60)").toBeLessThanOrEqual(60);
+    expect(pct(failures[runs - 1]!), "fifth-run failure % (25–35)").toBeGreaterThanOrEqual(25);
+    expect(pct(failures[runs - 1]!), "fifth-run failure % (25–35)").toBeLessThanOrEqual(35);
+    out(`bands ok (novice: run 1 50–60 %, run ${runs} 25–35 %) in ${((performance.now() - started) / 1000).toFixed(1)} s`);
+  });
+
+>>>>>>> 92df2c6 (Raft Rush fixes: hidden DDA, 30/20/15 storm rungs, bot delivery share, raft survives to the gate)
   it("reads the band and knows its target scenario", () => {
     expect(parseBand(undefined)).toBeNull();
     expect(parseBand("")).toBeNull();

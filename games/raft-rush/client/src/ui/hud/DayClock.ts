@@ -124,4 +124,8 @@ export class DayClock {
     setHidden(this.storm, !show);
     if (show) setText(this.stormText, t(m.stormWarning ? "hud.stormSoon" : "hud.stormIn", { t: clockText(sec) }));
   }
+<<<<<<< HEAD
+=======
+
+>>>>>>> 92df2c6 (Raft Rush fixes: hidden DDA, 30/20/15 storm rungs, bot delivery share, raft survives to the gate)
 }

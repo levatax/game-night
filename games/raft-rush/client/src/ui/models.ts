@@ -179,6 +179,11 @@ export interface HudModel {
   /** Boarding countdown after the first player boarded. */
   launch: { secLeft: number; aboard: number; total: number } | null;
   stormWarning: boolean;
+<<<<<<< HEAD
+=======
+  /** Rung of the storm-warning ladder the HUD is showing (-1 = no warning yet). */
+  stormTier: number;
+>>>>>>> 92df2c6 (Raft Rush fixes: hidden DDA, 30/20/15 storm rungs, bot delivery share, raft survives to the gate)
   spectator: boolean;
   /** Crosshair style. */
   crosshair: "dot" | "throw" | "interact" | "hidden";
