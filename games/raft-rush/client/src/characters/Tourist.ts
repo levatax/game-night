@@ -208,6 +208,11 @@ export class Tourist {
     this.band.visible = color !== null;
   }
 
+  /** True while the white hit flash is up (the character batcher swaps to its flash batch). */
+  get isFlashing(): boolean {
+    return this.flash;
+  }
+
   /** White hit flash on the body meshes. */
   setFlash(on: boolean): void {
     if (on === this.flash) return;

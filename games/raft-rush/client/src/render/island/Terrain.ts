@@ -51,33 +51,60 @@ export class Terrain {
   /** Triangles drawn (budget bookkeeping). */
   readonly triangles: number;
 
-  constructor(def: IslandDef, bank: MaterialBank) {
+  /** One BatchedMesh for every chunk: per-chunk frustum culling, one draw call per island on multi-draw GPUs. */
+  private readonly batch: THREE.BatchedMesh | null;
+
+  constructor(def: IslandDef, bank: MaterialBank, batched = true) {
     this.group.name = "terrain";
     const ctx = colorContext(def);
     const grid = def.grid;
     const cellsX = grid.cols - 1;
     const cellsZ = grid.rows - 1;
     const material = vertexColorToon(THREE.FrontSide, false);
+    const chunks: THREE.BufferGeometry[] = [];
+    let verts = 0;
     let tris = 0;
     for (let cz0 = 0; cz0 < cellsZ; cz0 += CHUNK_CELLS) {
       for (let cx0 = 0; cx0 < cellsX; cx0 += CHUNK_CELLS) {
         const geometry = buildChunk(def, ctx, cx0, cz0, Math.min(cellsX, cx0 + CHUNK_CELLS), Math.min(cellsZ, cz0 + CHUNK_CELLS));
         if (!geometry) continue;
+        chunks.push(bank.geo(geometry));
+        verts += geometry.getAttribute("position").count;
         tris += geometry.getAttribute("position").count / 3;
-        const mesh = new THREE.Mesh(bank.geo(geometry), material);
-        mesh.name = `terrainChunk${cx0 / CHUNK_CELLS}_${cz0 / CHUNK_CELLS}`;
+      }
+    }
+    this.triangles = tris;
+    if (!batched) {
+      // Dev/benchmark baseline: the pre-optimisation one-mesh-per-chunk path.
+      this.batch = null;
+      for (let i = 0; i < chunks.length; i++) {
+        const mesh = new THREE.Mesh(chunks[i]!, material);
+        mesh.name = `terrainChunk${i}`;
         mesh.receiveShadow = true;
         mesh.castShadow = false;
         mesh.matrixAutoUpdate = false;
         this.group.add(mesh);
       }
+      return;
     }
-    this.triangles = tris;
+    this.batch = new THREE.BatchedMesh(Math.max(1, chunks.length), Math.max(1, verts), 0, material);
+    this.batch.name = "terrain";
+    this.batch.receiveShadow = true;
+    this.batch.castShadow = false;
+    this.batch.sortObjects = false;
+    this.batch.frustumCulled = false;
+    const identity = new THREE.Matrix4();
+    for (const geometry of chunks) {
+      const id = this.batch.addGeometry(geometry);
+      this.batch.setMatrixAt(this.batch.addInstance(id), identity);
+    }
+    this.group.add(this.batch);
   }
 
-  /** Hills shadowing themselves (high quality only: it doubles the terrain's cost in the shadow pass). */
+  /** Hills shadowing themselves (off: the ground receives, it does not need to cast). */
   setCastShadow(cast: boolean): void {
-    for (const c of this.group.children) c.castShadow = cast;
+    if (this.batch) this.batch.castShadow = cast;
+    else for (const c of this.group.children) c.castShadow = cast;
   }
 }
 

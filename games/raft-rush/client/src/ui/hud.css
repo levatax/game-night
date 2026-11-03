@@ -512,7 +512,8 @@
 .rr-ui .rr-cmark {
   --mark: var(--cream);
   position: absolute;
-  top: 50%;
+  /* Row 1 clears the pin + distance chip of row 0 (Compass.stack). */
+  top: calc(50% + var(--row, 0) * var(--u) * 46);
   left: calc(50% + var(--x, 0) * 50%);
   transform: translate(-50%, -50%);
   display: flex;

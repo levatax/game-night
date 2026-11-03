@@ -41,7 +41,7 @@ export interface RaftPose {
 type ShownKey = "logs" | "ropes" | "crates" | "gourds";
 
 interface Pop {
-  mesh: THREE.InstancedMesh;
+  kind: "log" | "crate" | "gourd";
   index: number;
   t: number;
 }
@@ -101,18 +101,23 @@ export class Raft {
   private readonly grid: Heightfield;
   private readonly restPos: THREE.Vector3;
   private readonly yaw: number;
-  private readonly logs: THREE.InstancedMesh;
-  private readonly logOutlines: THREE.InstancedMesh;
+  /** Hull logs + cross beams + crates + gourds in one BatchedMesh: one draw instead of five. */
+  private readonly hull: THREE.BatchedMesh;
+  /** The same hull parts' ink hull in one second batch (logs + beams only). */
+  private readonly hullOutline: THREE.BatchedMesh;
+  private readonly hullLogIds: number[] = [];
+  private readonly hullCrateIds: number[] = [];
+  private readonly hullGourdIds: number[] = [];
+  private readonly hullLogOutlineIds: number[] = [];
+  private hullBeamId = -1;
+  private hullBeamOutlineId = -1;
   private readonly logRest: THREE.Matrix4[] = [];
-  private readonly beams: THREE.Object3D;
   private readonly mast: THREE.Group = new THREE.Group();
   private readonly pole: THREE.Object3D;
   private readonly yard: THREE.Object3D;
   private readonly ropes: THREE.InstancedMesh;
   private readonly sail: THREE.Mesh;
   private readonly sailMats: [THREE.MeshToonMaterial, THREE.MeshToonMaterial];
-  private readonly crates: THREE.InstancedMesh;
-  private readonly gourds: THREE.InstancedMesh;
   private readonly crateRest: THREE.Matrix4[] = [];
   private readonly gourdRest: THREE.Matrix4[] = [];
   private readonly pennant: THREE.Mesh;
@@ -121,6 +126,7 @@ export class Raft {
   private readonly sparkles: Sparkles;
   private readonly pops: Pop[] = [];
   private shown: Record<ShownKey, number> = { logs: -1, ropes: -1, crates: -1, gourds: -1 };
+  private beamsShown: boolean | null = null;
   private mastK = 0;
   private sailK = 0;
   private readyK = 0;
@@ -141,14 +147,33 @@ export class Raft {
     this.group.add(this.root);
     this.group.add(this.buildSlip(site, bank));
 
-    // Hull logs (instanced, with an instanced ink outline).
-    const logGeo = bank.geo(logGeometry());
-    this.logs = new THREE.InstancedMesh(logGeo, vertexColorToon(), LOGS);
-    this.logs.name = "raftLogs";
-    this.logs.castShadow = true;
-    this.logs.receiveShadow = true;
-    this.logOutlines = new THREE.InstancedMesh(getSmoothOutlineGeometry(logGeo), getOutlineMaterial(0.025), LOGS);
-    this.logOutlines.name = "outline";
+    // Hull logs, cross beams, provision crates and gourds in ONE BatchedMesh (all vertex-colored toon):
+    // five draws per raft become one, plus a single batched ink outline instead of two.
+    const logGeo = logGeometry();
+    const beamsGeo = beamsBaker().build();
+    const crateGeo = crateBaker().build();
+    const gourdGeo = gourdBaker().build();
+    const logOutlineGeo = getSmoothOutlineGeometry(logGeo);
+    const beamsOutlineGeo = getSmoothOutlineGeometry(beamsGeo);
+    const hullVerts = vertexCount(logGeo) + vertexCount(beamsGeo) + vertexCount(crateGeo) + vertexCount(gourdGeo);
+    const hullIndices = indexCount(logGeo) + indexCount(beamsGeo) + indexCount(crateGeo) + indexCount(gourdGeo);
+    this.hull = new THREE.BatchedMesh(LOGS + 1 + CRATES + GOURDS, hullVerts, Math.max(hullVerts * 2, hullIndices), vertexColorToon());
+    this.hull.name = "raftHull";
+    this.hull.castShadow = true;
+    this.hull.receiveShadow = true;
+    const outlineVerts = vertexCount(logOutlineGeo) + vertexCount(beamsOutlineGeo);
+    const outlineIndices = indexCount(logOutlineGeo) + indexCount(beamsOutlineGeo);
+    this.hullOutline = new THREE.BatchedMesh(LOGS + 1, Math.max(outlineVerts, outlineIndices), Math.max(outlineIndices, outlineVerts), getOutlineMaterial(0.025));
+    this.hullOutline.name = "outline";
+    this.hullOutline.userData.isOutline = true;
+    this.hullOutline.castShadow = false;
+    this.hullOutline.receiveShadow = false;
+    const logId = this.hull.addGeometry(logGeo);
+    const beamId = this.hull.addGeometry(beamsGeo);
+    const crateId = this.hull.addGeometry(crateGeo);
+    const gourdId = this.hull.addGeometry(gourdGeo);
+    const logOutlineId = this.hullOutline.addGeometry(logOutlineGeo);
+    const beamOutlineId = this.hullOutline.addGeometry(beamsOutlineGeo);
     const tint = new THREE.Color();
     for (let i = 0; i < LOGS; i++) {
       // Fill from the middle out so a half-built hull still looks like a raft.
@@ -157,16 +182,39 @@ export class Raft {
       const len = 0.92 + ((order * 37) % 10) / 100;
       const m = composeMatrix(new THREE.Vector3(x, 0, ((order * 13) % 7) * 0.025), new THREE.Euler(0, 0, order * 0.7), new THREE.Vector3(1, 1, len));
       this.logRest.push(m);
-      this.logs.setMatrixAt(i, m);
-      this.logOutlines.setMatrixAt(i, m);
-      this.logs.setColorAt(i, tint.setScalar(0.9 + ((order * 53) % 10) / 100));
+      const id = this.hull.addInstance(logId);
+      this.hull.setMatrixAt(id, m);
+      this.hull.setColorAt(id, tint.setScalar(0.9 + ((order * 53) % 10) / 100));
+      this.hull.setVisibleAt(id, false);
+      this.hullLogIds.push(id);
+      const outline = this.hullOutline.addInstance(logOutlineId);
+      this.hullOutline.setMatrixAt(outline, m);
+      this.hullOutline.setVisibleAt(outline, false);
+      this.hullLogOutlineIds.push(outline);
     }
-    this.logs.count = 0;
-    this.logOutlines.count = 0;
-    this.root.add(this.logs, this.logOutlines);
-
-    this.beams = this.bakedMesh(beamsBaker(), bank, "raftBeams");
-    this.root.add(this.beams);
+    this.hullBeamId = this.hull.addInstance(beamId);
+    this.hull.setMatrixAt(this.hullBeamId, IDENTITY_MATRIX);
+    this.hull.setVisibleAt(this.hullBeamId, false);
+    this.hullBeamOutlineId = this.hullOutline.addInstance(beamOutlineId);
+    this.hullOutline.setMatrixAt(this.hullBeamOutlineId, IDENTITY_MATRIX);
+    this.hullOutline.setVisibleAt(this.hullBeamOutlineId, false);
+    for (let i = 0; i < CRATES; i++) {
+      const m = composeMatrix(new THREE.Vector3(-0.9 + (i % 3) * 0.9, LOG_RADIUS, 0.75 + Math.floor(i / 3) * 0.7), new THREE.Euler(0, (i * 0.37) % 0.5 - 0.25, 0), 1);
+      this.crateRest.push(m);
+      const id = this.hull.addInstance(crateId);
+      this.hull.setMatrixAt(id, m);
+      this.hull.setVisibleAt(id, false);
+      this.hullCrateIds.push(id);
+    }
+    for (let i = 0; i < GOURDS; i++) {
+      const m = composeMatrix(new THREE.Vector3(-0.95 + (i % 3) * 0.95, LOG_RADIUS, -0.8 - Math.floor(i / 3) * 0.6), new THREE.Euler(0, i * 1.3, 0), 1);
+      this.gourdRest.push(m);
+      const id = this.hull.addInstance(gourdId);
+      this.hull.setMatrixAt(id, m);
+      this.hull.setVisibleAt(id, false);
+      this.hullGourdIds.push(id);
+    }
+    this.root.add(this.hull, this.hullOutline);
 
     // Mast: pole + yard (outlined), rigging ropes (instanced).
     this.pole = this.bakedMesh(poleBaker(), bank, "raftPole");
@@ -206,26 +254,7 @@ export class Raft {
     this.sail.visible = false;
     this.root.add(this.sail);
 
-    // Provisions.
-    this.crates = new THREE.InstancedMesh(bank.geo(crateBaker().build()), vertexColorToon(), CRATES);
-    this.crates.name = "raftCrates";
-    this.crates.castShadow = true;
-    this.gourds = new THREE.InstancedMesh(bank.geo(gourdBaker().build()), vertexColorToon(), GOURDS);
-    this.gourds.name = "raftGourds";
-    this.gourds.castShadow = true;
-    for (let i = 0; i < CRATES; i++) {
-      const m = composeMatrix(new THREE.Vector3(-0.9 + (i % 3) * 0.9, LOG_RADIUS, 0.75 + Math.floor(i / 3) * 0.7), new THREE.Euler(0, (i * 0.37) % 0.5 - 0.25, 0), 1);
-      this.crateRest.push(m);
-      this.crates.setMatrixAt(i, m);
-    }
-    for (let i = 0; i < GOURDS; i++) {
-      const m = composeMatrix(new THREE.Vector3(-0.95 + (i % 3) * 0.95, LOG_RADIUS, -0.8 - Math.floor(i / 3) * 0.6), new THREE.Euler(0, i * 1.3, 0), 1);
-      this.gourdRest.push(m);
-      this.gourds.setMatrixAt(i, m);
-    }
-    this.crates.count = 0;
-    this.gourds.count = 0;
-    this.root.add(this.crates, this.gourds);
+    // Provisions live in the hull batch above (they ride the shadowed hull: no extra shadow draws).
 
     // READY: pennant on the mast top, halo on the sand, sparkles.
     const pennantGeo = bank.geo(new THREE.BufferGeometry());
@@ -262,12 +291,16 @@ export class Raft {
     if (this.primed && hullWood < this.lastHull && !pieces.beams) this.shudder = 1;
     this.lastHull = hullWood;
 
-    this.setCount(this.logs, pieces.logs, "logs", [this.logOutlines]);
-    this.setCount(this.ropes, pieces.ropes, "ropes");
-    this.setCount(this.crates, pieces.crates, "crates");
-    this.setCount(this.gourds, pieces.gourds, "gourds");
+    this.setCount("logs", pieces.logs);
+    this.setCount("ropes", pieces.ropes);
+    this.setCount("crates", pieces.crates);
+    this.setCount("gourds", pieces.gourds);
     this.primed = true;
-    this.beams.visible = pieces.beams;
+    if (this.beamsShown !== pieces.beams) {
+      this.beamsShown = pieces.beams;
+      this.hull.setVisibleAt(this.hullBeamId, pieces.beams);
+      this.hullOutline.setVisibleAt(this.hullBeamOutlineId, pieces.beams);
+    }
 
     this.mastK += (pieces.mast - this.mastK) * smoothing(5, dt);
     this.sailK += ((pieces.sail ? 1 : 0) - this.sailK) * smoothing(2.2, dt);
@@ -369,7 +402,7 @@ export class Raft {
     mesh.name = "raftSlip";
     mesh.position.copy(this.restPos);
     mesh.rotation.y = this.yaw;
-    mesh.castShadow = true;
+    mesh.castShadow = false;
     return mesh;
   }
 
@@ -379,22 +412,34 @@ export class Raft {
     this.yard.visible = yard && k > 0.95;
   }
 
-  private setCount(mesh: THREE.InstancedMesh, count: number, key: ShownKey, mirrors: THREE.InstancedMesh[] = []): void {
+  /** Show the first `count` pieces of a hull kind (logs / crates / gourds) or of the ropes. */
+  private setCount(key: ShownKey, count: number): void {
     const prev = this.shown[key];
     if (count === prev) return;
     this.shown[key] = count;
-    mesh.count = count;
-    for (const m of mirrors) m.count = count;
+    if (key === "ropes") {
+      this.ropes.count = count;
+    } else {
+      const ids = key === "logs" ? this.hullLogIds : key === "crates" ? this.hullCrateIds : this.hullGourdIds;
+      for (let i = 0; i < ids.length; i++) this.hull.setVisibleAt(ids[i]!, i < count);
+      if (key === "logs") for (let i = 0; i < this.hullLogOutlineIds.length; i++) this.hullOutline.setVisibleAt(this.hullLogOutlineIds[i]!, i < count);
+    }
     if (this.primed && prev >= 0 && count > prev) {
-      for (let i = prev; i < count; i++) this.pops.push({ mesh, index: i, t: 0 });
+      const kind = key === "logs" ? "log" : key === "crates" ? "crate" : key === "gourds" ? "gourd" : null;
+      if (kind) for (let i = prev; i < count; i++) this.pops.push({ kind, index: i, t: 0 });
     }
   }
 
-  private restFor(mesh: THREE.InstancedMesh, index: number): THREE.Matrix4 | null {
-    if (mesh === this.logs) return this.logRest[index] ?? null;
-    if (mesh === this.crates) return this.crateRest[index] ?? null;
-    if (mesh === this.gourds) return this.gourdRest[index] ?? null;
-    return null;
+  /** Rest matrix of a hull instance (pop animation start). */
+  private restFor(kind: Pop["kind"], index: number): THREE.Matrix4 | null {
+    if (kind === "log") return this.logRest[index] ?? null;
+    if (kind === "crate") return this.crateRest[index] ?? null;
+    return this.gourdRest[index] ?? null;
+  }
+
+  private instanceId(kind: Pop["kind"], index: number): number {
+    const ids = kind === "log" ? this.hullLogIds : kind === "crate" ? this.hullCrateIds : this.hullGourdIds;
+    return ids[index] ?? -1;
   }
 
   private stepPops(dt: number): void {
@@ -402,24 +447,34 @@ export class Raft {
       const pop = this.pops[i]!;
       pop.t += dt;
       const u = Math.min(1, pop.t / POP_SEC);
-      const rest = this.restFor(pop.mesh, pop.index);
-      if (rest) {
+      const rest = this.restFor(pop.kind, pop.index);
+      const id = this.instanceId(pop.kind, pop.index);
+      if (rest && id >= 0) {
         // Drop in from above with a squash on landing.
         rest.decompose(tmpV, tmpQ, tmpS);
         const k = u < 1 ? 0.6 + 0.4 * Math.sin(u * Math.PI * 0.5) + Math.sin(u * Math.PI) * 0.15 : 1;
         tmpV.y += (1 - u) * (1 - u) * 1.2;
         tmpS.multiplyScalar(k);
         tmpM.compose(tmpV, tmpQ, tmpS);
-        pop.mesh.setMatrixAt(pop.index, tmpM);
-        pop.mesh.instanceMatrix.needsUpdate = true;
-        if (pop.mesh === this.logs) {
-          this.logOutlines.setMatrixAt(pop.index, tmpM);
-          this.logOutlines.instanceMatrix.needsUpdate = true;
+        this.hull.setMatrixAt(id, tmpM);
+        if (pop.kind === "log") {
+          const outline = this.hullLogOutlineIds[pop.index];
+          if (outline !== undefined) this.hullOutline.setMatrixAt(outline, tmpM);
         }
       }
       if (u >= 1) this.pops.splice(i, 1);
     }
   }
+}
+
+const IDENTITY_MATRIX = new THREE.Matrix4();
+
+function vertexCount(g: THREE.BufferGeometry): number {
+  return g.getAttribute("position")?.count ?? 0;
+}
+
+function indexCount(g: THREE.BufferGeometry): number {
+  return g.index ? g.index.count : 0;
 }
 
 function clamp01(v: number): number {

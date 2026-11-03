@@ -26,6 +26,8 @@ import { CHANNEL, playerColor, REVIVE_TICKS } from "../../../shared/constants";
 import type { CharacterId, EmoteId, InvKind, ItemKind, Vec3Like } from "../../../shared/types";
 import type { MonsterFrame, PlayerFrame } from "../net/types";
 import { Avatar } from "./Avatar";
+import { AvatarShadowPool } from "./shadowBlob";
+import { CharacterBatcher } from "./CharacterBatcher";
 import { FpArmsRig } from "./fpArms";
 import { MonsterHerd } from "./monsters";
 import { portraitOf } from "./portraits";
@@ -206,7 +208,9 @@ export class Characters {
   readonly fpArms = new FpArms();
   readonly monsters = new Monsters();
   private readonly root = new THREE.Group();
+  private readonly batcher: CharacterBatcher;
   private readonly camera: THREE.PerspectiveCamera;
+  private readonly shadows = new AvatarShadowPool(this.root);
   private readonly avatars = new Map<string, Avatar>();
   private readonly leaving = new Map<string, { avatar: Avatar; frame: PlayerFrame }>();
   private readonly lastFrames = new Map<string, PlayerFrame>();
@@ -220,6 +224,7 @@ export class Characters {
   constructor(scene: THREE.Scene, camera: THREE.PerspectiveCamera) {
     this.camera = camera;
     this.root.name = "characters";
+    this.batcher = new CharacterBatcher(this.root);
     scene.add(this.root, this.monsters.object);
     // The first-person arms are a child of the camera: the camera must be part of the scene graph.
     if (!camera.parent) scene.add(camera);
@@ -244,21 +249,24 @@ export class Characters {
       if (f.id === opts.localId) this.fpArms.setSeatColor(playerColor(f.seat));
       let avatar = this.avatars.get(f.id);
       if (avatar && avatar.character !== f.character) {
-        avatar.dispose();
+        this.disposeAvatar(avatar);
         this.avatars.delete(f.id);
         avatar = undefined;
       }
       if (!avatar) {
         const back = this.leaving.get(f.id);
+        let fresh = false;
         if (back && back.avatar.character === f.character) {
           avatar = back.avatar;
           avatar.cancelLeave();
         } else {
-          back?.avatar.dispose();
-          avatar = new Avatar(this.root, f);
+          if (back) this.disposeAvatar(back.avatar);
+          avatar = new Avatar(this.root, f, this.shadows);
+          fresh = true;
         }
         this.leaving.delete(f.id);
         this.avatars.set(f.id, avatar);
+        if (fresh) this.batcher.register(avatar.tourist);
         const queued = this.pending.get(f.id);
         if (queued) {
           for (const q of queued) avatar.trigger(q.what, q.opts);
@@ -283,7 +291,7 @@ export class Characters {
       this.avatars.delete(id);
       const last = this.lastFrames.get(id);
       if (!last) {
-        avatar.dispose();
+        this.disposeAvatar(avatar);
         continue;
       }
       avatar.beginLeave();
@@ -291,7 +299,7 @@ export class Characters {
     }
     for (const [id, l] of this.leaving) {
       if (l.avatar.updateLeaving(l.frame, dt)) {
-        l.avatar.dispose();
+        this.disposeAvatar(l.avatar);
         this.leaving.delete(id);
         this.lastFrames.delete(id);
       }
@@ -302,6 +310,15 @@ export class Characters {
       if (keep.length) this.pending.set(id, keep);
       else this.pending.delete(id);
     }
+    // All bone matrices are final now: push them into the batched meshes before the renderer runs.
+    this.batcher.flush();
+    this.shadows.flush();
+  }
+
+  /** Remove one avatar's batched instances before disposing its meshes. */
+  private disposeAvatar(avatar: Avatar): void {
+    this.batcher.unregister(avatar.tourist);
+    avatar.dispose();
   }
 
   trigger(id: string, what: CharacterTrigger, opts?: TriggerOptions): void {
@@ -351,8 +368,8 @@ export class Characters {
   }
 
   clear(): void {
-    for (const avatar of this.avatars.values()) avatar.dispose();
-    for (const l of this.leaving.values()) l.avatar.dispose();
+    for (const avatar of this.avatars.values()) this.disposeAvatar(avatar);
+    for (const l of this.leaving.values()) this.disposeAvatar(l.avatar);
     this.avatars.clear();
     this.leaving.clear();
     this.lastFrames.clear();
