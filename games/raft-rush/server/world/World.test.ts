@@ -658,6 +658,45 @@ describe("RaftWorld: the raft", () => {
     expect(b.of("reject", b.tick())[0]).toMatchObject({ reason: "wrongStage" });
   });
 
+  it("bots never deliver objective goods on a team with a human; a bot-only team builds alone", () => {
+    // Human + 2 bots: the bots stand at the raft with stage goods and are refused.
+    const b = new Bench([["h1"], ["bot-2"], ["bot-3"]]);
+    b.p("bot-2").bot = true;
+    b.p("bot-3").bot = true;
+    atRaft(b, "bot-2", -0.6);
+    atRaft(b, "bot-3", 0.6);
+    b.give("bot-2", "raft_part", 1);
+    b.give("bot-3", "wood", 4);
+    b.world.drainEvents();
+    b.send("bot-2", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
+    const botEvs = b.tick();
+    expect(b.of("deliver", botEvs)).toHaveLength(0);
+    expect(b.p("bot-2").stats.delivered).toBe(0);
+    expect(countOf(b.p("bot-2"), "raft_part")).toBe(1); // the goods stay in the bot's pockets
+    expect(b.of("reject", botEvs)[0]).toMatchObject({ playerId: "bot-2", action: "deliver", reason: "botDelivers" });
+
+    // The human's own press still loads the raft.
+    atRaft(b, "h1");
+    b.give("h1", "raft_part", 1);
+    b.send("h1", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
+    const loaded = b.tick();
+    expect(b.of("deliver", loaded)).toHaveLength(1);
+    expect(b.p("h1").stats.delivered).toBe(RAFT_PART_WOOD);
+
+    // Bot-only team: no human to build it, so the bots deliver.
+    const solo = new Bench([["bot-4"], ["bot-5"]]);
+    solo.p("bot-4").bot = true;
+    solo.p("bot-5").bot = true;
+    atRaft(solo, "bot-4");
+    solo.give("bot-4", "raft_part", 1);
+    solo.world.drainEvents();
+    solo.send("bot-4", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
+    const soloEvs = solo.tick();
+    expect(solo.of("deliver", soloEvs)).toHaveLength(1);
+    expect(solo.p("bot-4").stats.delivered).toBe(RAFT_PART_WOOD);
+    expect(solo.state.teams[0]!.hullWood).toBe(WRECK_HULL_WOOD + RAFT_PART_WOOD);
+  });
+
   it("the old sail completes the mast as soon as the hull is done", () => {
     const b = new Bench([["a"], ["b"]]);
     b.world.applyTreasure(b.p("a"), "old_sail");

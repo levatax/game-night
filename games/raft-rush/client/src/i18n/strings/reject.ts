@@ -16,6 +16,7 @@ export const en = {
   noSpot: "Aim at the foamy water",
   busy: "Can't do that right now",
   dead: "Not while you're down",
+  botDelivers: "The humans build this raft themselves",
 };
 
 export const tr: Record<keyof typeof en, string> = {
@@ -32,4 +33,5 @@ export const tr: Record<keyof typeof en, string> = {
   noSpot: "Köpüren suya nişan al",
   busy: "Şu an bunu yapamazsın",
   dead: "Yerdeyken olmaz",
+  botDelivers: "Bu salı insanlar kendisi kurar",
 };

@@ -64,6 +64,12 @@ export class RaftSystem {
   deliver(p: PlayerState): boolean {
     const core = this.core;
     const teamIdx = core.site(p.team).team;
+    // The objective loads belong to the humans: on a team with a human a bot never hands raft goods over.
+    // (A bot-only team has nobody else to build the raft, so its bots may deliver.) Same split as `board`.
+    if (p.bot && this.hasHuman(teamIdx)) {
+      core.reject(p, "deliver", "botDelivers", "deliver");
+      return false;
+    }
     const team = core.team(teamIdx);
     const cost = this.cost(team);
     const partValue = raftPartValue(p.character);

@@ -697,9 +697,17 @@ function evening(v: BotView): Goal | null {
   return null;
 }
 
+/** The team has a human: connected, or a seat a stand-in holds until its player reconnects (role ""). */
+function teamHasHuman(v: BotView): boolean {
+  return v.mates.some((m) => m.human || (m.driven && m.role === ""));
+}
+
 function deliver(v: BotView): Goal | null {
   const s = v.self;
   if (v.team.stage >= 3 || v.blocked("deliver")) return null;
+  // On a team with a human the objective loads are the human's: bots carry to the chest instead of the raft.
+  // (Server side RaftSystem.deliver refuses a bot's hand-over on such a team; a bot-only team may build alone.)
+  if (teamHasHuman(v)) return null;
   // Hull repair outranks the pacing plan: a gnawed raft must be fed again even when the team is "ahead".
   if (aheadOfSchedule(v) && !raftHullDamaged(v.team)) return null;
   const units = deliverableUnits(s.slots, v.team, s.character);

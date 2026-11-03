@@ -226,6 +226,27 @@ describe("chooseGoal priorities", () => {
     expect(g.kind).toBe("deliver");
   });
 
+  it("does not deliver objective goods on a team with a human; a bot-only team still does", () => {
+    const load = (v: BotView): void => {
+      give(v, 0, "axe");
+      give(v, 1, "wood", 5);
+      give(v, 2, "wood", 5);
+      give(v, 3, "wood", 5);
+    };
+    const withHuman = makeView((v) => {
+      load(v);
+      v.mates.push({ ...botMate("h1", 0, ""), driven: false, human: true });
+    });
+    expect(chooseGoal(withHuman).kind).not.toBe("deliver");
+    // A reconnect stand-in on the human's seat counts as the human team too (role "" and driven).
+    const standIn = makeView((v) => {
+      load(v);
+      v.mates.push(botMate("h1", 0, ""));
+    });
+    expect(chooseGoal(standIn).kind).not.toBe("deliver");
+    expect(chooseGoal(makeView(load)).kind).toBe("deliver");
+  });
+
   it("Hamal crafts an axe when it can, otherwise chops", () => {
     const craftable = makeView((v) => {
       give(v, 0, "wood", 1);
