@@ -43,6 +43,9 @@ const CHEST: [ItemKind, number][] = [
 ];
 const ROLES: BotRole[] = ["asci", "bekci", "hamal", "balikci"];
 const SEED = 16838; // a tropic island: cold nights (warmth matters)
+const T = timingsFor(false);
+/** First ticks of the last night: the only window in which the raft may be boarded. */
+const LAST_NIGHT = 2 * (T.day + T.dusk + T.night) + T.day + T.dusk + 5;
 
 interface Match {
   state: RaftState;
@@ -52,6 +55,8 @@ interface Match {
   h: PlayerState;
   /** Host calls the desk made, as "craft:<id>", "chest:<id>", "emote:<id>", "marker:<id>". */
   calls: string[];
+  /** Drop every monster each tick (boarding tests want no night wave). */
+  peaceful: boolean;
   /** Run the room's per-tick order (clock → bots → world) from clock tick `from` up to `to`; returns the events. */
   run(from: number, to: number): GameEvent[];
 }
@@ -103,7 +108,9 @@ function match(role: BotRole, standIn: boolean, seed: number, extra: (state: Raf
   desk.reset();
   state.phase = "playing";
   state.day = 1;
-  const run = (from: number, to: number): GameEvent[] => {
+  const m: Match = {
+    state, world, desk, h, calls, peaceful: false,
+    run: (from: number, to: number): GameEvent[] => {
     const events: GameEvent[] = [];
     for (state.clockTicks = from; state.clockTicks < to; ) {
       state.tick++;
@@ -112,12 +119,14 @@ function match(role: BotRole, standIn: boolean, seed: number, extra: (state: Raf
       state.day = clock.day;
       state.dayPhase = clock.dayPhase;
       state.phaseTicksLeft = clock.phaseLeft;
+      if (m.peaceful) state.monsters.clear();
       desk.tick();
       events.push(...world.step({ locked: false, clock }));
     }
-    return events;
+      return events;
+    },
   };
-  return { state, world, desk, h, calls, run };
+  return m;
 }
 
 function actorOf(ev: GameEvent): string {
@@ -191,6 +200,8 @@ function atTheRaft(m: Match, yawOff: number, angle: number, dist: number): numbe
   const team = m.state.teams[0]!;
   Object.assign(team, raftCost(team.seats));
   team.stage = 3;
+  // No night wave, so the test measures boarding alone.
+  m.peaceful = true;
   const { raft, campfire } = m.world.island.sites[0]!;
   const l = Math.hypot(campfire.x - raft.x, campfire.z - raft.z);
   const h = m.h;
@@ -254,10 +265,14 @@ describe("reconnect stand-in in the real world (normal timings)", () => {
     const team = m.state.teams[0]!;
     Object.assign(team, raftCost(team.seats));
     team.stage = 3;
+    m.peaceful = true;
     const raft = m.world.island.sites[0]!.raft;
     mate.x = raft.x + 2;
     mate.z = raft.z;
-    const events = m.run(secToTicks(8), secToTicks(30));
+    m.h.x = raft.x - 1;
+    m.h.z = raft.z;
+    m.h.y = heightAt(m.world.island.grid, m.h.x, m.h.z);
+    const events = m.run(LAST_NIGHT, LAST_NIGHT + secToTicks(30));
     expect(m.h.boarded).toBe(true);
     expect(events.filter((ev) => actorOf(ev) === "h1" && ACTING.has(ev.type))).toEqual([]);
     expect(events.some((ev) => ev.type === "board" && ev.playerId === "h1")).toBe(true);
@@ -277,7 +292,7 @@ describe("reconnect stand-in in the real world (normal timings)", () => {
       atTheRaft(m, 0, angle, dist);
       const inventory = JSON.stringify(slotsOf(m.h));
       expect(resolveInteraction({ island: m.world.island, state: m.state }, m.h)?.kind, label).toBe("pickup");
-      const events = m.run(100, 100 + secToTicks(6));
+      const events = m.run(LAST_NIGHT, LAST_NIGHT + secToTicks(6));
       expect(m.h.boarded, label).toBe(true);
       expect(events.filter((ev) => actorOf(ev) === "h1" && ACTING.has(ev.type)), label).toEqual([]);
       expect(JSON.stringify(slotsOf(m.h)), label).toBe(inventory);
@@ -315,7 +330,7 @@ describe("reconnect stand-in in the real world (normal timings)", () => {
       const b = setUp();
       b.m.desk.remove(b.m.h.id);
       b.m.world.queueInput(b.m.h.id, b.cmd);
-      const did = b.m.run(100, 101).find((ev) => actorOf(ev) === "h1" && (ev.type === "board" || ev.type === "pickup"));
+      const did = b.m.run(LAST_NIGHT, LAST_NIGHT + 1).find((ev) => actorOf(ev) === "h1" && (ev.type === "board" || ev.type === "pickup"));
       expect(did?.type, c.label).toBe(c.did);
       expect(allowed, c.label).toBe(c.did === "board");
     }

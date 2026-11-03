@@ -46,6 +46,12 @@ interface MatchReport {
   fish: number;
   crafted: number;
   spawns: number;
+  bossSpawns: number;
+  /** Clock seconds when the raft reached stage 3 (-1 when it never did). */
+  readyS: number;
+  /** Clock seconds at the launch request; room seconds from match start to the end of the launch cinematic. */
+  launchS: number;
+  endS: number;
   hurt: number;
   gnawed: number;
   throws: number;
@@ -106,7 +112,7 @@ function runMatch(seed: number, bots: number, difficulty: Difficulty, fast: bool
   state.day = 1;
   state.dayPhase = "day";
 
-  const report: MatchReport = { seed, biome: island.biome, outcome: "timeout", seconds: 0, stage: 0, raft: "", delivered: 0, downs: 0, kills: 0, fish: 0, crafted: 0, spawns: 0, hurt: 0, gnawed: 0, throws: 0, hits: 0, rejects: {}, goals: {} };
+  const report: MatchReport = { seed, biome: island.biome, outcome: "timeout", seconds: 0, stage: 0, raft: "", delivered: 0, downs: 0, kills: 0, fish: 0, crafted: 0, spawns: 0, bossSpawns: 0, readyS: -1, launchS: -1, endS: -1, hurt: 0, gnawed: 0, throws: 0, hits: 0, rejects: {}, goals: {} };
   const limit = timings.landing + matchTicks(timings) + 60;
   const trace = !!process.env.RAFT_BALANCE_TRACE;
   const lastGoal = new Map<string, string>();
@@ -143,10 +149,13 @@ function runMatch(seed: number, bots: number, difficulty: Difficulty, fast: bool
       }
     }
     const events = world.step({ locked: inputLocked(state.phase, state.phaseTicksLeft, timings), clock: state.phase === "playing" ? clock : null });
+    if (report.readyS < 0 && state.teams[0]!.stage >= 3) report.readyS = state.clockTicks / TICK_RATE;
     let done = false;
     for (const ev of events) {
       if (ev.type === "launchRequest") {
         report.outcome = "launched";
+        report.launchS = state.clockTicks / TICK_RATE;
+        report.endS = (timings.landing + state.clockTicks + timings.launch) / TICK_RATE;
         done = true;
       } else if (ev.type === "teamWiped") {
         report.outcome = "wiped";
@@ -158,7 +167,10 @@ function runMatch(seed: number, bots: number, difficulty: Difficulty, fast: bool
       else if (ev.type === "monsterDie" && !ev.fled) report.kills++;
       else if (ev.type === "fishResult") report.fish++;
       else if (ev.type === "crafted") report.crafted++;
-      else if (ev.type === "monsterSpawn") report.spawns++;
+      else if (ev.type === "monsterSpawn") {
+        report.spawns++;
+        if (ev.kind === "boss") report.bossSpawns++;
+      }
       else if (ev.type === "playerHurt") report.hurt += ev.amount;
       else if (ev.type === "raftDamage") report.gnawed += ev.amount;
       else if (ev.type === "throw" && !ev.toss) {
@@ -186,6 +198,7 @@ function runMatch(seed: number, bots: number, difficulty: Difficulty, fast: bool
   }
   const team = state.teams[0]!;
   report.seconds = Math.round(state.clockTicks / TICK_RATE);
+  if (report.endS < 0) report.endS = (timings.landing + state.clockTicks) / TICK_RATE;
   report.stage = team.stage;
   report.raft = `hull ${team.hullWood} mast ${team.mastWood}/${team.mastRope} prov ${team.food}/${team.water} fire ${Math.round(team.fireFuel / TICK_RATE)}s`;
   state.players.forEach((p) => (report.delivered += p.stats.delivered));
@@ -231,7 +244,7 @@ const scenario: Scenario = {
   fast: !!env.RAFT_BALANCE_FAST && env.RAFT_BALANCE_FAST !== "0",
 };
 /** Generous per-match budget (a loaded CI runner can be several times slower than the ~0.7 s / ~0.15 s here). */
-const timeoutMs = 30_000 + seeds * (scenario.fast ? 2_000 : 10_000);
+const timeoutMs = 30_000 + seeds * (scenario.fast ? 2_000 : 60_000);
 
 describe("bot balance harness", () => {
   it.skipIf(!enabled)("plays bot-only matches, prints the outcome and holds the target scenario to RAFT_BALANCE_BAND", { timeout: timeoutMs }, () => {
@@ -255,7 +268,7 @@ describe("bot balance harness", () => {
         .map(([k, n]) => `${k}×${n}`)
         .join(" ");
       out(
-        `seed ${r.seed} ${r.biome.padEnd(8)} ${r.outcome.padEnd(8)} t=${r.seconds}s stage ${r.stage} | ${r.raft} | delivered ${r.delivered} downs ${r.downs} kills ${r.kills} fish ${r.fish} crafted ${r.crafted} | spawns ${r.spawns} throws ${r.throws} hits ${r.hits} hurt ${r.hurt} gnawed ${r.gnawed}\n   goals: ${top}\n   rejects: ${rej || "-"}`,
+        `seed ${r.seed} ${r.biome.padEnd(8)} ${r.outcome.padEnd(8)} t=${r.seconds}s end=${r.endS.toFixed(0)}s ready=${r.readyS.toFixed(0)}s launch=${r.launchS.toFixed(0)}s boss=${r.bossSpawns} stage ${r.stage} | ${r.raft} | delivered ${r.delivered} downs ${r.downs} kills ${r.kills} fish ${r.fish} crafted ${r.crafted} | spawns ${r.spawns} throws ${r.throws} hits ${r.hits} hurt ${r.hurt} gnawed ${r.gnawed}\n   goals: ${top}\n   rejects: ${rej || "-"}`,
       );
     }
     const wins = reports.filter((r) => r.outcome === "launched").length;
