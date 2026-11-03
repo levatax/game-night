@@ -122,8 +122,15 @@ installs no tsc/vitest — CI must pass `--include=dev`):
   `origin/main` (e0e6abb). All failures are in `server/`, `shared/sim/` and `test/room-smoke` (room timers,
   match progression, generation time budget) and are 5 s-default-timeout / wall-clock flakes on this loaded
   2-vCPU sandbox, not client render code.
+- Same suite with `--testTimeout=20000` → 902 passed / 17 failed, still only `server/`, `shared/island`,
+  `shared/sim`, `test/room-smoke`. The remaining failures include plain wall-clock assertions
+  (`generation took 658 ms, budget 120 ms`) taken while the shared machine sat at **load average 72**
+  (other agents' Chrome + vitest runs), which is the same reason `shared/island/*` also fails on
+  unmodified `origin/main`. No failing file imports anything this branch changes.
 - `npx vitest run games/raft-rush/client` → 466 passed, 1 failed (the same `fpHolds.readability` timeout;
   it passes 34/34 in 31 s when given `--testTimeout=30000`).
+- Clean up after measuring: the dev scripts here are `bench.mts` and `breakdown.mts`; run them with
+  `tsx` from the repo root (they stub the DOM, no browser needed).
 
 ## Remaining bottlenecks
 
