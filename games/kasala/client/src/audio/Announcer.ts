@@ -7,11 +7,13 @@
 // text, its duration and how it is heard (`voice`), and "end" when it finishes.
 // Audio: fetch `${import.meta.env.BASE_URL}audio/spiker/manifest.json` once ({ lines: string[] }); if the id is
 // listed, play `${BASE_URL}audio/spiker/<id>.mp3` through the announcer bus (AudioEngine wires the bus via
-// attach()) — duration = the mp3's duration. Otherwise, if settings.speechFallback and the browser has a
-// Turkish speechSynthesis voice (lang starts with "tr"), speak the text with it (rate 1.1, pitch 0.75, volume
-// on the same curve as the announcer bus); duration = lineDurationSec(text). The speech voice is kept
-// unobtrusive: small talk (priority 0) never cuts off a sentence the voice is still reading (it is skipped),
-// nothing queues up in the speech engine, nothing is read in a hidden tab. Otherwise subtitle only.
+// attach()) — duration = the mp3's duration. Otherwise, when the hub has ElevenLabs synthesis enabled, fetch the
+// line from `/api/voice/tts` (Cemil Abi's configured voice, cached server-side) and play it the same way. If
+// neither is available, and settings.speechFallback is on and the browser has a Turkish speechSynthesis voice
+// (lang starts with "tr"), speak the text with it (rate 1.1, pitch 0.75, volume on the same curve as the
+// announcer bus); duration = lineDurationSec(text). The speech voice is kept unobtrusive: small talk
+// (priority 0) never cuts off a sentence the voice is still reading (it is skipped), nothing queues up in the
+// speech engine, nothing is read in a hidden tab. Otherwise subtitle only.
 // Never request an mp3 that isn't in the manifest (no 404 noise). Missing manifest = no mp3s.
 //
 // Implementation notes: a line is accepted (priority bookkeeping) synchronously in say(); loading an mp3 is
@@ -23,6 +25,7 @@
 import { ANNOUNCER_BY_ID, lineDurationSec, type AnnouncerLine } from "../../../shared/announcer";
 import { settings, type Settings } from "../app/settings";
 import { Emitter } from "../util/Emitter";
+import { ElevenLabsVoice } from "./ElevenLabsVoice";
 
 /** How a line is heard: a recorded mp3, the browser's speech voice, or not at all (subtitle only). */
 export type AnnouncerVoice = "mp3" | "speech" | "none";
@@ -39,6 +42,8 @@ export interface AnnouncerLineEvent {
 
 /** Give up waiting for an mp3 (fetch + decode) after this and fall back. */
 const LOAD_TIMEOUT_MS = 1600;
+/** ElevenLabs can take longer on the first, cold request; then the line falls back like any missing mp3. */
+const ELEVEN_TIMEOUT_MS = 3500;
 /** Decoded mp3 cache size. */
 const CACHE_MAX = 24;
 /** Lines worth having decoded before they're needed. */
@@ -67,6 +72,7 @@ export class Announcer {
   private ctx: AudioContext | null = null;
   private bus: AudioNode | null = null;
   private onDuck: ((on: boolean) => void) | null = null;
+  private readonly eleven = new ElevenLabsVoice("kasala");
   private ducked = false;
   private manifest: Set<string> | null = null;
   private manifestPromise: Promise<Set<string>> | null = null;
@@ -105,6 +111,7 @@ export class Announcer {
     this.onDuck = onDuck;
     void this.loadManifest().then((set) => {
       for (const id of PREFETCH) if (set.has(id)) void this.buffer(id);
+      this.prefetchEleven(set);
     });
   }
 
@@ -196,6 +203,10 @@ export class Announcer {
       this.playMp3(seq, line);
       return;
     }
+    if (this.canPlayMp3() && this.eleven.enabled) {
+      this.playEleven(seq, line);
+      return;
+    }
     this.speakOrSubtitle(seq, line);
   }
 
@@ -228,6 +239,46 @@ export class Announcer {
       if (!this.isCurrent(seq)) return;
       if (buf && this.canPlayMp3()) this.startBuffer(seq, line, buf);
       else this.speakOrSubtitle(seq, line);
+    });
+  }
+
+  // ==== elevenlabs =======================================================================================
+
+  /** A line with no recorded mp3: ask the hub to synthesize it in Cemil Abi's voice, then play it. */
+  private playEleven(seq: number, line: AnnouncerLine): void {
+    const ctx = this.ctx;
+    if (!ctx) {
+      this.speakOrSubtitle(seq, line);
+      return;
+    }
+    let settled = false;
+    const giveUp = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      if (this.isCurrent(seq)) this.speakOrSubtitle(seq, line);
+    }, ELEVEN_TIMEOUT_MS);
+    void this.eleven.load(ctx, line.id, line.text).then((buf) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(giveUp);
+      if (!this.isCurrent(seq)) return;
+      if (buf && this.canPlayMp3()) this.startBuffer(seq, line, buf);
+      else this.speakOrSubtitle(seq, line);
+    });
+  }
+
+  /** Warm the lines a match opens with, so the first announcements don't wait on the network. */
+  private prefetchEleven(manifest: Set<string>): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    void this.eleven.ready().then((cfg) => {
+      const current = this.ctx;
+      if (!cfg?.enabled || !current) return;
+      for (const id of PREFETCH) {
+        if (manifest.has(id)) continue;
+        const line = ANNOUNCER_BY_ID[id];
+        if (line) void this.eleven.load(current, id, line.text);
+      }
     });
   }
 

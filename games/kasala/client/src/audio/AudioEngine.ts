@@ -33,6 +33,7 @@ import { RAID_BASE_CHANCE } from "../../../shared/constants";
 import { settings } from "../app/settings";
 import { Music, type MusicMode } from "./Music";
 import { Announcer } from "./Announcer";
+import { Ambience, SampleBank } from "./SampleBank";
 import { Kit, clamp01, makeRoomImpulse, vary } from "./sfx/kit";
 import { MIN_GAP, SFX, wheelPeg } from "./sfx";
 import { type HeckleKind, heckle, phew, tensionStep } from "./sfx/tension";
@@ -121,6 +122,9 @@ export class AudioEngine {
   /** Cemil Abi. Subtitles listen to announcer.events "line". */
   readonly announcer: Announcer;
 
+  /** ElevenLabs files (optional); the synth recipes remain the fallback. */
+  private readonly bank: SampleBank;
+  private ambience: Ambience | null = null;
   private ctx: AudioContext | null = null;
   private failed = false;
   private master: GainNode | null = null;
@@ -141,6 +145,7 @@ export class AudioEngine {
 
   constructor() {
     this.announcer = new Announcer();
+    this.bank = new SampleBank();
     settings.onChange(() => this.applyVolumes(false));
     try {
       // Back from a background tab: some engines leave the context suspended/interrupted. Try a quiet
@@ -184,6 +189,9 @@ export class AudioEngine {
     const vol = Math.max(0, Math.min(2, num(opts?.volume, 1)));
     if (vol <= 0) return;
     const rate = Math.max(0.25, Math.min(4, num(opts?.rate, 1))) * vary(0.045);
+    const ctx = this.ctx;
+    const bus = this.sfxBus;
+    if (ctx && bus && this.bank.playSfx(id, ctx, bus, ctx.currentTime + 0.005, rate, vol, num(opts?.pan, 0))) return;
     try {
       kit.withPan(num(opts?.pan, 0), () => recipe(kit, kit.now + 0.005, vol, rate));
     } catch (e) {
@@ -197,6 +205,11 @@ export class AudioEngine {
       this.music?.setMode(mode);
     } catch (e) {
       console.warn("[kasala] music.setMode failed", e);
+    }
+    try {
+      this.ambience?.setMode(mode);
+    } catch {
+      /* generated ambience is optional */
     }
   }
 
@@ -228,6 +241,17 @@ export class AudioEngine {
     const vol = Math.max(0, Math.min(2, num(opts?.volume, 1)));
     if (vol <= 0) return;
     const risk = clamp01(num(chance, 0));
+    const ctx = this.ctx;
+    const bus = this.sfxBus;
+    if (ctx && bus) {
+      const name = `tensionStep${Math.min(6, n)}`;
+      const rate = n > 6 ? 1 + (n - 6) * 0.03 : 1;
+      const pan = num(opts?.pan, 0);
+      if (this.bank.playSfx(name, ctx, bus, ctx.currentTime + 0.005, rate, vol, pan)) {
+        if (risk >= RELIEF_CHANCE) this.bank.playSfx("phew", ctx, bus, ctx.currentTime + 0.32, 1, vol, pan);
+        return;
+      }
+    }
     try {
       kit.withPan(num(opts?.pan, 0), () => {
         tensionStep(kit, kit.now + 0.005, vol, n);
@@ -256,6 +280,13 @@ export class AudioEngine {
     this.heckleHeat = this.heckleHeat * Math.exp(-dt / HECKLE_COOL) + 1;
     this.heckleAt = now;
     const size = 1 + Math.min(3, Math.round(this.heckleHeat));
+    const ctx = this.ctx;
+    const bus = this.sfxBus;
+    if (ctx && bus) {
+      const name = k === "cash" ? "heckleCash" : "heckleFlip";
+      const gain = Math.min(1.6, vol * (0.82 + 0.06 * size));
+      if (this.bank.playSfx(name, ctx, bus, ctx.currentTime + 0.005, 1, gain, num(opts?.pan, 0))) return;
+    }
     try {
       kit.withPan(num(opts?.pan, 0), () => heckle(kit, now + 0.005, vol, k, size));
     } catch (e) {
@@ -270,6 +301,11 @@ export class AudioEngine {
     const s = clamp01(speed);
     // At full speed pegs come very fast: thin them so they don't merge into a buzz.
     if (this.throttled("wheelTick", 0.018 + (1 - s) * 0.012)) return;
+    const ctx = this.ctx;
+    const bus = this.sfxBus;
+    if (ctx && bus && this.bank.playSfx("wheelTick", ctx, bus, ctx.currentTime + 0.003, 0.78 + s * 0.5, 0.24 + 0.42 * s)) {
+      return;
+    }
     try {
       wheelPeg(kit, kit.now + 0.003, s, 1);
     } catch {
@@ -354,6 +390,14 @@ export class AudioEngine {
       this.sfxDuck = sfxDuck;
       this.annBus = annBus;
       this.kit = new Kit(ctx, sfxBus, sfxWet);
+      this.bank.prime(ctx);
+      try {
+        this.ambience = new Ambience(ctx, musicBus, this.bank);
+        this.ambience.setMode(this.mode);
+      } catch (e) {
+        console.warn("[kasala] generated ambience unavailable", e);
+        this.ambience = null;
+      }
       this.applyVolumes(true);
       try {
         this.music = new Music(ctx, musicBus, sfxBus, impulse);

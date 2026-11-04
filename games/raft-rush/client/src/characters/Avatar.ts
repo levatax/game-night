@@ -13,7 +13,7 @@ import { createHeldItem, releaseHeld } from "./holds";
 import { boxGeo } from "./kit";
 import { Nameplate, type PlateStatus } from "./Nameplate";
 import { heldKindOf } from "./puppet";
-import { type BlobShadow, createBlobShadow } from "./shadowBlob";
+import { type AvatarShadowPool, type BlobShadow, createBlobShadow, pooledBlobShadow } from "./shadowBlob";
 import { Tourist } from "./Tourist";
 
 const NAMEPLATE_GAP = 0.32;
@@ -74,7 +74,7 @@ export class Avatar {
   /** Sync stamp (Characters removes avatars it didn't see this frame). */
   stamp = 0;
 
-  constructor(scene: THREE.Object3D, frame: PlayerFrame) {
+  constructor(scene: THREE.Object3D, frame: PlayerFrame, shadows: AvatarShadowPool | null = null) {
     this.id = frame.id;
     this.character = frame.character;
     this.scene = scene;
@@ -82,10 +82,14 @@ export class Avatar {
     this.tourist = new Tourist(frame.character, playerColor(frame.seat));
     this.animator = new Animator(this.tourist);
     this.nameplate = new Nameplate();
-    this.shadow = createBlobShadow(0.42 * this.tourist.spec.scale, 0.28);
+    const radius = 0.42 * this.tourist.spec.scale;
+    const slot = shadows ? shadows.acquire() : -1;
+    this.shadow = shadows && slot >= 0 ? pooledBlobShadow(shadows, slot, radius, 0.28) : createBlobShadow(radius, 0.28);
     this.tourist.rig.root.position.set(frame.x, frame.y, frame.z);
     this.lastGroundY = frame.y;
-    scene.add(this.tourist.rig.root, this.nameplate.object, this.shadow.mesh);
+    scene.add(this.tourist.rig.root, this.nameplate.object);
+    // The shared pool already lives under the characters root; only a fallback quad is added per avatar.
+    if (!shadows || slot < 0) scene.add(this.shadow.mesh);
   }
 
   get isLeaving(): boolean {

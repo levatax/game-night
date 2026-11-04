@@ -134,7 +134,7 @@ export class FlowFeedback {
     this.ctx.audio.play("stormWarn");
     this.ctx.audio.duck(2.5);
     this.ctx.renderer.fp.shake(0.25);
-    bannerLine(this.ctx, "stormWarning", "bad", { params: { sec: Math.round(ev.secondsLeft) }, sub: "stormWarningSub", duration: LONG_BANNER_SEC });
+    bannerLine(this.ctx, "stormWarning", "bad", { params: { sec: Math.ceil(ev.secondsLeft) }, sub: "stormWarningSub", duration: LONG_BANNER_SEC });
   }
 
   private onStorm(ev: StormEvent): void {

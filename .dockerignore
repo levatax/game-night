@@ -9,3 +9,6 @@ node_modules
 .vite
 Dockerfile
 .dockerignore
+.voice-cache
+.env
+.env.*

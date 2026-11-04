@@ -1,0 +1,299 @@
+{
+  "version": 1,
+  "model": "eleven_text_to_sound_v3",
+  "generatedAt": "2026-11-02T22:24:42.250Z",
+  "sfx": {
+    "flip": {
+      "file": "sfx/flip.mp3",
+      "duration": 0.7,
+      "hash": "0c7ac8f7fe30ec92"
+    },
+    "deal": {
+      "file": "sfx/deal.mp3",
+      "duration": 0.8,
+      "hash": "4fb36b28e0284dc2"
+    },
+    "bellCommon": {
+      "file": "sfx/bellCommon.mp3",
+      "duration": 1.2,
+      "hash": "11388862ace2af19"
+    },
+    "bellUncommon": {
+      "file": "sfx/bellUncommon.mp3",
+      "duration": 1.4,
+      "hash": "1557965cd1342bfd"
+    },
+    "bellRare": {
+      "file": "sfx/bellRare.mp3",
+      "duration": 1.8,
+      "hash": "3532545fc88cccd3"
+    },
+    "bellLegendary": {
+      "file": "sfx/bellLegendary.mp3",
+      "duration": 3,
+      "hash": "1db00058194b7c84"
+    },
+    "choir": {
+      "file": "sfx/choir.mp3",
+      "duration": 2.2,
+      "hash": "ec27b45aa4a694d1"
+    },
+    "kaching": {
+      "file": "sfx/kaching.mp3",
+      "duration": 2.2,
+      "hash": "46a7d697f36c00f5"
+    },
+    "coins": {
+      "file": "sfx/coins.mp3",
+      "duration": 1.3,
+      "hash": "9c38c7749aa9a424"
+    },
+    "chips": {
+      "file": "sfx/chips.mp3",
+      "duration": 0.9,
+      "hash": "59ddc35cb3903f8a"
+    },
+    "chipCrack": {
+      "file": "sfx/chipCrack.mp3",
+      "duration": 1.2,
+      "hash": "1d6bc644646c54fb"
+    },
+    "siren": {
+      "file": "sfx/siren.mp3",
+      "duration": 2.6,
+      "hash": "e58a8e4490895dd5"
+    },
+    "doorBreak": {
+      "file": "sfx/doorBreak.mp3",
+      "duration": 2.2,
+      "hash": "d7b7a677a4c29c69"
+    },
+    "cuffs": {
+      "file": "sfx/cuffs.mp3",
+      "duration": 1.8,
+      "hash": "47534ffdcedd5f14"
+    },
+    "sack": {
+      "file": "sfx/sack.mp3",
+      "duration": 2,
+      "hash": "310315a1cf011e6a"
+    },
+    "moths": {
+      "file": "sfx/moths.mp3",
+      "duration": 2.6,
+      "hash": "1c7cbf75ceffa12f"
+    },
+    "cameraFlash": {
+      "file": "sfx/cameraFlash.mp3",
+      "duration": 1.2,
+      "hash": "243a809cfe9f5139"
+    },
+    "splash": {
+      "file": "sfx/splash.mp3",
+      "duration": 3,
+      "hash": "feb07bb6603054f7"
+    },
+    "wheelStop": {
+      "file": "sfx/wheelStop.mp3",
+      "duration": 1.5,
+      "hash": "bf4c446aec8c1cff"
+    },
+    "glassBreak": {
+      "file": "sfx/glassBreak.mp3",
+      "duration": 3,
+      "hash": "0c88ce42ae4c8990"
+    },
+    "heartbeat": {
+      "file": "sfx/heartbeat.mp3",
+      "duration": 0.8,
+      "hash": "154fb208f97e96a1"
+    },
+    "punchTable": {
+      "file": "sfx/punchTable.mp3",
+      "duration": 1.3,
+      "hash": "b187d9e038d0e981"
+    },
+    "kiss": {
+      "file": "sfx/kiss.mp3",
+      "duration": 1,
+      "hash": "8f359420b53658f9"
+    },
+    "cry": {
+      "file": "sfx/cry.mp3",
+      "duration": 2.4,
+      "hash": "eb2011995681e9a5"
+    },
+    "cigar": {
+      "file": "sfx/cigar.mp3",
+      "duration": 2.6,
+      "hash": "4bd2a4e3ba21d01d"
+    },
+    "countMoney": {
+      "file": "sfx/countMoney.mp3",
+      "duration": 1.6,
+      "hash": "072bec428da00b5a"
+    },
+    "ooh": {
+      "file": "sfx/ooh.mp3",
+      "duration": 1.2,
+      "hash": "5008c1c5cdbd07aa"
+    },
+    "yokArtik": {
+      "file": "sfx/yokArtik.mp3",
+      "duration": 1.2,
+      "hash": "0a93d7f0f1b025e2"
+    },
+    "hah": {
+      "file": "sfx/hah.mp3",
+      "duration": 0.8,
+      "hash": "a676fdc898681b66"
+    },
+    "boo": {
+      "file": "sfx/boo.mp3",
+      "duration": 1.8,
+      "hash": "fde9966ab571e898"
+    },
+    "laugh": {
+      "file": "sfx/laugh.mp3",
+      "duration": 2.2,
+      "hash": "bc7994d8fbb0f937"
+    },
+    "tick": {
+      "file": "sfx/tick.mp3",
+      "duration": 0.5,
+      "hash": "488186a9b43ec32b"
+    },
+    "timeout": {
+      "file": "sfx/timeout.mp3",
+      "duration": 1.2,
+      "hash": "69f4659aabf2c6fa"
+    },
+    "stamp": {
+      "file": "sfx/stamp.mp3",
+      "duration": 1,
+      "hash": "5af1a755b3ff75cb"
+    },
+    "drumroll": {
+      "file": "sfx/drumroll.mp3",
+      "duration": 2,
+      "hash": "8de6825d3fad9118"
+    },
+    "cymbal": {
+      "file": "sfx/cymbal.mp3",
+      "duration": 2.6,
+      "hash": "f3efef8c4d2f607c"
+    },
+    "whoosh": {
+      "file": "sfx/whoosh.mp3",
+      "duration": 0.8,
+      "hash": "77117d8226615c2b"
+    },
+    "paper": {
+      "file": "sfx/paper.mp3",
+      "duration": 1.3,
+      "hash": "2f94ec0eaf21432a"
+    },
+    "click": {
+      "file": "sfx/click.mp3",
+      "duration": 0.5,
+      "hash": "451e355fedddb3df"
+    },
+    "hover": {
+      "file": "sfx/hover.mp3",
+      "duration": 0.5,
+      "hash": "68a34b3eb8c51dbe"
+    },
+    "pop": {
+      "file": "sfx/pop.mp3",
+      "duration": 0.6,
+      "hash": "bb28d15dd8d70d2e"
+    },
+    "deny": {
+      "file": "sfx/deny.mp3",
+      "duration": 0.8,
+      "hash": "0dea58938d720d5d"
+    },
+    "open": {
+      "file": "sfx/open.mp3",
+      "duration": 0.9,
+      "hash": "e8d17cf90be7c632"
+    },
+    "close": {
+      "file": "sfx/close.mp3",
+      "duration": 0.9,
+      "hash": "61b87cfa7ed0704d"
+    },
+    "wheelTick": {
+      "file": "sfx/wheelTick.mp3",
+      "duration": 0.5,
+      "hash": "cca07d6805a2865e"
+    },
+    "tensionStep1": {
+      "file": "sfx/tensionStep1.mp3",
+      "duration": 1.2,
+      "hash": "cb63c1a32beba302"
+    },
+    "tensionStep2": {
+      "file": "sfx/tensionStep2.mp3",
+      "duration": 1.3,
+      "hash": "847e2a2ffd1758e6"
+    },
+    "tensionStep3": {
+      "file": "sfx/tensionStep3.mp3",
+      "duration": 1.4,
+      "hash": "e3fc70ea7b69cb86"
+    },
+    "tensionStep4": {
+      "file": "sfx/tensionStep4.mp3",
+      "duration": 1.5,
+      "hash": "d31ed8aa98cbcbb3"
+    },
+    "tensionStep5": {
+      "file": "sfx/tensionStep5.mp3",
+      "duration": 1.7,
+      "hash": "e5135870b7de7c95"
+    },
+    "tensionStep6": {
+      "file": "sfx/tensionStep6.mp3",
+      "duration": 1.9,
+      "hash": "0f4c542b87ecc9da"
+    },
+    "phew": {
+      "file": "sfx/phew.mp3",
+      "duration": 1.6,
+      "hash": "8d44511f31666c5b"
+    },
+    "heckleFlip": {
+      "file": "sfx/heckleFlip.mp3",
+      "duration": 1.6,
+      "hash": "b03f818f72758147"
+    },
+    "heckleCash": {
+      "file": "sfx/heckleCash.mp3",
+      "duration": 1.6,
+      "hash": "ae8533e0041527f9"
+    }
+  },
+  "loops": {
+    "room": {
+      "file": "loops/room.mp3",
+      "duration": 30,
+      "hash": "7cbdad450581d5d3"
+    },
+    "rain": {
+      "file": "loops/rain.mp3",
+      "duration": 30,
+      "hash": "47ef1256fba7a064"
+    },
+    "neon": {
+      "file": "loops/neon.mp3",
+      "duration": 30,
+      "hash": "938af3be50ca840d"
+    },
+    "crowd": {
+      "file": "loops/crowd.mp3",
+      "duration": 30,
+      "hash": "ab742a7545f73696"
+    }
+  }
+}

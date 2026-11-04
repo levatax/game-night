@@ -5,13 +5,16 @@
 
 import { withKeys } from "../controls";
 import { el, play, setOutlinedText, setText, tr } from "../dom";
-import type { BannerModel } from "../models";
+import type { BannerModel, HudModel } from "../models";
 
 const DEFAULT_SEC = 2.5;
 
 export class Banner {
   readonly el = el("div", "rr-banner-layer");
   private current: HTMLElement | null = null;
+  private currentModel: BannerModel | null = null;
+  private main: HTMLElement | null = null;
+  private lastSec = -1;
   private timer = 0;
 
   constructor() {
@@ -31,6 +34,9 @@ export class Banner {
     }
     this.el.append(node);
     this.current = node;
+    this.currentModel = m;
+    this.main = main;
+    this.lastSec = typeof m.params?.sec === "number" ? m.params.sec : -1;
     play(
       node,
       calm
@@ -50,12 +56,34 @@ export class Banner {
     window.clearTimeout(this.timer);
     this.current?.remove();
     this.current = null;
+    this.currentModel = null;
+    this.main = null;
+    this.lastSec = -1;
+  }
+
+  /**
+   * Keep the storm-warning banner in step with the HUD clock: same ceil of the same live stormSecLeft, so the
+   * banner and the top clock never show different seconds while both are on screen.
+   */
+  syncCountdown(m: HudModel): void {
+    const model = this.currentModel;
+    if (!model || model.key !== "banner.stormWarning" || !this.main) return;
+    if (!((m.phase === "playing" || m.phase === "landing") && m.stormSecLeft > 0)) return;
+    const sec = Math.max(0, Math.ceil(m.stormSecLeft));
+    if (sec === this.lastSec) return;
+    this.lastSec = sec;
+    setOutlinedText(this.main, tr(model.key, "banner", withKeys({ ...model.params, sec })));
   }
 
   private leave(node: HTMLElement): void {
     const done = () => {
       node.remove();
-      if (this.current === node) this.current = null;
+      if (this.current === node) {
+        this.current = null;
+        this.currentModel = null;
+        this.main = null;
+        this.lastSec = -1;
+      }
     };
     const anim = play(node, [{ opacity: 1, transform: "scale(1) rotate(-2deg)" }, { opacity: 0, transform: "scale(1.12) rotate(-2deg) translateY(-18px)" }], {
       duration: 260,

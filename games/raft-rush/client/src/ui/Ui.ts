@@ -236,6 +236,7 @@ export class Ui {
   updateHud(model: HudModel): void {
     this.reducedFlashing = model.reducedFlashing;
     this.hud.update(model);
+    this.bannerLayer.syncCountdown(model);
     if (model.needsPointer !== this.needsPointer) {
       this.needsPointer = model.needsPointer;
       this.renderVeil();

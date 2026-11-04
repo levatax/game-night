@@ -42,10 +42,10 @@ export class IslandView {
   private readonly volcano: Volcano | null;
   private readonly requests: LightRequest[] = [];
 
-  constructor(def: IslandDef, quality: Quality) {
+  constructor(def: IslandDef, quality: Quality, options: { batchedTerrain?: boolean } = {}) {
     this.def = def;
     this.group.name = `island-${def.seed}`;
-    const terrain = new Terrain(def, this.bank);
+    const terrain = new Terrain(def, this.bank, options.batchedTerrain ?? true);
     this.terrain = terrain;
     this.water = new Water(def.grid, def.fishSpots, this.bank);
     this.flora = new Flora(def, this.bank);
@@ -56,7 +56,7 @@ export class IslandView {
     this.structures = new Structures(def.grid, this.bank);
     this.fireflies = new Fireflies(def, FIREFLIES * (def.layout === "duel" ? 2 : 1), this.bank);
     this.volcano = def.biome === "volcanic" ? new Volcano(def, this.bank) : null;
-    this.group.add(terrain.group, this.water.mesh, this.flora.mesh, this.grass.mesh, this.sites.group, this.structures.group, this.fireflies.points);
+    this.group.add(terrain.group, this.water.mesh, this.flora.mesh, this.flora.softMesh, this.grass.mesh, this.sites.group, this.structures.group, this.fireflies.points);
     for (const c of this.campfires) this.group.add(c.group);
     for (const r of this.rafts) this.group.add(r.group);
     if (this.volcano) this.group.add(this.volcano.group);
@@ -68,7 +68,9 @@ export class IslandView {
   setQuality(quality: Quality): void {
     const full = QUALITY_PROFILES.high.grassTufts;
     this.grass.setFraction(scaledCount(QUALITY_PROFILES[quality].grassTufts, quality) / full);
-    this.terrain.setCastShadow(quality === "high");
+    // The ground never casts: it only receives. Four terrain chunks in the shadow pass was ~10k extra
+    // triangles every frame for no visible contact shadow (dev/bench.mts before/after).
+    this.terrain.setCastShadow(false);
   }
 
   /** Per frame. `eye` is the camera position (water follow, light priority). */

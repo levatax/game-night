@@ -24,6 +24,8 @@ type AnimType = "fell" | "shake" | "pop" | "crumble";
 
 interface Slot {
   node: NodeDef;
+  /** Batch this node's instances live in (casters or the non-casting bush batch). */
+  mesh: THREE.BatchedMesh;
   /** Tree / palm / rock / bush instance. */
   main: number;
   /** Stump (tree) or pebbles (rock), -1 otherwise. */
@@ -61,12 +63,17 @@ const tmpColor = new THREE.Color();
 const UP = new THREE.Vector3(0, 1, 0);
 
 export class Flora {
+  /** Trees, palms and rocks: drawn in the main pass AND in the shadow pass. */
   readonly mesh: THREE.BatchedMesh;
+  /** Bushes (and their berries): grass-level clumps drawn in one extra batch that does NOT cast shadows. */
+  readonly softMesh: THREE.BatchedMesh;
   /** Triangles of all node instances at full growth (budget bookkeeping). */
   readonly triangles: number;
   private readonly slots: Slot[] = [];
   private readonly anims: Anim[] = [];
   private readonly uniforms = createWindUniforms();
+  /** geometry → the batch that owns it and its geometry id there. */
+  private readonly idsOf = new Map<THREE.BufferGeometry, { mesh: THREE.BatchedMesh; id: number }>();
   private primed = false;
 
   constructor(def: IslandDef, bank: MaterialBank) {
@@ -75,20 +82,37 @@ export class Flora {
     const material = bank.own(createToonMaterial(0xffffff, { vertexColors: true, side: THREE.DoubleSide }));
     material.name = "flora";
     injectWind(material, this.uniforms, { from: 1.1, calm: 0.0016, storm: 0.0065, profile: "quadratic", key: "raft-flora-sway" });
+    const softMaterial = bank.own(createToonMaterial(0xffffff, { vertexColors: true, side: THREE.DoubleSide }));
+    softMaterial.name = "flora-soft";
+    injectWind(softMaterial, this.uniforms, { from: 1.1, calm: 0.0016, storm: 0.0065, profile: "quadratic", key: "raft-flora-sway" });
 
-    let maxVertices = 0;
-    for (const g of arch.all) maxVertices += g.getAttribute("position").count;
+    const softGeos = new Set<THREE.BufferGeometry>([...arch.bushes, ...arch.vineBushes, arch.bareBush, arch.berries]);
+    let castVerts = 0;
+    let softVerts = 0;
+    for (const g of arch.all) (softGeos.has(g) ? (softVerts += g.getAttribute("position").count) : (castVerts += g.getAttribute("position").count));
     let instances = 0;
-    for (const n of def.nodes) instances += n.kind === "palm" ? 3 : 2;
-    this.mesh = new THREE.BatchedMesh(Math.max(1, instances), maxVertices, maxVertices * 2, material);
+    let softInstances = 0;
+    for (const n of def.nodes) {
+      const extra = n.kind === "palm" ? 3 : 2;
+      if (n.kind === "bush") softInstances += extra;
+      else instances += extra;
+    }
+    this.mesh = new THREE.BatchedMesh(Math.max(1, instances), Math.max(1, castVerts), Math.max(2, castVerts * 2), material);
     this.mesh.name = "flora";
     this.mesh.castShadow = true;
     this.mesh.receiveShadow = true;
-    const ids = this.addGeometries(arch);
+    this.softMesh = new THREE.BatchedMesh(Math.max(1, softInstances), Math.max(1, softVerts), Math.max(2, softVerts * 2), softMaterial);
+    this.softMesh.name = "flora-soft";
+    // Bushes sit in the grass: their contact shadow barely reads, so they stay out of the shadow pass
+    // (the shadow camera is a 22 m box; dropping them saves ~23k shadow triangles on a duel island).
+    this.softMesh.castShadow = false;
+    this.softMesh.receiveShadow = true;
+    this.addGeometries(arch, softGeos);
     let tris = 0;
-    for (const node of def.nodes) tris += this.addNode(node, arch, ids);
+    for (const node of def.nodes) tris += this.addNode(node, arch);
     this.triangles = tris;
     this.mesh.computeBoundingSphere();
+    this.softMesh.computeBoundingSphere();
   }
 
   /** Per frame: depletion changes, running animations, sway. */
@@ -110,13 +134,20 @@ export class Flora {
 
   /* ------------------------------------------------------------------ build */
 
-  private addGeometries(arch: FloraArchetypes): Map<THREE.BufferGeometry, number> {
-    const ids = new Map<THREE.BufferGeometry, number>();
-    for (const g of arch.all) ids.set(g, this.mesh.addGeometry(g));
-    return ids;
+  private addGeometries(arch: FloraArchetypes, softGeos: ReadonlySet<THREE.BufferGeometry>): void {
+    for (const g of arch.all) {
+      const mesh = softGeos.has(g) ? this.softMesh : this.mesh;
+      this.idsOf.set(g, { mesh, id: mesh.addGeometry(g) });
+    }
   }
 
-  private addNode(node: NodeDef, arch: FloraArchetypes, ids: Map<THREE.BufferGeometry, number>): number {
+  private geo(geometry: THREE.BufferGeometry): { mesh: THREE.BatchedMesh; id: number } {
+    const entry = this.idsOf.get(geometry);
+    if (!entry) throw new Error("flora geometry was not added to a batch");
+    return entry;
+  }
+
+  private addNode(node: NodeDef, arch: FloraArchetypes): number {
     const v = Math.abs(node.variant | 0);
     const s = Number.isFinite(node.scale) && node.scale > 0 ? node.scale : 1;
     const pos = new THREE.Vector3(node.x, node.y, node.z);
@@ -156,8 +187,8 @@ export class Flora {
         const k = v % arch.bushes.length;
         if (node.yield === "rope") {
           mainGeo = arch.vineBushes[k]!;
-          geoFull = ids.get(mainGeo)!;
-          geoBare = ids.get(arch.bareBush)!;
+          geoFull = this.geo(mainGeo).id;
+          geoBare = this.geo(arch.bareBush).id;
         } else {
           mainGeo = arch.bushes[k]!;
         }
@@ -170,10 +201,12 @@ export class Flora {
         break;
       }
     }
+    const home = this.geo(mainGeo).mesh;
     const slot: Slot = {
       node,
-      main: this.mesh.addInstance(ids.get(mainGeo)!),
-      alt: altGeo ? this.mesh.addInstance(ids.get(altGeo)!) : -1,
+      mesh: home,
+      main: home.addInstance(this.geo(mainGeo).id),
+      alt: altGeo ? home.addInstance(this.geo(altGeo).id) : -1,
       extras: [],
       geoFull,
       geoBare,
@@ -184,22 +217,22 @@ export class Flora {
       amount: node.amount,
     };
     const base = tmpM.compose(pos, quat, scale);
-    this.mesh.setMatrixAt(slot.main, base);
+    home.setMatrixAt(slot.main, base);
     const tint = 0.86 + hash2(node.x, node.z, 17) * 0.14;
     const hue = (hash2(node.z, node.x, 5) - 0.5) * 0.06;
     tmpColor.setRGB(tint * (1 - hue), tint, tint * (1 + hue));
-    this.mesh.setColorAt(slot.main, tmpColor);
+    home.setColorAt(slot.main, tmpColor);
     if (slot.alt >= 0) {
-      this.mesh.setMatrixAt(slot.alt, base);
-      this.mesh.setColorAt(slot.alt, tmpColor);
-      this.mesh.setVisibleAt(slot.alt, false);
+      home.setMatrixAt(slot.alt, base);
+      home.setColorAt(slot.alt, tmpColor);
+      home.setVisibleAt(slot.alt, false);
     }
     if (extraGeo) {
       for (const spot of extraSpots) {
-        const id = this.mesh.addInstance(ids.get(extraGeo)!);
+        const id = home.addInstance(this.geo(extraGeo).id);
         tmpV.copy(spot).multiply(scale).applyQuaternion(quat).add(pos);
         const m = new THREE.Matrix4().compose(tmpV, quat, scale);
-        this.mesh.setMatrixAt(id, m);
+        home.setMatrixAt(id, m);
         slot.extras.push(id);
         slot.extraMatrices.push(m);
       }
@@ -212,7 +245,7 @@ export class Flora {
   /* -------------------------------------------------------------- depletion */
 
   private applyAmount(slot: Slot, prev: number, amount: number, animate: boolean, focus: Vec3Like): void {
-    const m = this.mesh;
+    const m = slot.mesh;
     const kind = slot.node.kind;
     if (kind === "tree") {
       if (amount <= 0) {
@@ -270,7 +303,7 @@ export class Flora {
 
   private resetMain(slot: Slot, k = 1): void {
     tmpS.copy(slot.scale).multiplyScalar(k);
-    this.mesh.setMatrixAt(slot.main, tmpM.compose(slot.pos, slot.quat, tmpS));
+    slot.mesh.setMatrixAt(slot.main, tmpM.compose(slot.pos, slot.quat, tmpS));
   }
 
   /* ------------------------------------------------------------- animation */
@@ -316,11 +349,11 @@ export class Flora {
   }
 
   private stepAnims(dt: number): void {
-    const m = this.mesh;
     for (let i = this.anims.length - 1; i >= 0; i--) {
       const a = this.anims[i]!;
       a.t += dt;
       const s = a.slot;
+      const m = s.mesh;
       let done = false;
       switch (a.type) {
         case "fell": {

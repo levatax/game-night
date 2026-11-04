@@ -760,6 +760,7 @@ export class GameController {
     this.setMusicTempo(1);
     audio.setTimeScale(1);
     ui.banner(ev.round >= ev.totalRounds ? "FINAL ROUND!" : `ROUND ${ev.round}`, "info");
+    audio.announce?.("roundStart");
     const me = net.me;
     if (me && ev.participants.includes(me.id)) {
       const spawns = getArena(ev.mapId).spawns;
@@ -786,6 +787,7 @@ export class GameController {
     void ev;
     const { audio, camera, ui } = this.deps;
     audio.play("suddenDeath");
+    audio.announce?.("suddenDeath");
     this.playMusic("suddenDeath");
     this.round.suddenDeathAtMs = this.clockMs;
     ui.banner("SUDDEN DEATH!", "danger");
@@ -807,6 +809,7 @@ export class GameController {
     const me = net.me;
     const lost = me !== null && !me.spectator && ev.winnerId !== me.id;
     audio.jingle(lost ? "roundLose" : "roundWin");
+    if (ev.winnerId) audio.announce?.("lastOne");
     if (ev.finalPos) camera.koCut(ev.finalPos, KO_CUT_SEC);
     this.round.pendingRoundEnd = ev;
   }
@@ -816,6 +819,7 @@ export class GameController {
     const { audio, characters, fx, ui } = this.deps;
     ui.hideRoundEnd();
     this.round.pendingRoundEnd = null;
+    audio.announce?.("win");
     this.setOrbitCenter(ev.winnerId);
     if (ev.winnerId) {
       characters.trigger(ev.winnerId, "victory");

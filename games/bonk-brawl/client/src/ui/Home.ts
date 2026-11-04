@@ -153,12 +153,14 @@ export class HomeScreen {
   }
 
   private buildCreateRow(): HTMLElement {
+    this.createBtn.dataset.sound = "confirm";
     this.createBtn.append(el("span", "btn__label", "Create Room"));
     this.createBtn.addEventListener("click", () => this.submit("create"));
     return el("div", "home__create-row", this.createBtn);
   }
 
   private buildJoinRow(): HTMLElement {
+    this.joinBtn.dataset.sound = "confirm";
     const input = this.codeInput;
     input.id = "bb-code";
     input.type = "text";

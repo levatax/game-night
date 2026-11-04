@@ -99,6 +99,11 @@ const FRAGMENT = /* glsl */ `
     vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
     if (n.y < 0.0) n = -n;
 
+    // Distance LOD: near the camera the faceted waves, foam breakup, fish bursts, rain ripples and glints
+    // stay full detail; past ~60 m they fade to a flat, cheap sea (the far water is fogged anyway).
+    float far = smoothstep(60.0, 100.0, distance(cameraPosition, vWorld));
+    n = normalize(mix(n, vec3(0.0, 1.0, 0.0), far));
+
     vec3 col = mix(shallowColor, seaColor, smoothstep(0.15, 2.4, depth));
     col = mix(col, deepColor, smoothstep(2.4, 6.0, depth));
     float ndl = dot(n, keyDir);
@@ -106,28 +111,32 @@ const FRAGMENT = /* glsl */ `
     col *= ambient + keyColor * keyIntensity * band * 0.22;
 
     // Foam band hugging the coast: a solid lip plus stripes rolling toward the beach.
-    float breakup = vnoise(vWorld.xz * 0.55 + vec2(time * 0.15, 0.0));
+    float breakup = 0.5;
+    if (far < 1.0) breakup = vnoise(vWorld.xz * 0.55 + vec2(time * 0.15, 0.0));
     float roll = sin(coast * 3.0 - time * 2.1 + breakup * 3.0);
     float foam = (1.0 - smoothstep(0.18, 0.5, coast + breakup * 0.25));
     foam = max(foam, step(0.6, roll) * (1.0 - smoothstep(0.7, 2.3, coast)));
+    foam *= 1.0 - far;
 
     // Fish spots: bubbling foam patches with a pulsing ring.
-    for (int i = 0; i < ${MAX_WATER_SPOTS}; i++) {
-      if (i >= spotCount) break;
-      vec3 sp = spots[i];
-      float d = distance(vWorld.xz, sp.xy);
-      float r = ${FISH_SPOT_RADIUS.toFixed(2)};
-      if (d < r * 1.3) {
-        float bub = step(0.7, vnoise(vWorld.xz * 2.6 + vec2(time * 1.7, -time * 1.3)));
-        float inner = 1.0 - smoothstep(r * 0.45, r * 0.95, d);
-        float pulse = fract(time * 0.45 + sp.z);
-        float ring = 1.0 - smoothstep(0.0, 0.12, abs(d - r * (0.35 + 0.75 * pulse)));
-        foam = max(foam, max(bub * inner, ring * (1.0 - pulse) * 0.9));
+    if (far < 0.85) {
+      for (int i = 0; i < ${MAX_WATER_SPOTS}; i++) {
+        if (i >= spotCount) break;
+        vec3 sp = spots[i];
+        float d = distance(vWorld.xz, sp.xy);
+        float r = ${FISH_SPOT_RADIUS.toFixed(2)};
+        if (d < r * 1.3) {
+          float bub = step(0.7, vnoise(vWorld.xz * 2.6 + vec2(time * 1.7, -time * 1.3)));
+          float inner = 1.0 - smoothstep(r * 0.45, r * 0.95, d);
+          float pulse = fract(time * 0.45 + sp.z);
+          float ring = 1.0 - smoothstep(0.0, 0.12, abs(d - r * (0.35 + 0.75 * pulse)));
+          foam = max(foam, max(bub * inner, ring * (1.0 - pulse) * 0.9));
+        }
       }
     }
 
     // Rain ripples: expanding rings on a 1.6 m jittered lattice.
-    if (rain > 0.01) {
+    if (rain > 0.01 && far < 0.9) {
       vec2 cell = floor(vWorld.xz / 1.6);
       vec2 local = fract(vWorld.xz / 1.6) - 0.5;
       float ph = hash12(cell);
@@ -140,10 +149,13 @@ const FRAGMENT = /* glsl */ `
 
     // Sparkles: sun glints by day, the moon path by night (perturbed facet normals).
     vec3 v = normalize(cameraPosition - vWorld);
-    vec2 jitter = vec2(vnoise(vWorld.xz * 1.3 + time * 0.6), vnoise(vWorld.zx * 1.3 - time * 0.5)) - 0.5;
-    vec3 gn = normalize(n + vec3(jitter.x, 0.0, jitter.y) * 0.35);
-    float spec = dot(reflect(-v, gn), keyDir);
-    float sparkle = smoothstep(0.975, 0.985, spec) * glint;
+    float sparkle = 0.0;
+    if (far < 0.95) {
+      vec2 jitter = vec2(vnoise(vWorld.xz * 1.3 + time * 0.6), vnoise(vWorld.zx * 1.3 - time * 0.5)) - 0.5;
+      vec3 gn = normalize(n + vec3(jitter.x, 0.0, jitter.y) * 0.35);
+      float spec = dot(reflect(-v, gn), keyDir);
+      sparkle = smoothstep(0.975, 0.985, spec) * glint;
+    }
 
     float alpha = mix(0.55, 0.97, smoothstep(0.0, 2.2, depth));
     col = mix(col, foamColor, clamp(foam, 0.0, 1.0) * 0.92);
