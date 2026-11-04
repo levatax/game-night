@@ -121,7 +121,7 @@ const PALM: V3 = [0.36, 0.33, -2.71];
 const DANGLE: V3 = [-0.2, 0.31, -0.41];
 const HOOKED: V3 = [-0.15, 0.26, -0.47];
 
-export const FP_HOLDS: Readonly<Record<ItemKind, FpHold>> = {
+const FP_HOLDS_BASE = {
   // Tools: a low power grip, the head up in the right third, the palm side turned to the view so the wrap shows.
   spear: { style: "tool", anchor: "grip", pose: "grip", thumb: "wrap", handle: 0.034, scale: 0.5, orient: [PY, SHAFT, PX, FWD], hand: [0, -0.03, -0.02], dir: [0.2, 0.75, -0.63], wrap: [0, -0.63, -0.75] },
   rod: { style: "tool", anchor: "grip", pose: "gripRod", thumb: "along", handle: 0.032, scale: 0.55, orient: [PY, SHAFT, PX, [0, -0.82, 0.57]], hand: [0, -0.03, -0.02], dir: [0.2, 0.85, -0.48], wrap: [0, -0.48, -0.85] },
@@ -286,7 +286,20 @@ export const FP_HOLDS: Readonly<Record<ItemKind, FpHold>> = {
       handle: [0.04, 0.075],
     },
   },
+} satisfies Readonly<Record<string, FpHold>>;
+
+/** Long Tide kinds reuse the closest existing hold (Long Tide §4.2: meshes and holds reused). */
+const REUSED: Readonly<Record<"log" | "cloth" | "scrap" | "nails" | "barrel" | "compass" | "hammer", FpHold>> = {
+  log: FP_HOLDS_BASE.raft_part,
+  cloth: FP_HOLDS_BASE.stone,
+  scrap: FP_HOLDS_BASE.stone,
+  nails: FP_HOLDS_BASE.stone,
+  barrel: FP_HOLDS_BASE.collector,
+  compass: FP_HOLDS_BASE.coconut,
+  hammer: FP_HOLDS_BASE.axe,
 };
+
+export const FP_HOLDS: Readonly<Record<ItemKind, FpHold>> = { ...FP_HOLDS_BASE, ...REUSED };
 
 export function fpHold(kind: ItemKind): FpHold {
   return FP_HOLDS[kind];

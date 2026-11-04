@@ -36,6 +36,14 @@ export const COACH_TIPS = {
   lowFire: "fire",
   storm: "clock",
   legend: "center",
+  fellWithAxe: "center",
+  heavyCarry: "hotbar",
+  buildBench: "center",
+  salvageWreck: "center",
+  assemble: "raft",
+  cookProvisions: "raft",
+  guardRaft: "raft",
+  killBoss: "clock",
 } as const satisfies Record<string, CoachAnchor>;
 
 export type CoachTipId = keyof typeof COACH_TIPS;

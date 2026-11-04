@@ -2,20 +2,21 @@
 // Owner: server-world (the resolver is shared by the server, the client prompt and the bots).
 
 import { describe, expect, it } from "vitest";
-import { CHANNEL, GATHER_SEC, REVIVE_TICKS, secToTicks } from "../../shared/constants.js";
-import { raftCost } from "../../shared/items.js";
+import { CHANNEL, CHARACTERS, GATHER_SEC, RAFT_LAUNCH_STAGE, REVIVE_TICKS, secToTicks } from "../../shared/constants.js";
+import { raftAssemblyTicks, raftStageNeeds } from "../../shared/items.js";
 import {
+  assemblyWorkPerTick,
   channelTicksFor,
   emptyInteraction,
   gatherTicksFor,
   gatherYield,
   INTERACT_PRIORITY,
   planRaftDelivery,
-  planWood,
-  raftPartValue,
-  raftRemaining,
-  raftStageFor,
+  planRaftRepair,
+  raftMaterialsDone,
+  raftWantedItem,
   resolveInteraction,
+  salvageTicksFor,
   type InteractWorld,
 } from "../../shared/rules/interact.js";
 import { setSlot } from "../../shared/rules/inventory.js";
@@ -38,7 +39,7 @@ function resolve(b: Bench, p: PlayerState) {
 }
 
 describe("resolveInteraction", () => {
-  it("gathers what you look at: wood 2.5 s, 1 s with an axe; stone; rope; berries", () => {
+  it("gathers what you look at: wood 4 s, 1.5 s with an axe (Amca 1.1 s); stone; rope; berries", () => {
     const b = new Bench([["a"]]);
     const tree = b.island.nodes[NODE.tree]!;
     const p = b.placeFacing("a", tree.x, tree.z, 0, 1.5);
@@ -47,6 +48,9 @@ describe("resolveInteraction", () => {
     expect(it.ticks).toBe(secToTicks(GATHER_SEC.wood));
     b.give("a", "axe", 1, 2);
     expect(resolve(b, p)!.ticks).toBe(secToTicks(GATHER_SEC.woodAxe));
+    p.character = "amca";
+    expect(resolve(b, p)!.ticks).toBe(secToTicks(CHARACTERS.amca.chopSec));
+    p.character = "fenomen";
     const rock = b.island.nodes[NODE.rock]!;
     b.placeFacing("a", rock.x, rock.z, 0, -1.6);
     expect(resolve(b, p)).toMatchObject({ kind: "gather", item: "stone", ticks: secToTicks(GATHER_SEC.stone) });
@@ -124,19 +128,84 @@ describe("resolveInteraction", () => {
     expect(resolve(b, p)).toBeNull();
   });
 
-  it("the raft: deliver what the stage needs, say why otherwise, board when ready", () => {
+  it("the raft: deliver what the open stage needs, say why otherwise", () => {
     const b = new Bench([["a"], ["b"]]);
     const r = b.island.sites[0]!.raft;
     const p = b.placeFacing("a", r.x, r.z, 0, -2);
-    expect(resolve(b, p)).toMatchObject({ kind: "deliver", ok: false, reason: "nothingToDeliver", item: "wood" });
-    setSlot(p, 0, "coconut", 1);
+    expect(resolve(b, p)).toMatchObject({ kind: "deliver", ok: false, reason: "nothingToDeliver", item: "log" });
+    setSlot(p, 0, "raft_part", 3); // planks: the deck's, not the keel's
     expect(resolve(b, p)).toMatchObject({ kind: "deliver", ok: false, reason: "wrongStage" });
-    setSlot(p, 1, "wood", 2);
+    setSlot(p, 1, "rope", 2);
     expect(resolve(b, p)).toMatchObject({ kind: "deliver", ok: true });
+    // The deck opens on day 2: on day 1 the planks are refused.
     const team = b.state.teams[0]!;
-    const cost = raftCost(team.seats);
-    Object.assign(team, { hullWood: cost.hullWood, mastWood: cost.mastWood, mastRope: cost.mastRope, food: cost.food, water: cost.water, stage: 3 });
+    team.stage = 1;
+    team.raftNeed[0] = 9;
+    team.raftNeed[1] = 3;
+    b.state.day = 1;
+    expect(resolve(b, p)).toMatchObject({ kind: "deliver", ok: false, reason: "stageLocked" });
+    b.state.day = 2;
+    expect(resolve(b, p)).toMatchObject({ kind: "deliver", ok: true, item: "raft_part" });
+  });
+
+  it("the raft: hold E to assemble once every material is in; a hammer repairs", () => {
+    const b = new Bench([["a"]]);
+    const r = b.island.sites[0]!.raft;
+    const p = b.placeFacing("a", r.x, r.z, 0, -2);
+    const team = b.state.teams[0]!;
+    team.raftHave[0] = team.raftNeed[0]!;
+    team.raftHave[1] = team.raftNeed[1]!;
+    const it = resolve(b, p)!;
+    expect(it).toMatchObject({ kind: "assemble", ok: true, hold: true, channel: CHANNEL.BUILD, team: 0 });
+    expect(it.ticks).toBe(team.raftWorkNeed - team.raftWork);
+    // Deck stage, nothing to deliver, raft scratched: a hammer and a plank (or 2 wood) repair it.
+    team.stage = 1;
+    team.raftHave[0] = 0;
+    team.raftHave[1] = 0;
+    team.raftNeed[0] = 9;
+    team.raftNeed[1] = 3;
+    team.raftHp = 70;
+    b.state.day = 2;
+    setSlot(p, 0, "hammer", 1);
+    setSlot(p, 1, "wood", 2);
+    expect(resolve(b, p)).toMatchObject({ kind: "repair", ok: true, item: "wood" });
+    team.raftHp = 100;
+    expect(resolve(b, p)).toMatchObject({ kind: "deliver", ok: false });
+  });
+
+  it("the raft: board only in the launch window with a sound raft (or once the push-off counts)", () => {
+    const b = new Bench([["a"]]);
+    const r = b.island.sites[0]!.raft;
+    const p = b.placeFacing("a", r.x, r.z, 0, -2);
+    const team = b.state.teams[0]!;
+    team.stage = RAFT_LAUNCH_STAGE;
+    team.raftHp = 100;
+    b.state.day = 6;
+    expect(resolve(b, p)).toMatchObject({ kind: "board", ok: false, reason: "seaRough" });
+    b.state.day = 7;
     expect(resolve(b, p)).toMatchObject({ kind: "board", ok: true });
+    team.raftHp = 40;
+    expect(resolve(b, p)).toMatchObject({ kind: "board", ok: false, reason: "raftWeak" });
+    setSlot(p, 0, "hammer", 1);
+    setSlot(p, 1, "raft_part", 1);
+    expect(resolve(b, p)).toMatchObject({ kind: "repair", ok: true, item: "raft_part" });
+    b.state.launchTicksLeft = 100;
+    expect(resolve(b, p)).toMatchObject({ kind: "board", ok: true });
+  });
+
+  it("the wreck: salvage scrap with a hammer while it lasts", () => {
+    const b = new Bench([["a"]]);
+    const w = b.island.sites[0]!.wreck;
+    const p = b.placeFacing("a", w.x, w.z, 0, 2);
+    p.character = "gelin";
+    expect(resolve(b, p)).toMatchObject({ kind: "salvage", ok: false, reason: "needHammer" });
+    setSlot(p, 2, "hammer", 1);
+    expect(resolve(b, p)).toMatchObject({ kind: "salvage", ok: true, hold: true, channel: CHANNEL.SALVAGE, ticks: secToTicks(GATHER_SEC.salvage), item: "scrap" });
+    p.character = "fenomen";
+    expect(resolve(b, p)!.ticks).toBe(salvageTicksFor("fenomen"));
+    expect(salvageTicksFor("fenomen")).toBe(secToTicks(CHARACTERS.fenomen.salvageSec));
+    b.state.teams[0]!.wreckScrap = 0;
+    expect(resolve(b, p)).toMatchObject({ kind: "salvage", ok: false, reason: "wreckEmpty" });
   });
 
   it("spring, collector and the secret chest", () => {
@@ -148,6 +217,8 @@ describe("resolveInteraction", () => {
     expect(resolve(b, p)).toMatchObject({ kind: "spring", ok: false, reason: "full" });
     p.thirst = 40;
     expect(resolve(b, p)!.ok).toBe(true);
+    b.state.teams[0]!.springCharges = 0;
+    expect(resolve(b, p)).toMatchObject({ kind: "spring", ok: false, reason: "springDry" });
 
     const c = new StructureState();
     Object.assign(c, { id: "s1", kind: "collector", x: -10, y: 1, z: 0, team: 0, uses: 0 });
@@ -190,44 +261,57 @@ describe("gather / channel helpers", () => {
     expect(gatherYield(n[NODE.tree]!)).toBe("wood");
     expect(gatherYield(n[NODE.palm]!)).toBe("coconut");
     expect(gatherYield(n[NODE.deadBush]!)).toBeNull();
-    expect(gatherTicksFor(n[NODE.tree]!, true)).toBe(30);
+    expect(gatherTicksFor(n[NODE.tree]!, true)).toBe(45);
+    expect(gatherTicksFor(n[NODE.tree]!, false)).toBe(120);
     expect(channelTicksFor(CHANNEL.REVIVE, null, false)).toBe(REVIVE_TICKS);
-    expect(channelTicksFor(CHANNEL.GATHER, n[NODE.rock]!, false)).toBe(60);
+    expect(channelTicksFor(CHANNEL.GATHER, n[NODE.rock]!, false)).toBe(75);
+    expect(channelTicksFor(CHANNEL.SALVAGE, null, false)).toBe(90);
+    expect(channelTicksFor(CHANNEL.BUILD, null, false)).toBe(0);
     expect(channelTicksFor(CHANNEL.NONE, null, false)).toBe(0);
   });
 });
 
 describe("raft helpers", () => {
-  it("planWood: whole parts while they fit, wood singles, one overshooting part last", () => {
-    expect(planWood(7, 1, 5, 3)).toEqual({ parts: 1, wood: 4, credited: 7 });
-    expect(planWood(2, 1, 0, 3)).toEqual({ parts: 1, wood: 0, credited: 2 });
-    expect(planWood(10, 4, 0, 3)).toEqual({ parts: 4, wood: 0, credited: 10 });
-    expect(planWood(10, 2, 1, 4)).toEqual({ parts: 2, wood: 1, credited: 9 });
-    expect(planWood(0, 3, 3, 3)).toEqual({ parts: 0, wood: 0, credited: 0 });
+  it("stage needs scale with seats and the difficulty (a 1 stays 1); fast mode needs 1 of everything", () => {
+    expect(raftStageNeeds(0, 3)).toEqual([2, 4, 0]);
+    expect(raftStageNeeds(0, 6)).toEqual([4, 7, 0]);
+    expect(raftStageNeeds(0, 1)).toEqual(raftStageNeeds(0, 2));
+    expect(raftStageNeeds(2, 3, 1.25)).toEqual([1, 5, 7]); // one mast log whatever the difficulty
+    expect(raftStageNeeds(4, 3, 1.25)[2]).toBe(1); // one compass
+    expect(raftStageNeeds(1, 3, 0.75)).toEqual([9, 3, 0]);
+    expect(raftStageNeeds(5, 4, 1, true)).toEqual([1, 1, 0]);
+    expect(raftStageNeeds(RAFT_LAUNCH_STAGE, 3)).toEqual([0, 0, 0]);
+    expect(raftAssemblyTicks(2)).toBe(secToTicks(30));
+    expect(raftAssemblyTicks(2, true)).toBe(secToTicks(1));
   });
 
-  it("stage = first incomplete requirement; remaining needs", () => {
-    const cost = raftCost(4);
-    const team = { stage: 0 as const, seats: 4, hullWood: cost.hullWood, mastWood: 4, mastRope: 2, food: 0, water: 0 };
-    expect(raftStageFor(team, cost)).toBe(1);
-    expect(raftRemaining(team, cost)).toEqual({ hullWood: 0, mastWood: 0, mastRope: cost.mastRope - 2, food: cost.food, water: cost.water });
-    expect(raftStageFor({ ...team, hullWood: cost.hullWood - 1 }, cost)).toBe(0);
-    expect(raftStageFor({ ...team, mastRope: cost.mastRope, food: cost.food, water: cost.water }, cost)).toBe(3);
-    expect(raftPartValue("kaptan")).toBe(4);
-    expect(raftPartValue("sef")).toBe(3);
+  it("assembly rate: 1, 2 and 3 holders, with and without a hammer; the mast needs two", () => {
+    const h = (hammer: boolean, character: "fenomen" | "kaptan" = "fenomen") => ({ hammer, character });
+    expect(assemblyWorkPerTick([h(true)])).toBe(1);
+    expect(assemblyWorkPerTick([h(false)])).toBe(0.5);
+    expect(assemblyWorkPerTick([h(true), h(true)])).toBeCloseTo(2.4);
+    expect(assemblyWorkPerTick([h(true), h(false), h(false)])).toBeCloseTo(2 * 1.4);
+    expect(assemblyWorkPerTick([h(true, "kaptan")])).toBe(1.5);
+    expect(assemblyWorkPerTick([h(true), h(true), h(true), h(true), h(true)])).toBeCloseTo(4 * 1.4); // 4 count
+    expect(assemblyWorkPerTick([h(true)], 2)).toBe(0);
+    expect(assemblyWorkPerTick([h(true), h(false)], 2)).toBeCloseTo(1.5 * 1.2);
+    expect(assemblyWorkPerTick([])).toBe(0);
   });
 
-  it("planRaftDelivery only takes what the current stage needs (cheap food first)", () => {
-    const cost = raftCost(2);
-    const inv = { inv0: "fish_golden" as const, inv1: "coconut" as const, inv2: "water" as const, inv3: "rope" as const, cnt0: 1, cnt1: 3, cnt2: 3, cnt3: 5 };
-    const team = { stage: 2 as const, seats: 2, hullWood: 10, mastWood: 4, mastRope: 4, food: 0, water: 1 };
-    const plan = planRaftDelivery(inv, team, cost, 3)!;
+  it("planRaftDelivery only takes what the current stage still needs (cheapest cooked food first)", () => {
+    const inv = { inv0: "fish_golden" as const, inv1: "fish_cooked" as const, inv2: "barrel" as const, inv3: "fish_raw" as const, cnt0: 1, cnt1: 3, cnt2: 1, cnt3: 3 };
+    const team = { stage: 5, raftHave: [1, 1, 0], raftNeed: [4, 2, 0], raftWork: 0, raftWorkNeed: 300, raftHp: 80 };
+    const plan = planRaftDelivery(inv, team)!;
     expect(plan.items).toEqual([
-      { kind: "coconut", count: 2 },
-      { kind: "water", count: 1 },
+      { kind: "fish_cooked", count: 3 },
+      { kind: "barrel", count: 1 },
     ]);
-    expect([plan.food, plan.water, plan.credited]).toEqual([2, 1, 3]);
-    expect(planRaftDelivery(inv, { ...team, stage: 0, hullWood: 3 }, cost, 3)).toBeNull();
-    expect(planRaftDelivery(inv, { ...team, stage: 3 }, cost, 3)).toBeNull();
+    expect([plan.slots, plan.units, plan.heavy]).toEqual([[3, 1, 0], 4, 1]);
+    expect(planRaftDelivery(inv, { ...team, stage: 0 })).toBeNull(); // raw fish and the rest aren't keel goods
+    expect(planRaftDelivery(inv, { ...team, stage: RAFT_LAUNCH_STAGE })).toBeNull();
+    expect(raftMaterialsDone({ ...team, raftHave: [4, 2, 0] })).toBe(true);
+    expect(raftWantedItem(team)).toBe("fish_cooked");
+    expect(planRaftRepair(inv, team)).toBeNull(); // no hammer
+    expect(planRaftRepair({ ...inv, inv3: "hammer", cnt3: 1 }, { stage: 0, raftHp: 50 })).toBeNull(); // no keel yet
   });
 });

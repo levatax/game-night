@@ -43,7 +43,7 @@ export class InteractPrompt {
       return;
     }
     const params = p.params ? JSON.stringify(p.params) : "";
-    const sig = `${p.kind}|${p.key}|${params}|${p.keyGlyph}|${p.hold}|${p.ok}|${p.reason}|${settings.get().keyPreset}${keyCapsVersion()}`;
+    const sig = `${p.kind}|${p.key}|${params}|${p.keyGlyph}|${p.hold}|${p.ok}|${p.reason}|${p.reasonParams ? JSON.stringify(p.reasonParams) : ""}|${settings.get().keyPreset}${keyCapsVersion()}`;
     if (sig !== this.sig) {
       const wasHidden = this.sig === "";
       this.sig = sig;
@@ -54,7 +54,7 @@ export class InteractPrompt {
       setHidden(this.hold, !p.hold || !p.ok);
       toggleClass(this.el, "is-blocked", !p.ok);
       toggleClass(this.el, "is-hold", p.hold);
-      const reason = !p.ok && p.reason ? tr(p.reason, "reject") : "";
+      const reason = !p.ok && p.reason ? tr(p.reason, "reject", p.reasonParams) : "";
       setText(this.reason, reason);
       setHidden(this.reason, !reason);
       this.el.dataset.kind = p.kind;

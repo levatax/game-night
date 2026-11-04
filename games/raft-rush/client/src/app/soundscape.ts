@@ -3,7 +3,7 @@
 // ambience frame (the audio engine's beds: rain, wind, gulls, crickets, dusk drums, storm), Emekli Amca's radio as
 // the music source and the music mood (day / dusk / night / boss / storm / launch / win / lose). Owner: client-app.
 
-import { CHANNEL, DAYS, FIRE_START_FUEL_TICKS, FISH_STATE, PUFFER_FUSE_TICKS, STORM_WARN_SEC, TICK_RATE, type Timings } from "../../../shared/constants";
+import { CHANNEL, FIRE_START_FUEL_TICKS, FISH_STATE, PUFFER_FUSE_TICKS, STORM_WARN_SEC, TICK_RATE, timingsFor, type Timings } from "../../../shared/constants";
 import type { IslandDef } from "../../../shared/island/types";
 import { daylight, type ClockInfo } from "../../../shared/rules/schedule";
 import { chargeFraction } from "../../../shared/sim/player";
@@ -206,7 +206,7 @@ export function moodFor(f: Pick<SoundFrame, "phase" | "state" | "monsters" | "cl
       break;
   }
   const c = f.clock;
-  if (c.day >= DAYS && c.dayPhase === "night" && c.stormLeft <= STORM_WARN_SEC * TICK_RATE) return "storm";
+  if (c.day >= timingsFor(f.state.fast).days && c.dayPhase === "night" && c.stormLeft <= STORM_WARN_SEC * TICK_RATE) return "storm";
   if (c.dayPhase !== "day" && f.monsters.some((m) => m.kind === "boss" && m.mode !== "flee")) return "boss";
   return c.dayPhase;
 }

@@ -58,14 +58,25 @@ export const BITE_DY = 1.6;
 export const RAFT_GNAW_REACH = 2.5;
 /** Crabs surround the raft on this ring (they don't stack on one spot). */
 export const RAFT_SPREAD = 1.9;
-/** Kaptan Yengeç gnaws this much hull wood per RAFT_GNAW_TICKS. */
-export const BOSS_RAFT_GNAW = 2;
-/** A puffer that reaches an unguarded raft pops and knocks this much wood off. */
-export const PUFFER_RAFT_DAMAGE = 1;
-/** Crabs at the chest rummage (cosmetic attack, no theft). */
+/** A crab gnaws this much raft hp per RAFT_GNAW_TICKS (Long Tide §3.3: 4 hp every 4 s). */
+export const CRAB_RAFT_GNAW = 2;
+/** Kaptan Yengeç gnaws this much raft hp per RAFT_GNAW_TICKS (Long Tide: 8 hp every 2 s = 16 per 4 s). */
+export const BOSS_RAFT_GNAW = 16;
+/** A puffer that reaches an unguarded raft pops and knocks this much raft hp off. */
+export const PUFFER_RAFT_DAMAGE = 10;
+/** Crabs at an unlit chest raid it (Long Tide T3): within this reach … */
 export const CHEST_REACH = 1.5;
+/** … destroying one random material / food unit every this long. */
+export const CHEST_RAID_TICKS = secToTicks(8);
 /** Puffers home on players from farther away than crabs (they roll fast). */
 export const PUFFER_AGGRO_RADIUS = 18;
+/**
+ * Captain Crab is big (radius 1.1) and the island's forests and cliffs can hold him up: going for the raft, if he
+ * hasn't come BOSS_STUCK_GAIN closer for BOSS_STUCK_TICKS he dives and surfaces again at the shore cell nearest the
+ * raft (he comes for the raft first, Long Tide §6).
+ */
+export const BOSS_STUCK_TICKS = secToTicks(8);
+export const BOSS_STUCK_GAIN = 1.5;
 /** The boss only turns on players this close (or guarding the raft); otherwise it marches to the raft. */
 export const BOSS_PLAYER_AGGRO = 4.5;
 /** Keep chasing the current player target until it is this × the aggro radius away. */

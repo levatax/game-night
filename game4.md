@@ -36,20 +36,27 @@ Bir sonraki maçta ada başka: bataklık biyomu, sis, pınar tepede, enkaz ters 
 - **Her ada farklı:** Seed lobide yazar. "Dün 4471'de pınar tepedeydi, bugün 9023'te mağaranın içinde." Aynı seed tekrar oynanabilir, rekor kovalanır.
 - **Final anı:** Sal iniyor, biri hâlâ ormanda. "KOŞ! KOŞŞŞ!" Fırtına 20 saniye sonra.
 
-## 4. Oyun döngüsü & zaman çizelgesi
-1. **Lobi:** İsim + turist karakteri seçilir. Host: mod (**Co-op** / **Ada Savaşı**), zorluk (**Tatil / Normal / Kabus**), bot ekle/çıkar (0–5), seed (rastgele ya da elle). Hazır'a basılır.
-2. **Karaya çıkış (10 sn):** Herkes enkazın yanında kumsalda doğar; elinde rastgele 1 başlangıç eşyası (odun ×2, hindistan cevizi, taş, ip…). Enkaz sandığında 2 rastgele eşya. Banner: **"GÜN 1 — Fırtınaya 7:45"**.
-3. **Gün döngüsü × 3:**
+## 4. Oyun döngüsü & zaman çizelgesi ("Uzun Gelgit")
+1. **Lobi:** İsim + turist karakteri seçilir. Host: mod (**Co-op** / **Ada Savaşı**), zorluk (**Tatil / Normal / Kabus**), bot ekle/çıkar (0–5), seed (rastgele ya da elle). Hazır'a basılır. Tek başına oynayana 2 bot otomatik eklenir (3 koltuk).
+2. **Karaya çıkış (10 sn):** Herkes enkazın yanında kumsalda doğar; elinde rastgele 1 başlangıç eşyası. Banner: **"GÜN 1"**.
+3. **Gün döngüsü × 8:**
    | Faz | Süre | Ne olur |
    |---|---|---|
-   | **Gündüz** | 95 sn | Topla, balık tut, craft, sal inşa et, su/yemek stokla. Günün hava olayı gündüz ortasında başlar |
-   | **Alacakaranlık** | 10 sn | Gök turuncuya döner, davullar başlar. Banner: "GECE GELİYOR". Ateşi besle, meşale yak, sala yaklaş |
-   | **Gece** | 50 sn | Yengeçler kıyıdan çıkar. Isı barı ateşten uzakta düşer. Yapılar ve oyuncular saldırı alır |
-4. **Sal:** 3 aşama, kumsaldaki sal alanına eşya teslim edilerek dolar (bkz. §7). Üç aşama da tamamsa sal "HAZIR" olur; **tüm hayatta kalan oyuncular E ile bindiğinde** sal iner → kazandınız. Erken iniş = daha yüksek skor.
-5. **Fırtına (3. gecenin sonu, 20 sn):** Sal inmediyse gök kararır, dalgalar yükselir, kamp uçar: **kaybettiniz**. Maç sonu ekranı yine açılır (istatistik + MVP + "Rövanş").
-6. **Düşme / diriltme:** Can sıfırlanan oyuncu **düşer** (yerde sürünür, 10 sn). Arkadaş E'ye basılı tutarak 3 sn'de kaldırır (yarım can). Süre dolarsa "**Dalgalar seni kıyıya attı**": envanter kaybolur, sonraki şafakta enkazda yeniden doğar. Gece 3'te düşen oyuncu şafak olmadığı için **sala binemez**; ekip onu kaldırmak zorunda.
+   | **Gündüz** | 165 sn | Topla, ağaç devir, tahta biç, hurda sök, balık tut, sal aşamasını teslim et ve birlikte birleştir |
+   | **Alacakaranlık** | 15 sn | Gök turuncuya döner, davullar başlar. Banner: "GECE GELİYOR". Ateşi besle, sala bekçi bırak |
+   | **Gece** | 80 sn | Yengeç dalgası (her gece büyür), 3. geceden itibaren Kaptan Yengeç. Sal kemirilir, sandık yağmalanır |
+4. **Dört perde:**
+   | Perde | Günler (saat) | Ekip ne yapar |
+   |---|---|---|
+   | **1. Kıyıya vurduk** | 1–2 (0:00–8:40) | Balta yap, ağaç devir (kütük ağır: ikişer taşınır), tezgâh kur. Gün 1 omurga, gün 2 tahta biçip güverte |
+   | **2. Batık** | 3–4 (8:40–17:20) | Çekiçle batıktan hurda sök, örs kur (3. günden), çivi döv. Gün 3 direk (**2 kişi** E'ye basılı tutmalı). **3. gece Kaptan Yengeç gelir.** Gün 4 yelken bezi dok, yelkeni bağla |
+   | **3. Pusula** | 5–6 (17:20–26:00) | Dümen için **pusula** gerek; onu yalnız Kaptan Yengeç düşürür ve ölene kadar her gece geri gelir. Gün 6 pişmiş yemek + su fıçısı (ağır) ile erzak |
+   | **4. Denize açılış** | 7–8 (26:00–34:40) | Salı en az 50'ye onar, **açılmayı** başlat (60 sn): son dalga ve Kaptan Yengeç saldırırken hayatta olan herkes sala binmeli |
+5. **Denize açılış kilidi:** Sal ancak 6 aşamanın hepsi birleştirilmişse, **7. günün şafağından** (Tatil: 6. gün) itibaren ve sal sağlamlığı ≥ 50 iken binilebilir; daha önce "Deniz çok dalgalı". İlk binen 60 sn'lik açılmayı başlatır ve son dalga (0,6 × 8. gecenin yengeçleri + 3 kirpi topu + Kaptan Yengeç) gelir. Hayatta olan herkes saldaysa sal en erken 30 sn sonra kalkar; 60 sn dolunca saldakilerle kalkar ve geride kalan her canlı −150 puan. Açılma sırasında sal sağlamlığı 0'a inerse açılma iptal olur.
+6. **Fırtına (8. gecenin sonu, 34:40):** Sal kalkmadıysa **kaybettiniz**. Ekibin tamamı kıyıya vurursa (hangi gün olursa olsun) maç da biter.
+7. **Düşme / diriltme:** Can sıfırlanan oyuncu **düşer** (yerde sürünür, **25 sn**). Arkadaş E'ye basılı tutarak 3 sn'de kaldırır (yarım can). Süre dolarsa "**Dalgalar seni kıyıya attı**": envanter kaybolur (pusula sandığa döner), sonraki şafakta enkazda doğar — ama yalnızca ekipten en az biri hayattaysa.
 
-**Süre hesabı:** Karaya çıkış 10 sn + 3 × (95 + 10 + 50) sn = 475 sn + fırtına/iniş sahnesi ~20 sn ≈ **8 dk 15 sn**. Lobi ve podyum hariç.
+**Süre hesabı:** Karaya çıkış 10 sn + 8 × (165 + 15 + 80) sn = 2090 sn ≈ **34 dk 50 sn**. Gün kilitleri yüzünden en erken zafer 26:00'dan sonradır; 3 koltukta hedef 29–33 dk, koordineli 4 kişi 27–29 dk. Eski "erken iniş bonusu" kaldırıldı: skor hayatta kalanları, sal sağlamlığını ve Kaptan Yengeç'i ödüllendirir.
 
 ## 5. Hayatta kalma barları
 | Bar | Düşüş | Dolum | Sıfırda |
@@ -64,19 +71,19 @@ Barlar sol altta üç küçük ikon olarak durur; sadece %30 altına inince yan�
 ## 6. Kaynaklar & dünya
 | Kaynak | Nerede | Nasıl | Not |
 |---|---|---|---|
-| **Odun** | Ağaçlar (ağaç başına 3) | E basılı tut: elle 2.5 sn, baltayla 1 sn | Sal ve çoğu tarifin temeli |
+| **Odun** | Ağaçlar (ağaç başına 4) | E basılı tut: elle 4 sn, baltayla 1,5 sn | Son birim baltayla alınırsa ağaç devrilir ve 1 **kütük** düşer |
 | **İp** (sarmaşık) | Çalılar, sarmaşıklı ağaçlar | E, 1.5 sn | Olta, meşale, direk |
 | **Taş** | Kayalar (kaya başına 2) | E, 2 sn | Mızrak, balta; fırlatılabilir |
 | **Hindistan cevizi** | Palmiyeler (2'şer, 60 sn'de büyür) | Palmiyeye vur (sol tık) → düşer, E ile al | Yemek + su + mermi |
 | **Böğürtlen** | Çalıların %40'ı | E, 1 sn | +15 açlık, anında yenir |
 | **Tatlı su** | Pınar (adada 1 tane, seed'e göre yerde) | Kabuk/su kabağı ile E: +1 su kabı | Kap 4 slot'ta 1 yer tutar |
 | **Balık** | Olta ile kıyı/kayalık balık noktaları | §8 mini oyun | Çiğ +20, pişmiş +45 açlık |
-| **Enkaz** | Spawn noktası | Başlangıç sandığı: 2 rastgele eşya | Ayrıca 1 sal parçası "bedava" sayılır (gövde başlangıcı) |
+| **Enkaz** | Spawn noktası | Başlangıç sandığı: 2 rastgele eşya; çekiçle **hurda** sökülür (3 sn) | Bedava sal parçası yok (Uzun Gelgit) |
 
 **Gündüz küçük olayları (her gün 1, rastgele):** Martı **Şükrü** birinin elindeki balığı kapar (fırlatarak kovalanır, balık düşer). **Maymunlar** kamp sandığından 1 eşya çalar ve ağaca kaçar; hindistan cevizi atılırsa bırakırlar. **Dalga hediyesi**: kıyıya bir sandık vurur. **Yağmur** (§9).
 
 ## 7. Craft: kamp ateşi tezgahı
-Kamp ateşi spawn'ın yanında hazır yanar ama **yakıt barı** vardır: 60 sn'de söner, odun atınca +30 sn. Sönerse gece ısı yok, ışık yok, tarif yok. Ateşin 3 m yakınında **E** craft panelini açar.
+Kamp ateşi spawn'ın yanında hazır yanar ama **yakıt barı** vardır: 120 sn ile başlar (en çok 300 sn), odun atınca +40 sn; gündüz yarı hızla yanar, yakıtın %20'sinin altında halka canavarları durdurmaz. Sönerse gece ısı yok, ışık yok, tarif yok. Ateşin 3 m yakınında **E** craft panelini açar.
 
 | Tarif | Maliyet | Ne yapar |
 |---|---|---|
@@ -87,22 +94,36 @@ Kamp ateşi spawn'ın yanında hazır yanar ama **yakıt barı** vardır: 60 sn'
 | **Su toplayıcı** | 2 odun + 1 ip | Kampa kurulur; yağmurda dolar, E ile +40 su (3 kullanım) |
 | **Çit parçası** | 2 odun | Yere konur; yengeçler 4 sn kemirerek geçer, kirpi topları takılır |
 | **Pişir** | 1 çiğ balık / yengeç | Pişmiş balık +45, pişmiş yengeç +50 açlık |
-| **Sal parçası** | 3 odun (+1 ip direk aşamasında) | Sal alanına taşınır (1 slot), E ile teslim |
+| **Tezgâh** | 6 odun + 2 ip + 2 taş | Ekip tezgâh kademesi 1 (çekiç, tahta, yelken bezi, su fıçısı, su toplayıcı açılır) |
+| **Çekiç** (tezgâh) | 2 odun + 2 taş + 1 ip | Salı tam hızla birleştirir, onarır, batıktan hurda söker |
+| **Tahta** (tezgâh) | 1 kütük | 3 tahta (yığın 5): güverte, dümen, onarım |
+| **Yelken bezi** (tezgâh) | 3 ip | 1 bez |
+| **Su fıçısı** (tezgâh) | 2 tahta + 1 ip + 2 su | 1 fıçı (ağır), erzak aşaması |
+| **Örs** (tezgâh, 3. günden) | 3 tahta + 4 taş + 2 hurda | Ekip tezgâh kademesi 2 |
+| **Çivi** (örs) | 1 hurda + 1 taş | 3 çivi |
 
 Ada Savaşı ek tarifleri: **Kulübe** (6 odun + 2 ip; ekip evi, §13) ve **Kano** (4 odun + 2 ip; 2 kişilik, boğazı 6 sn'de geçer).
 
 **Envanter:** 4 slot, slot başına tek tür yığın (odun ×5, taş ×3, ip ×5, cevizler ×3; aletler 1). **Kamp sandığı**: ateşin yanında sınırsız ortak depo, E ile koy/al. Tarifler sandıktaki malzemeyi de görür (kimse "malzemeyi bana ver" demek zorunda değil).
 
-**Sal aşamaları (koltuk sayısına göre, bot dahil):**
-| Koltuk | Gövde (odun) | Direk + yelken | Erzak |
-|---|---|---|---|
-| 2 | 10 | 4 odun + 4 ip | 2 yemek + 2 su |
-| 3 | 13 | 4 odun + 5 ip | 3 yemek + 3 su |
-| 4 | 16 | 4 odun + 6 ip | 4 yemek + 4 su |
-| 5 | 20 | 4 odun + 7 ip | 5 yemek + 5 su |
-| 6 | 24 | 4 odun + 8 ip | 6 yemek + 6 su |
+**Sal aşamaları ("Uzun Gelgit", koltuk = oyuncu + bot, 2–6; Kabus ×1,25, Tatil ×0,75, yukarı yuvarlanır, 1'ler 1 kalır):**
+| # | Aşama | En erken gün | Malzeme (koltuk 2 / 3 / 4 / 5 / 6) | Birleştirme | Özel |
+|---|---|---|---|---|---|
+| 0 | **Omurga** | 1 | kütük 2/2/3/3/4 · ip 3/4/5/6/7 | 25 sn | Kütük yalnız baltayla ağaç devirerek çıkar (ağır) |
+| 1 | **Güverte** | 2 | tahta 9/12/15/18/21 · ip 3/4/4/5/6 | 35 sn | Tahta tezgâhta biçilir (1 kütük → 3 tahta) |
+| 2 | **Direk** | 3 | kütük 1 · çivi 3/4/5/6/7 · ip 4/5/6/7/8 | 30 sn | **Aynı anda en az 2 kişi** E'ye basılı tutmalı; çivi örste dövülür |
+| 3 | **Yelken** | 4 | yelken bezi 3/4/5/6/7 · ip 2/2/3/3/4 | 30 sn | "Eski yelken" hazinesi sandığa 2 bez koyar |
+| 4 | **Dümen ve Pusula** | 5 | tahta 3/4/5/6/7 · çivi 3/4/5/6/7 · pusula 1 | 35 sn | Pusula yalnız Kaptan Yengeç'ten düşer |
+| 5 | **Erzak** | 6 | pişmiş yemek 4/5/7/8/10 · su fıçısı 2/2/3/3/4 | 10 sn | Yalnız pişmiş balık/yengeç ve altın balık sayılır |
+| 6 | **Denize İndir** | 7 (Tatil 6) | sal sağlamlığı ≥ 50 | 60 sn açılma | §4 |
 
-Sal parçası 3 odun sayıldığından gövde 4–8 teslimattır. Yengeç kemirmesi gövdeden **1 odun/4 sn** düşürür; sal yakınında ekipten biri varken (`RAFT_GUARD_RADIUS` 6 m) yengeçler önce oyuncuyu hedefler.
+- Sal yalnız **o anki** aşamanın malzemesini, yalnız o aşamanın gününden itibaren kabul eder ("Sal bunu 3. güne kadar alamaz"); sonraki aşamanın malzemesi sandıkta biriktirilebilir. Teslimat taşıyanın cebinden yapılır.
+- **Birleştirme:** malzemeler tamamlanınca salda E basılı tutulur (iş/sn: çekiçle 1, elle 0,5; Kaptan ×1,5; 2 kişi ×1,2, 3+ kişi ×1,4; en çok 4 kişi sayılır). Bırakınca ilerleme kaybolmaz.
+- **Sal sağlamlığı** (0–100, omurgadan sonra): yengeç kemirmesi 4 sn'de −2, kirpi topu −10, Kaptan Yengeç 4 sn'de −16. Çekiçle 1 tahta +20 (Kaptan +30) ya da 2 odun +10 onarır. 0'a inince en üstteki birleştirilmiş aşama sökülür (malzeme kalır), sağlamlık 40'a döner.
+- **Tezgâh kademeleri:** Tezgâh (6 odun + 2 ip + 2 taş) → çekiç, tahta, yelken bezi (3 ip), su fıçısı (2 tahta + 1 ip + 2 su), su toplayıcı. Örs (3 tahta + 4 taş + 2 hurda, 3. günden) → çivi (1 hurda + 1 taş → 3).
+- **Hurda:** batıktan çekiçle 3 sn'de sökülür (başta 2 + koltuk, 2. günden her şafak +1), balık ganimetinden de çıkar; Kaptan Yengeç ölünce 3 hurda + pusula düşürür.
+- **Ağır yük:** kütük veya fıçı taşıyan yavaşlar (yalnızken %55, 3 m içinde bir arkadaşla %85; Çocuk %75/%95), koşamaz, fırlatamaz; atma tuşu (Q) yükü yere bırakır. Eşlik eden arkadaş teslimatta puan alır.
+- **RAFT_TEST hızlı mod:** her ihtiyaç 1, gün kilidi yok, birleştirme 1 sn.
 
 ## 8. Balık tutma & şans
 Olta elde, bir **balık noktasına** (kıyıda köpüren su, seed'e göre 4–6 tane; kayalık biyomda daha çok) bakıp sol tık: şamandıra atılır. 2–6 sn sonra şamandıra **batar** ve 0.6 sn'lik pencere açılır: tık → yakaladın; geç kaldın → kaçtı. Yakalayınca ekranda Jelly'nin case reeli gibi bir **"Ne çıktı?"** şeridi döner ve sunucunun seçtiği kartta durur.

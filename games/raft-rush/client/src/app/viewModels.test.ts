@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CHANNEL,
-  DAYS,
+
   FIRE_START_FUEL_TICKS,
   FISH_STATE,
   NORMAL_TIMINGS,
@@ -16,6 +16,7 @@ import {
   TORCH_BURN_TICKS,
   playerColor,
 } from "../../../shared/constants";
+import { GATHER_SEC, RAFT_LAUNCH_STAGE } from "../../../shared/constants";
 import type { IslandDef } from "../../../shared/island/types";
 import type { MatchEndEvent } from "../../../shared/protocol";
 import { emptyInteraction, type Interaction } from "../../../shared/rules/interact";
@@ -116,7 +117,7 @@ describe("HUD model: bars, slots, prompt", () => {
     const sim = { ...me, channel: CHANNEL.GATHER, channelTarget: 0, channelTicks: 30 };
     const hud = buildHudModel(inputs(fakeState([me], {}, def), def, me, { sim, interaction: gatherWood(0) }));
     expect(hud.prompt).toMatchObject({ kind: "gather", key: "prompt.gather_wood", keyGlyph: "E", hold: true, ok: true, reason: "" });
-    expect(hud.prompt!.progress).toBeCloseTo(30 / 75);
+    expect(hud.prompt!.progress).toBeCloseTo(30 / Math.round(GATHER_SEC.wood * TICK_RATE));
     expect(hud.crosshair).toBe("interact");
   });
 
@@ -159,27 +160,46 @@ describe("HUD model: fishing, raft, fire, clock", () => {
     expect(cast.fishing).toEqual({ state: "cast", windowFrac: 0 });
   });
 
-  it("lists every raft requirement with have clamped to need, plus aboard / total", () => {
+  it("lists the current stage's requirement rows with have clamped to need, plus aboard / total", () => {
     const def = island();
     const me = fakePlayer("me");
     const mate = fakePlayer("mate", 3, 3, { boarded: true });
-    const team = fakeTeam({ seats: 4, stage: 1, hullWood: 18, mastWood: 2, mastRope: 1 });
+    const team = fakeTeam({ seats: 4, stage: 2, raftNeed: [1, 5, 6], raftHave: [3, 2, 1], raftHp: 80 });
     const state = fakeState([me, mate], { teams: [team] }, def);
     const hud = buildHudModel(inputs(state, def, me));
-    expect(hud.raft.stage).toBe(1);
+    expect(hud.raft.stage).toBe(2);
+    expect(hud.raft.stages).toBe(RAFT_LAUNCH_STAGE + 1);
     expect(hud.raft.parts).toEqual([
-      { part: "hullWood", have: 16, need: 16 },
-      { part: "mastWood", have: 2, need: 4 },
-      { part: "mastRope", have: 1, need: 6 },
-      { part: "food", have: 0, need: 4 },
-      { part: "water", have: 0, need: 4 },
+      { item: "log", have: 1, need: 1 },
+      { item: "nails", have: 2, need: 5 },
+      { item: "rope", have: 1, need: 6 },
     ]);
+    expect(hud.raft.minHolders).toBe(2);
+    expect(hud.raft.assembly).toBe(-1);
+    expect(hud.raft.hp).toBeCloseTo(0.8);
     expect(hud.raft.aboard).toBe(1);
     expect(hud.raft.total).toBe(2);
-    expect(raftParts(team, { hullWood: 1, mastWood: 1, mastRope: 1, food: 1, water: 1 })[0]).toEqual({ part: "hullWood", have: 1, need: 1 });
+    expect(raftParts(fakeTeam({ stage: RAFT_LAUNCH_STAGE }))).toEqual([]);
   });
 
-  it("fire: lit / low / seconds left (rain drains ×3)", () => {
+  it("raft card: the day lock, assembly, hp and the launch window", () => {
+    const def = island();
+    const me = fakePlayer("me");
+    // Day 1 (clock 0): the mast (minDay 3) is locked.
+    const locked = buildHudModel(inputs(fakeState([me], { teams: [fakeTeam({ stage: 2, raftNeed: [1, 5, 6], raftHp: 100 })] }, def), def, me));
+    expect(locked.raft.lockDay).toBe(3);
+    // Every material in, half the work done (the keel, day 1).
+    const keel = fakeTeam({ stage: 0, raftNeed: [3, 5, 0], raftHave: [3, 5, 0], raftWork: 375, raftWorkNeed: 750 });
+    const asm = buildHudModel(inputs(fakeState([me], { teams: [keel] }, def), def, me));
+    expect(asm.raft).toMatchObject({ lockDay: 0, assembly: 0.5, hp: -1, minHolders: 1 });
+    // Finished raft, day 1: the launch window is still shut (Normal: day 7).
+    const done = fakeTeam({ stage: RAFT_LAUNCH_STAGE, raftNeed: [0, 0, 0], raftWorkNeed: 0, raftHp: 90 });
+    const early = buildHudModel(inputs(fakeState([me], { teams: [done] }, def), def, me));
+    expect(early.raft).toMatchObject({ lockDay: 7, ready: false });
+    expect(early.status).toMatchObject({ launchDay: 7, launchOpen: false });
+  });
+
+  it("fire: lit / low / seconds left (half rate by day, rain ×2)", () => {
     const def = island();
     const me = fakePlayer("me");
     const low = fakeState([me], { teams: [fakeTeam({ fireFuel: 0.1 * FIRE_START_FUEL_TICKS })] }, def);
@@ -187,7 +207,11 @@ describe("HUD model: fishing, raft, fire, clock", () => {
     const out = fakeState([me], { teams: [fakeTeam({ fireFuel: 0 })] }, def);
     expect(buildHudModel(inputs(out, def, me)).fire).toMatchObject({ lit: false, low: false, secLeft: 0 });
     const rain = fakeState([me], { weather: "rain", teams: [fakeTeam({ fireFuel: 30 * TICK_RATE })] }, def);
-    expect(buildHudModel(inputs(rain, def, me)).fire.secLeft).toBeCloseTo(10);
+    // Day (×0.5) in the rain (×2): 30 s of fuel lasts 30 s.
+    expect(buildHudModel(inputs(rain, def, me)).fire.secLeft).toBeCloseTo(30);
+    const night = NORMAL_TIMINGS.day + NORMAL_TIMINGS.dusk + 10;
+    const rainNight = fakeState([me], { weather: "rain", clockTicks: night, teams: [fakeTeam({ fireFuel: 30 * TICK_RATE })] }, def);
+    expect(buildHudModel(inputs(rainNight, def, me, { clockTicks: night })).fire.secLeft).toBeCloseTo(15);
   });
 
   it("clock: the landing shows day 1 untouched; the last night warns before the storm", () => {
@@ -195,12 +219,12 @@ describe("HUD model: fishing, raft, fire, clock", () => {
     const me = fakePlayer("me");
     const landing = fakeState([me], { phase: "landing", phaseTicksLeft: 150, clockTicks: 0 }, def);
     const l = buildHudModel(inputs(landing, def, me));
-    expect(l).toMatchObject({ day: 1, days: DAYS, dayPhase: "day", phaseSecLeft: NORMAL_TIMINGS.day / TICK_RATE });
+    expect(l).toMatchObject({ day: 1, days: NORMAL_TIMINGS.days, dayPhase: "day", phaseSecLeft: NORMAL_TIMINGS.day / TICK_RATE });
     expect(l.stormSecLeft).toBeCloseTo((matchTicks(NORMAL_TIMINGS) + 150) / TICK_RATE);
     const end = matchTicks(NORMAL_TIMINGS) - (STORM_WARN_SEC - 5) * TICK_RATE;
     const lastNight = fakeState([me], { clockTicks: end }, def);
     const h = buildHudModel(inputs(lastNight, def, me, { clockTicks: end }));
-    expect(h).toMatchObject({ day: DAYS, dayPhase: "night", stormWarning: true });
+    expect(h).toMatchObject({ day: NORMAL_TIMINGS.days, dayPhase: "night", stormWarning: true });
     const early = fakeState([me], { clockTicks: cycleTicks(NORMAL_TIMINGS) + 10 }, def);
     expect(buildHudModel(inputs(early, def, me, { clockTicks: early.clockTicks })).stormWarning).toBe(false);
   });
@@ -223,7 +247,7 @@ describe("HUD model: downed, washed, launch", () => {
     expect(hud.washed?.willRespawn).toBe(true);
     expect(hud.washed?.secToDawn).toBeCloseTo((NORMAL_TIMINGS.night - 10) / TICK_RATE);
     expect(hud.crosshair).toBe("hidden");
-    const day3 = 2 * cycleTicks(NORMAL_TIMINGS) + 30;
+    const day3 = (NORMAL_TIMINGS.days - 1) * cycleTicks(NORMAL_TIMINGS) + 30;
     expect(buildHudModel(inputs(fakeState([me], { clockTicks: day3 }, def), def, me, { clockTicks: day3 })).washed?.willRespawn).toBe(false);
   });
 
@@ -231,7 +255,7 @@ describe("HUD model: downed, washed, launch", () => {
     const def = island();
     const me = fakePlayer("me", 10, 0, { boarded: true });
     const mate = fakePlayer("mate", 0, 0);
-    const state = fakeState([me, mate], { launchTicksLeft: 15 * TICK_RATE, teams: [fakeTeam({ stage: 3 })] }, def);
+    const state = fakeState([me, mate], { launchTicksLeft: 15 * TICK_RATE, teams: [fakeTeam({ stage: RAFT_LAUNCH_STAGE, raftHp: 80 })] }, def);
     const hud = buildHudModel(inputs(state, def, me));
     expect(hud.launch).toEqual({ secLeft: 15, aboard: 1, total: 2 });
     expect(hud.boarded).toBe(true);

@@ -5,14 +5,16 @@
 // Run: npx vitest run games/raft-rush/server/room
 
 import { describe, expect, it } from "vitest";
-import { DT, secToTicks } from "../../shared/constants.js";
+import { DT, FIRE_FUEL_MAX_TICKS, RAFT_LAUNCH_STAGE, secToTicks } from "../../shared/constants.js";
 import type { ProjectileContext } from "../../shared/sim/context.js";
 import { createProjectileSim, stepProjectile } from "../../shared/sim/projectile.js";
 import { computeThrowVelocity, throwOrigin } from "../../shared/sim/throw.js";
 import type { ItemKind } from "../../shared/types.js";
 import { aimVelocity, shotClear, solveAim } from "./botAim.js";
-import { aimAt, aimFromPlayer, chooseGoal, chooseStandInGoal, dutyOwner, shouldBoard, STAND_IN_GOALS } from "./botBrain.js";
-import { aheadOfSchedule, raftProgress, raftSchedule, raftUrgent } from "./botNeeds.js";
+import { aimAt, aimFromPlayer, canCraft, chooseGoal, chooseStandInGoal, dutyOwner, shouldBoard, STAND_IN_GOALS } from "./botBrain.js";
+import { raftAssemblyTicks, raftStageNeeds } from "../../shared/items.js";
+import { raftProgress, raftUrgent, teamPlan } from "./botNeeds.js";
+import { raftRows } from "./botSense.js";
 import { NavGrid } from "./botNav.js";
 import { newSteerMemory, steer, STUCK_WINDOW_TICKS, type SteerWorld } from "./botSteer.js";
 import { cylinder, flatField, makeView, query, raise, walkStep } from "./botTestkit.js";
@@ -103,26 +105,35 @@ describe("chooseGoal priorities", () => {
     expect(g.kind).not.toBe("revive");
   });
 
-  it("boards a ready raft, but waits for a human who is still far away", () => {
+  it("boards only during the push-off a human started; a bot-only team (or the storm close) starts it itself", () => {
     const human = { id: "h1", seat: 0, x: -30, z: -30, role: "" as const, driven: false, human: true, alive: true, downed: false, downedTicks: 0, washed: false, boarded: false, hp: 100, hunger: 80, thirst: 80, slots: [] };
     const waiting = makeView((v) => {
-      v.team.stage = 3;
+      ready(v);
       v.mates.push({ ...human });
     });
     expect(shouldBoard(waiting)).toBe(false);
-    expect(chooseGoal(waiting).kind).toBe("wait");
+    expect(chooseGoal(waiting).kind).not.toBe("board");
+    // Even with the human right by the raft: the push-off is theirs to start.
     const close = makeView((v) => {
-      v.team.stage = 3;
+      ready(v);
       v.mates.push({ ...human, x: 8, z: 12 });
     });
-    expect(chooseGoal(close).kind).toBe("board");
+    expect(chooseGoal(close).kind).not.toBe("board");
+    const storm = makeView((v) => {
+      ready(v);
+      v.mates.push({ ...human });
+      v.clock.stormLeft = secToTicks(60);
+    });
+    expect(chooseGoal(storm).kind).toBe("board");
     const countdown = makeView((v) => {
-      v.team.stage = 3;
+      ready(v);
       v.team.launchTicksLeft = 300;
       v.mates.push({ ...human });
     });
     expect(chooseGoal(countdown).kind).toBe("board");
-    expect(chooseGoal(makeView((v) => (v.team.stage = 3))).kind).toBe("board");
+    expect(chooseGoal(makeView((v) => ready(v))).kind).toBe("board");
+    // Before the launch window opens (or with a weak raft) nobody boards.
+    expect(shouldBoard(makeView((v) => (ready(v), (v.team.canBoard = false))))).toBe(false);
   });
 
   it("throws at a crab threatening the raft (stones before coconuts), and not without ammo", () => {
@@ -168,22 +179,21 @@ describe("chooseGoal priorities", () => {
     expect(chooseGoal(makeView((v) => (v.self.hunger = 30))).kind).toBe("gather"); // berries
   });
 
-  it("delivers a full load of hull wood", () => {
-    const g = chooseGoal(
-      makeView((v) => {
-        give(v, 0, "axe");
-        give(v, 1, "wood", 5);
-        give(v, 2, "wood", 5);
-        give(v, 3, "wood", 5);
-      }),
-    );
-    expect(g.kind).toBe("deliver");
+  it("delivers a full load of keel rope, but nothing to a stage that isn't open yet", () => {
+    const load = (v: BotView): void => {
+      give(v, 0, "axe");
+      give(v, 1, "rope", 5);
+      give(v, 2, "rope", 5);
+      give(v, 3, "rope", 5);
+    };
+    expect(chooseGoal(makeView(load)).kind).toBe("deliver");
+    expect(chooseGoal(makeView((v) => (load(v), (v.team.stageOpen = false)))).kind).not.toBe("deliver");
   });
 
   it("Hamal crafts an axe when it can, otherwise chops", () => {
     const craftable = makeView((v) => {
       give(v, 0, "wood", 1);
-      give(v, 1, "stone", 1);
+      give(v, 1, "stone", 2);
       v.team.chest = { rope: 1 };
     });
     expect(chooseGoal(craftable)).toEqual({ kind: "craft", recipe: "axe", count: 1 });
@@ -197,9 +207,13 @@ describe("chooseGoal priorities", () => {
       give(v, 1, "rope", 1);
     });
     expect(chooseGoal(noRod)).toEqual({ kind: "craft", recipe: "rod", count: 1 });
+    // (The provisions stage: the team lacks cooked food; the fire is fed and there is wood for tonight.)
     const rod = makeView((v) => {
       v.self.role = "balikci";
       give(v, 0, "rod");
+      provisions(v);
+      v.team.fireFuel = FIRE_FUEL_MAX_TICKS;
+      v.team.chest = { wood: 10 };
     });
     expect(chooseGoal(rod)).toEqual({ kind: "fish", spot: 0 });
   });
@@ -220,33 +234,59 @@ describe("chooseGoal priorities", () => {
     }
   });
 
-  it("the guard (Bekçi first) plants a torch at the raft at dusk", () => {
-    const withTorch = makeView((v) => {
-      v.self.role = "bekci";
-      v.clock.dayPhase = "dusk";
-      v.clock.phaseLeft = secToTicks(8);
-      give(v, 2, "torch");
-      v.mates.push({ id: "bot-2", seat: 2, x: 0, z: 0, role: "hamal", driven: true, human: false, alive: true, downed: false, downedTicks: 0, washed: false, boarded: false, hp: 100, hunger: 90, thirst: 90, slots: [] });
-    });
-    expect(dutyOwner(withTorch, "guard")).toBe("bot-1");
-    expect(chooseGoal(withTorch)).toEqual({ kind: "plantTorch", slot: 2 });
+  it("the raft guard (Bekçi first) takes a torch to the raft at night; the fire keeper plants one there at dusk", () => {
+    const keel = (v: BotView): void => {
+      v.team.stage = 1;
+      v.team.raftHp = 100;
+      v.team.fireFuel = FIRE_FUEL_MAX_TICKS;
+      v.team.chest = { wood: 10 };
+    };
+    const hamal = botMate("bot-2", 2, "hamal");
     const crafts = makeView((v) => {
+      keel(v);
       v.self.role = "bekci";
       v.clock.dayPhase = "dusk";
       v.clock.phaseLeft = secToTicks(8);
-      v.team.fireFuel = secToTicks(120);
-      v.team.chest = { wood: 3, rope: 2 };
+      v.team.chest = { wood: 10, rope: 2 };
+      v.mates.push({ ...hamal });
     });
+    expect(dutyOwner(crafts, "guard")).toBe("bot-1");
     expect(chooseGoal(crafts)).toEqual({ kind: "craft", recipe: "torch", count: 1 });
-    const lit = makeView((v) => {
+    const posted = makeView((v) => {
+      keel(v);
       v.self.role = "bekci";
       v.clock.dayPhase = "night";
       v.clock.phaseLeft = secToTicks(40);
-      v.torches.push({ x: 8, z: 17, life: secToTicks(80) });
-      v.lights.push({ x: 8, z: 17, r: 4, kind: "planted" });
       give(v, 0, "stone", 3);
+      give(v, 1, "torch");
+      give(v, 2, "spear");
+      give(v, 3, "axe");
+      v.mates.push({ ...hamal });
     });
-    expect(chooseGoal(lit).kind).toBe("guard");
+    expect(chooseGoal(posted).kind).toBe("guard");
+    // Without a torch the guard stays in the fire's ring.
+    const unarmed = makeView((v) => {
+      keel(v);
+      v.self.role = "bekci";
+      v.clock.dayPhase = "night";
+      v.clock.phaseLeft = secToTicks(40);
+      v.team.chest = {};
+      give(v, 2, "spear");
+      give(v, 3, "axe");
+      v.mates.push({ ...hamal });
+    });
+    expect(chooseGoal(unarmed).kind).toBe("camp");
+    // The fire keeper (here the Hamal: no Aşçı / Balıkçı) plants its torch by the raft at dusk.
+    const keeper = makeView((v) => {
+      keel(v);
+      v.self.role = "hamal";
+      v.clock.dayPhase = "dusk";
+      v.clock.phaseLeft = secToTicks(8);
+      give(v, 2, "torch");
+      v.mates.push({ ...botMate("bot-2", 2, "bekci") });
+    });
+    expect(dutyOwner(keeper, "fire")).toBe("bot-1");
+    expect(chooseGoal(keeper)).toEqual({ kind: "plantTorch", slot: 2 });
   });
 
   it("stays at the camp at night instead of wandering off to work", () => {
@@ -300,9 +340,9 @@ describe("chooseStandInGoal (reconnect stand-in)", () => {
     ["a puffer in the pocket", (v) => give(v, 2, "puffer")],
     ["a jellyfish and a lit fire", (v) => give(v, 3, "jellyfish")],
     ["stones and a crab at the raft", (v) => ((v.self.x = 5), (v.self.z = 10), give(v, 1, "stone", 2), v.monsters.push({ ...crab("m7", 9, 17), mode: "bite", targetId: "raft" }))],
-    ["a full load of hull wood", (v) => (give(v, 0, "axe"), give(v, 1, "wood", 5), give(v, 2, "wood", 5), give(v, 3, "wood", 5))],
-    ["an axe to craft", (v) => (give(v, 0, "wood", 1), give(v, 1, "stone", 1), (v.team.chest = { rope: 1 }))],
-    ["a rod and a fish spot", (v) => ((v.self.role = "balikci"), give(v, 0, "rod"))],
+    ["a full load of keel rope", (v) => (give(v, 0, "axe"), give(v, 1, "rope", 5), give(v, 2, "rope", 5), give(v, 3, "rope", 5))],
+    ["an axe to craft", (v) => (give(v, 0, "wood", 1), give(v, 1, "stone", 2), (v.team.chest = { rope: 1 }))],
+    ["a rod and a fish spot", (v) => ((v.self.role = "balikci"), give(v, 0, "rod"), provisions(v))],
     ["dusk, the fire short, wood in hand", (v) => ((v.clock.dayPhase = "dusk"), (v.clock.phaseLeft = secToTicks(8)), (v.team.fireFuel = secToTicks(10)), give(v, 0, "wood", 4))],
     ["dusk, the guard with a torch", (v) => ((v.self.role = "bekci"), (v.clock.dayPhase = "dusk"), (v.clock.phaseLeft = secToTicks(8)), give(v, 2, "torch"))],
     ["an Aşçı next to a hungry human", (v) => ((v.self.role = "asci"), give(v, 0, "fish_cooked", 2), v.mates.push(human({ x: 10, hunger: 20 })))],
@@ -344,9 +384,10 @@ describe("chooseStandInGoal (reconnect stand-in)", () => {
     expect(downed).toEqual({ kind: "crawl", to: { x: 8, z: 0 } });
   });
 
-  it("boards the ready raft when the bots would, else waits by it", () => {
-    expect(chooseStandInGoal(makeView((v) => ((v.team.stage = 3), v.mates.push(human({ x: 8, z: 12 })))))).toEqual({ kind: "board" });
-    expect(chooseStandInGoal(makeView((v) => ((v.team.stage = 3), v.mates.push(human({ x: -30, z: -30 })))))).toMatchObject({ kind: "wait" });
+  it("boards the ready raft when the bots would (the push-off counting), else waits by it", () => {
+    expect(chooseStandInGoal(makeView((v) => (ready(v), (v.team.launchTicksLeft = 600), v.mates.push(human({ x: 8, z: 12 })))))).toEqual({ kind: "board" });
+    expect(chooseStandInGoal(makeView((v) => (ready(v), v.mates.push(human({ x: 8, z: 12 })))))).toMatchObject({ kind: "wait" });
+    expect(chooseStandInGoal(makeView((v) => (ready(v), v.mates.push(human({ x: -30, z: -30 })))))).toMatchObject({ kind: "wait" });
   });
 
   it("keeps to the light after dark: the fire's ring, a planted torch, a teammate's torch, else a teammate", () => {
@@ -374,49 +415,202 @@ describe("chooseStandInGoal (reconnect stand-in)", () => {
   });
 });
 
+/** The provisions stage is current and open, nothing delivered yet. */
+function provisions(v: BotView): void {
+  v.team.stage = 5;
+  v.team.rows = [{ item: "fish_cooked", kinds: ["fish_cooked", "crab_cooked", "fish_golden"], have: 0, need: 5 }, { item: "barrel", kinds: ["barrel"], have: 0, need: 2 }];
+  v.team.nextRows = [];
+}
+
+/** Every stage assembled and the launch window open. */
+function ready(v: BotView): void {
+  v.team.stage = RAFT_LAUNCH_STAGE;
+  v.team.rows = [];
+  v.team.raftHp = 100;
+  v.team.canBoard = true;
+}
+
+/** The deck (stage 1) is current, the mast next. */
+function deck(v: BotView): void {
+  v.team.stage = 1;
+  v.team.raftHp = 100;
+  v.team.rows = raftRows(1, () => 0, (i) => raftStageNeeds(1, 3)[i] ?? 0);
+  v.team.nextRows = raftRows(2, () => 0, (i) => raftStageNeeds(2, 3)[i] ?? 0);
+  v.team.raftWorkNeed = raftAssemblyTicks(1);
+  v.team.fireFuel = FIRE_FUEL_MAX_TICKS;
+}
+
+describe("Long Tide economy (bill of materials, assembly, escort, repair)", () => {
+  it("expands the raft's needs over RECIPES: planks → logs + the workbench, nails → the anvil + scrap", () => {
+    const v = makeView((x) => {
+      deck(x);
+      x.team.chest = { wood: 20 };
+    });
+    const plan = teamPlan(v);
+    // Deck: 12 planks = 4 sawn logs at the workbench (bench 1, not built yet).
+    expect(plan.crafts.raft_part).toBeGreaterThanOrEqual(4);
+    expect(plan.crafts.bench_1).toBe(1);
+    expect(plan.raw.log).toBeGreaterThanOrEqual(4 + 1); // + the mast log (prestock)
+    // The mast's nails need the anvil (bench 2) and scrap.
+    expect(plan.crafts.nails).toBe(2);
+    expect(plan.crafts.bench_2).toBe(1);
+    expect(plan.raw.scrap).toBe(2 + 2);
+    expect(plan.raw.rope).toBeGreaterThanOrEqual(4 + 5 + 2);
+    // Planks in the chest count: fewer logs to saw.
+    const stocked = teamPlan(makeView((x) => (deck(x), (x.team.chest = { wood: 20, raft_part: 6 }))));
+    expect(stocked.crafts.raft_part).toBe(plan.crafts.raft_part! - 2);
+    expect(stocked.raw.log).toBe(plan.raw.log - 2);
+    // The workbench up: no bench_1 craft any more.
+    expect(teamPlan(makeView((x) => (deck(x), (x.team.benchTier = 1)))).crafts.bench_1).toBeUndefined();
+  });
+
+  it("crafts the plan's processed materials at the camp (bench and day respected)", () => {
+    const v = makeView((x) => {
+      deck(x);
+      x.self.x = -4;
+      x.self.z = 4;
+      x.team.benchTier = 1;
+      x.team.chest = { log: 2, wood: 10 };
+      give(x, 0, "axe");
+      give(x, 1, "hammer");
+    });
+    // Both logs in the chest, as many planks as fit in its pockets.
+    expect(chooseGoal(v)).toEqual({ kind: "craft", recipe: "raft_part", count: 2 });
+    // No workbench yet: it builds the workbench first when it can.
+    const noBench = makeView((x) => {
+      deck(x);
+      x.self.x = -4;
+      x.self.z = 4;
+      x.team.chest = { log: 2, wood: 10, rope: 4, stone: 4 };
+      give(x, 0, "axe");
+    });
+    expect(chooseGoal(noBench)).toEqual({ kind: "craft", recipe: "bench_1", count: 1 });
+    expect(canCraft(makeView((x) => ((x.team.benchTier = 1), (x.team.chest = { raft_part: 3, stone: 4, scrap: 2 }))), "bench_2")).toBe(false); // minDay 3
+    expect(canCraft(makeView((x) => ((x.team.benchTier = 1), (x.clock.day = 3), (x.team.chest = { raft_part: 3, stone: 4, scrap: 2 }))), "bench_2")).toBe(true);
+  });
+
+  it("fells trees with an axe for logs, salvages the wreck with a hammer for scrap", () => {
+    const keel = makeView((x) => {
+      x.team.fireFuel = FIRE_FUEL_MAX_TICKS;
+      x.team.benchTier = 1;
+      x.team.chest = { wood: 10, rope: 10, stone: 10 };
+      give(x, 0, "axe");
+      give(x, 1, "hammer");
+    });
+    expect(chooseGoal(keel)).toEqual({ kind: "fell", node: 0 });
+    // Without an axe there is no log to be had (hand chopping drops none).
+    const noAxe = chooseGoal(makeView((x) => ((x.team.fireFuel = FIRE_FUEL_MAX_TICKS), (x.team.chest = { wood: 10, rope: 10, stone: 10 }))));
+    expect(noAxe.kind).not.toBe("fell");
+    const mast = makeView((x) => {
+      x.team.stage = 2;
+      x.team.raftHp = 100;
+      x.team.benchTier = 2;
+      x.clock.day = 3;
+      x.team.rows = raftRows(2, (i) => (i === 1 ? 0 : (raftStageNeeds(2, 3)[i] ?? 0)), (i) => raftStageNeeds(2, 3)[i] ?? 0);
+      x.team.nextRows = [];
+      x.team.fireFuel = FIRE_FUEL_MAX_TICKS;
+      x.team.chest = { wood: 10, rope: 10, stone: 10 };
+      give(x, 0, "axe");
+      give(x, 1, "hammer");
+    });
+    expect(chooseGoal(mast)).toEqual({ kind: "salvage" });
+    expect(chooseGoal(makeView((x) => Object.assign(x, mast, { team: { ...mast.team, wreckScrap: 0 } }))).kind).not.toBe("salvage");
+  });
+
+  it("holds E at the raft once a stage's materials are in — both bots for the mast", () => {
+    const full = (x: BotView, stage: number): void => {
+      x.team.stage = stage;
+      x.team.raftHp = 100;
+      x.clock.day = 3;
+      x.team.fireFuel = FIRE_FUEL_MAX_TICKS;
+      x.team.rows = raftRows(stage, (i) => raftStageNeeds(stage, 3)[i] ?? 0, (i) => raftStageNeeds(stage, 3)[i] ?? 0);
+      x.team.nextRows = raftRows(stage + 1, () => 0, (i) => raftStageNeeds(stage + 1, 3)[i] ?? 0);
+    };
+    expect(chooseGoal(makeView((x) => full(x, 0)))).toEqual({ kind: "assemble" });
+    for (const role of ["hamal", "balikci"] as const) {
+      const v = makeView((x) => {
+        full(x, 2);
+        x.self.role = role;
+        x.mates.push(botMate("bot-2", 2, role === "hamal" ? "balikci" : "hamal"));
+      });
+      expect(chooseGoal(v), role).toEqual({ kind: "assemble" });
+    }
+    // Not before the stage's day: nothing to assemble yet.
+    expect(chooseGoal(makeView((x) => (full(x, 2), (x.team.stageOpen = false)))).kind).not.toBe("assemble");
+    // Too far away to come.
+    expect(chooseGoal(makeView((x) => (full(x, 0), (x.self.x = -80), (x.self.z = -80)))).kind).not.toBe("assemble");
+  });
+
+  it("walks beside a teammate carrying a log (the nearest free bot), and carries its own log straight to the raft", () => {
+    const carrier = { ...botMate("h1", 0, ""), x: 8, z: 0, driven: false, human: true, slots: [{ kind: "log" as const, count: 1 }] };
+    const v = makeView((x) => {
+      x.team.fireFuel = FIRE_FUEL_MAX_TICKS;
+      x.team.benchTier = 1;
+      x.team.chest = { wood: 10, rope: 10, stone: 10 };
+      give(x, 0, "axe");
+      give(x, 1, "hammer");
+      x.mates.push({ ...carrier });
+    });
+    expect(chooseGoal(v)).toEqual({ kind: "escort", playerId: "h1" });
+    // Someone already walks with them.
+    const taken = makeView((x) => {
+      x.team.fireFuel = FIRE_FUEL_MAX_TICKS;
+      x.team.chest = { wood: 10, rope: 10, stone: 10 };
+      x.mates.push({ ...carrier }, { ...botMate("bot-2", 2, "balikci"), x: 9, z: 0.5 });
+    });
+    expect(chooseGoal(taken).kind).not.toBe("escort");
+    // Too far.
+    expect(chooseGoal(makeView((x) => ((x.team.fireFuel = FIRE_FUEL_MAX_TICKS), x.mates.push({ ...carrier, x: 40, z: 0 })))).kind).not.toBe("escort");
+    // Our own log: the keel takes it.
+    expect(chooseGoal(makeView((x) => ((x.team.fireFuel = FIRE_FUEL_MAX_TICKS), give(x, 2, "log"))))).toEqual({ kind: "deliver" });
+    // A log the current stage doesn't take (the deck: it becomes planks) goes into the chest.
+    expect(chooseGoal(makeView((x) => (deck(x), give(x, 2, "log"))))).toEqual({ kind: "chestPut", items: [{ kind: "log", count: 1 }] });
+  });
+
+  it("patches the raft with a hammer and a plank (fetching planks from the chest) when its hp is low", () => {
+    const low = (x: BotView): void => {
+      x.team.stage = 2;
+      x.team.raftHp = 40;
+      x.clock.day = 3;
+      x.team.fireFuel = FIRE_FUEL_MAX_TICKS;
+      x.team.rows = raftRows(2, () => 0, (i) => raftStageNeeds(2, 3)[i] ?? 0);
+      x.team.nextRows = [];
+      give(x, 0, "axe");
+      give(x, 1, "hammer");
+    };
+    expect(chooseGoal(makeView((x) => (low(x), give(x, 2, "raft_part", 2))))).toEqual({ kind: "repair" });
+    expect(chooseGoal(makeView((x) => (low(x), (x.team.chest = { raft_part: 4 }))))).toEqual({ kind: "chestTake", items: [{ kind: "raft_part", count: 2 }] });
+    // Healthy raft, or no hammer: no repair.
+    expect(chooseGoal(makeView((x) => (low(x), (x.team.raftHp = 90), give(x, 2, "raft_part", 2)))).kind).not.toBe("repair");
+    expect(chooseGoal(makeView((x) => (low(x), give(x, 1, "rope", 1), give(x, 2, "raft_part", 2)))).kind).not.toBe("repair");
+  });
+});
+
 describe("pacing and duties", () => {
-  it("measures raft progress without the wreck's free hull wood", () => {
+  it("measures raft progress over the stages (materials, then assembly)", () => {
     const v = makeView();
     expect(raftProgress(v.team)).toBe(0);
-    v.team.hullWood = v.team.cost.hullWood;
-    expect(raftProgress(v.team)).toBeGreaterThan(0.3);
-    v.team.stage = 3;
+    for (const r of v.team.rows) r.have = r.need;
+    const mats = raftProgress(v.team);
+    expect(mats).toBeGreaterThan(0.1);
+    v.team.raftWork = v.team.raftWorkNeed;
+    expect(raftProgress(v.team)).toBeGreaterThan(mats);
+    v.team.stage = RAFT_LAUNCH_STAGE;
     expect(raftProgress(v.team)).toBe(1);
   });
 
-  it("eases off the raft when well ahead of the schedule (more slack with humans aboard)", () => {
-    const early = makeView((v) => {
-      v.team.hullWood = v.team.cost.hullWood;
-      v.team.stage = 1;
-    });
-    expect(raftSchedule(early.clock)).toBeLessThan(0.05);
-    expect(aheadOfSchedule(early)).toBe(true);
-    // Ahead: a full load of mast wood waits in the chest instead of going to the raft.
-    early.self.x = -5;
-    early.self.z = 2;
-    for (let i = 0; i < 4; i++) give(early, i, "wood", 5);
-    const g = chooseGoal(early);
-    expect(g.kind).toBe("chestPut");
-    // A little ahead: bots ease off alone, but keep helping a human who pushes the raft.
-    const human = { ...botMate("h1", 0, ""), driven: false, human: true };
-    const bit = makeView((v) => (v.team.hullWood = 6));
-    expect(aheadOfSchedule(bit)).toBe(true);
-    const withHuman = makeView((v) => {
-      v.team.hullWood = 6;
-      v.mates.push(human);
-    });
-    expect(aheadOfSchedule(withHuman)).toBe(false);
-  });
-
-  it("calls everyone to the raft when it's late", () => {
+  it("calls everyone to the raft on the last day", () => {
     const v = makeView((x) => {
       x.self.role = "balikci";
       give(x, 0, "rod");
-      x.clock.day = 3;
+      x.clock.day = x.clock.days;
+      x.team.fireFuel = FIRE_FUEL_MAX_TICKS;
+      x.team.chest = { wood: 10 };
     });
     expect(raftUrgent(v)).toBe(true);
-    // The hull needs wood: even the fisher goes chopping.
-    expect(chooseGoal(v)).toEqual({ kind: "gather", node: 0 });
+    // The keel needs rope: even the fisher goes for the rope bush.
+    expect(chooseGoal(v)).toEqual({ kind: "gather", node: 2 });
+    expect(raftUrgent(makeView((x) => (x.clock.day = 1)))).toBe(false);
   });
 
   it("spreads the team duties over the bots", () => {
@@ -439,7 +633,10 @@ describe("pacing and duties", () => {
       x.self.seat = 2;
       x.clock.dayPhase = "dusk";
       x.clock.phaseLeft = secToTicks(6);
-      x.team.fireFuel = secToTicks(120);
+      x.team.fireFuel = FIRE_FUEL_MAX_TICKS;
+      x.team.stage = 1;
+      x.team.raftHp = 100;
+      x.team.chest = { wood: 10 };
       give(x, 1, "torch");
       x.mates.push(botMate("bot-9", 1, "bekci"));
     });

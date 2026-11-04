@@ -3,7 +3,8 @@
 // same cliff / wall / cover rules as stepPlayer, so steering tests don't depend on the sim's progress.
 
 import { MAX_WALK_NORMAL_Y, PLAYER_RADIUS, STEP_MAX, TICK_RATE, WALK_SPEED, timingsFor } from "../../shared/constants.js";
-import { raftCost } from "../../shared/items.js";
+import { raftStageNeeds } from "../../shared/items.js";
+import { raftRows } from "./botSense.js";
 import { createHeightfield, gridHash, heightAt, normalAt } from "../../shared/island/heightfield.js";
 import type { Heightfield, IslandDef, NodeDef } from "../../shared/island/types.js";
 import type { WorldQuery } from "../../shared/sim/context.js";
@@ -185,16 +186,20 @@ export function makeView(patch: (v: BotView) => void = () => {}): BotView {
     team: {
       stage: 0,
       seats: 3,
-      cost: raftCost(3),
-      hullWood: 3,
-      mastWood: 0,
-      mastRope: 0,
-      food: 0,
-      water: 0,
+      rows: raftRows(0, () => 0, (i) => raftStageNeeds(0, 3)[i] ?? 0),
+      stageOpen: true,
+      nextRows: raftRows(1, () => 0, (i) => raftStageNeeds(1, 3)[i] ?? 0),
+      raftWork: 0,
+      raftWorkNeed: 750,
+      raftHp: 0,
+      canBoard: false,
+      benchTier: 0,
+      wreckScrap: 5,
+      springCharges: 10,
+      bossDown: false,
       fireFuel: 1800,
       chest: {},
       launchTicksLeft: 0,
-      sail: false,
     },
     clock: {
       phase: "playing",
@@ -203,7 +208,8 @@ export function makeView(patch: (v: BotView) => void = () => {}): BotView {
       dayPhase: "day",
       phaseLeft: t.day - 300,
       phaseLength: t.day,
-      stormLeft: 3 * (t.day + t.dusk + t.night) - 300,
+      stormLeft: t.days * (t.day + t.dusk + t.night) - 300,
+      days: t.days,
       dayTicks: t.day,
       duskTicks: t.dusk,
       nightTicks: t.night,

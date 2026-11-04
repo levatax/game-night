@@ -16,13 +16,14 @@ import {
   SPRINT_SPEED,
   TORCH_BURN_TICKS,
   TORCH_LIGHT_RADIUS,
+  RAFT_HP_MAX,
+  RAFT_LAUNCH_STAGE,
   WALK_SPEED,
-  WRECK_HULL_WOOD,
 } from "../../shared/constants";
 import { generateIsland } from "../../shared/island/generate";
 import { heightAt } from "../../shared/island/heightfield";
 import type { IslandDef } from "../../shared/island/types";
-import { raftCost } from "../../shared/items";
+import { raftAssemblyTicks, raftStageNeeds } from "../../shared/items";
 import { cycleTicks } from "../../shared/rules/schedule";
 import type { Layout, RaftStage, StructureKind, StructureView, TeamView, Weather } from "../../shared/types";
 import type { Quality } from "../src/app/settings";
@@ -89,15 +90,18 @@ function makeTeam(index: number): TeamView {
     index,
     seats: 4,
     stage: 0,
-    hullWood: WRECK_HULL_WOOD,
-    mastWood: 0,
-    mastRope: 0,
-    food: 0,
-    water: 0,
+    raftHave: [0, 0, 0],
+    raftNeed: raftStageNeeds(0, 4),
+    raftWork: 0,
+    raftWorkNeed: raftAssemblyTicks(0),
+    raftHp: 0,
+    benchTier: 0,
+    wreckScrap: 6,
+    springCharges: 12,
+    bossDown: false,
     fireFuel: FIRE_START_FUEL_TICKS,
     chest: new Map<string, number>(),
     flare: false,
-    sail: false,
     secretRevealed: false,
     secretOpened: false,
     springRevealed: false,
@@ -151,45 +155,53 @@ function updateUrl(): void {
 
 /* ---------------------------------------------------------- mock gameplay */
 
-function recomputeStage(team: TeamView): void {
-  const cost = raftCost(team.seats, false);
-  let stage: RaftStage = 0;
-  if (team.hullWood >= cost.hullWood) {
-    stage = 1;
-    if ((team.mastWood >= cost.mastWood && team.mastRope >= cost.mastRope) || team.sail) {
-      stage = 2;
-      if (team.food >= cost.food && team.water >= cost.water) stage = 3;
-    }
-  }
-  team.stage = stage;
+/** Point the mock team at raft stage `stage` (fresh materials / work), hp kept once the keel exists. */
+function setRaftStage(team: TeamView, stage: RaftStage): void {
+  team.stage = Math.max(0, Math.min(RAFT_LAUNCH_STAGE, stage));
+  team.raftNeed = raftStageNeeds(team.stage, team.seats);
+  team.raftHave = [0, 0, 0];
+  team.raftWork = 0;
+  team.raftWorkNeed = raftAssemblyTicks(team.stage);
+  if (team.stage >= 1 && team.raftHp <= 0) team.raftHp = RAFT_HP_MAX;
+  if (team.stage === 0) team.raftHp = 0;
 }
 
-function deliver(kind: "hull" | "mastWood" | "rope" | "food" | "water", amount = 1): void {
+/** Mock raft actions: "material" fills the current stage's first open slot, "assemble" adds work, "gnaw" hurts it. */
+function deliver(kind: "material" | "assemble" | "gnaw", amount = 1): void {
   const team = teams[0];
   if (!team) return;
-  const cost = raftCost(team.seats, false);
-  if (kind === "hull") team.hullWood = Math.max(0, Math.min(cost.hullWood, team.hullWood + amount));
-  if (kind === "mastWood") team.mastWood = Math.max(0, Math.min(cost.mastWood, team.mastWood + amount));
-  if (kind === "rope") team.mastRope = Math.max(0, Math.min(cost.mastRope, team.mastRope + amount));
-  if (kind === "food") team.food = Math.max(0, Math.min(cost.food, team.food + amount));
-  if (kind === "water") team.water = Math.max(0, Math.min(cost.water, team.water + amount));
-  recomputeStage(team);
-  lastLog = `raft stage ${team.stage} · hull ${team.hullWood}/${cost.hullWood} mast ${team.mastWood}/${cost.mastWood} rope ${team.mastRope}/${cost.mastRope} food ${team.food}/${cost.food} water ${team.water}/${cost.water}`;
+  const have = [...team.raftHave];
+  if (kind === "material") {
+    const slot = have.findIndex((h, i) => h < (team.raftNeed[i] ?? 0));
+    if (slot >= 0) have[slot] = Math.min(team.raftNeed[slot] ?? 0, have[slot]! + amount);
+    team.raftHave = have;
+  } else if (kind === "assemble") {
+    const done = have.every((h, i) => h >= (team.raftNeed[i] ?? 0));
+    if (done && team.stage < RAFT_LAUNCH_STAGE) {
+      team.raftWork = Math.min(team.raftWorkNeed, team.raftWork + Math.round(amount * team.raftWorkNeed * 0.25));
+      if (team.raftWork >= team.raftWorkNeed) setRaftStage(team, team.stage + 1);
+    }
+  } else if (team.stage >= 1) {
+    team.raftHp = Math.max(0, team.raftHp - 20 * amount);
+    if (team.raftHp === 0) {
+      setRaftStage(team, team.stage - 1);
+      team.raftHave = [...team.raftNeed];
+      if (team.stage >= 1) team.raftHp = 40;
+    }
+  }
+  lastLog = `raft stage ${team.stage} · have ${[...team.raftHave].join("/")} of ${[...team.raftNeed].join("/")} · work ${team.raftWork}/${team.raftWorkNeed} · hp ${team.raftHp}`;
 }
 
 function finishRaft(): void {
   const team = teams[0];
   if (!team) return;
-  const cost = raftCost(team.seats, false);
-  Object.assign(team, { hullWood: cost.hullWood, mastWood: cost.mastWood, mastRope: cost.mastRope, food: cost.food, water: cost.water });
-  recomputeStage(team);
+  setRaftStage(team, RAFT_LAUNCH_STAGE);
 }
 
 function resetRaft(): void {
   const t = teams[0];
   if (!t) return;
-  Object.assign(t, { hullWood: WRECK_HULL_WOOD, mastWood: 0, mastRope: 0, food: 0, water: 0, sail: false });
-  recomputeStage(t);
+  setRaftStage(t, 0);
 }
 
 /** Decrement the node nearest to the camera's look point (like one gather). */
@@ -402,19 +414,10 @@ function refreshPanel(): void {
   ]);
   const team = teams[0];
   section(`Raft · stage ${team?.stage ?? 0}`, [
-    button("+hull", false, () => deliver("hull", 1)),
-    button("+3 hull", false, () => deliver("hull", 3)),
-    button("gnaw", false, () => deliver("hull", -1)),
-    button("+mast", false, () => deliver("mastWood", 1)),
-    button("+rope", false, () => deliver("rope", 1)),
-    button("+food", false, () => deliver("food", 1)),
-    button("+water", false, () => deliver("water", 1)),
-    button("Old sail", team?.sail === true, () => {
-      if (team) {
-        team.sail = !team.sail;
-        recomputeStage(team);
-      }
-    }),
+    button("+material", false, () => deliver("material", 1)),
+    button("+5 material", false, () => deliver("material", 5)),
+    button("assemble", false, () => deliver("assemble", 1)),
+    button("gnaw", false, () => deliver("gnaw", 1)),
     button("Finish", false, finishRaft),
     button("Reset", false, resetRaft),
     slider("Launch", launch, 0, 1, 0.01, (v) => (launch = v)),
@@ -613,7 +616,7 @@ declare global {
       /** Fly camera pose. */
       flyTo(x: number, y: number, z: number, yaw: number, pitch: number): void;
       finishRaft(): void;
-      deliver(kind: "hull" | "mastWood" | "rope" | "food" | "water", amount?: number): void;
+      deliver(kind: "material" | "assemble" | "gnaw", amount?: number): void;
       setFuel(ticks: number): void;
       place(kind: StructureKind): void;
       chop(): void;

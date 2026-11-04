@@ -79,6 +79,8 @@ export interface WarmthConditions {
   nearFire: boolean;
   /** Night on a biome with nightChill. */
   nightChill: boolean;
+  /** × the loss when the night is the only chill (BiomeDef.nightChillMult; volcanic 0.5). Default 1. */
+  nightChillMult?: number;
   /** Raining and not sheltered (cave / hut). */
   rainChill: boolean;
   /** Swimming and the character loses warmth in water. */
@@ -95,7 +97,11 @@ export interface WarmthConditions {
  */
 export function warmthPerSec(c: WarmthConditions): number {
   if (c.nearFire) return WARMTH_GAIN_FIRE_PER_SEC;
-  if (c.nightChill || c.rainChill || c.waterChill) return -(c.litTorch ? TORCH_WARMTH_LOSS_PER_SEC : WARMTH_LOSS_PER_SEC);
+  if (c.nightChill || c.rainChill || c.waterChill) {
+    const loss = c.litTorch ? TORCH_WARMTH_LOSS_PER_SEC : WARMTH_LOSS_PER_SEC;
+    const onlyNight = !c.rainChill && !c.waterChill;
+    return -loss * (onlyNight ? (c.nightChillMult ?? 1) : 1);
+  }
   return c.daylight ? SUN_WARMTH_PER_SEC : 0;
 }
 

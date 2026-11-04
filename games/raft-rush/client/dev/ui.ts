@@ -3,7 +3,7 @@
 // the HUD animation (compass turning, clock running) for stable screenshots. Every UiEventMap event is logged.
 
 import { CHARACTER_IDS, PLAYER_COLORS } from "../../shared/constants";
-import { RECIPES, RECIPE_IDS, raftCost } from "../../shared/items";
+import { RECIPES, RECIPE_IDS, raftStageNeeds } from "../../shared/items";
 import type { CharacterId, FishLoot, ItemKind, RecipeId, StatsView, TreasureId } from "../../shared/types";
 import { settings } from "../src/app/settings";
 import { setLanguage } from "../src/i18n";
@@ -115,7 +115,7 @@ function mates(): TeammateModel[] {
 }
 
 function baseHud(): HudModel {
-  const cost = raftCost(4);
+  const need = raftStageNeeds(2, 4);
   return {
     phase: "playing",
     day: 2,
@@ -141,18 +141,25 @@ function baseHud(): HudModel {
     charge: 0,
     fishing: null,
     raft: {
-      stage: 1,
+      stage: 2,
+      stages: 7,
       parts: [
-        { part: "hullWood", have: cost.hullWood, need: cost.hullWood },
-        { part: "mastWood", have: 3, need: cost.mastWood },
-        { part: "mastRope", have: 2, need: cost.mastRope },
-        { part: "food", have: 0, need: cost.food },
-        { part: "water", have: 0, need: cost.water },
+        { item: "log", have: need[0]!, need: need[0]! },
+        { item: "nails", have: 3, need: need[1]! },
+        { item: "rope", have: 2, need: need[2]! },
       ],
+      lockDay: 0,
+      assembly: -1,
+      minHolders: 2,
+      holders: 0,
+      hp: 0.72,
+      hpLow: false,
       ready: false,
       aboard: 0,
       total: 5,
     },
+    status: { objective: "coach.obj_day3", launchDay: 7, launchOpen: false, boss: "tonight", spring: 9 },
+    heavy: { escorted: true, pct: 85 },
     fire: { frac: 0.55, lit: true, low: false, secLeft: 99 },
     compass: { yaw: 0, marks: marks(0) },
     downed: null,
@@ -266,7 +273,7 @@ const STATES: State[] = [
       m.stormSecLeft = 465;
       m.prompt = null;
       m.crosshair = "dot";
-      m.raft = { ...m.raft, stage: 0, parts: m.raft.parts.map((p) => ({ ...p, have: p.part === "hullWood" ? 3 : 0 })) };
+      m.raft = { ...m.raft, stage: 0, parts: m.raft.parts.map((p) => ({ ...p, have: 0 })), hp: -1 };
     }),
   },
   {
@@ -374,7 +381,7 @@ const STATES: State[] = [
     run: () =>
       showHud((m) => {
         m.day = 3;
-        m.raft = { ...m.raft, stage: 3, parts: m.raft.parts.map((p) => ({ ...p, have: p.need })), ready: true, aboard: 3, total: 5 };
+        m.raft = { ...m.raft, stage: 6, parts: [], ready: true, aboard: 3, total: 5 };
         m.launch = { secLeft: 14, aboard: 3, total: 5 };
         m.prompt = { kind: "board", key: "prompt.board", keyGlyph: "E", hold: false, progress: 0, ok: true, reason: "" };
       }, "dusk"),
@@ -385,7 +392,7 @@ const STATES: State[] = [
     label: "Boarded",
     run: () =>
       showHud((m) => {
-        m.raft = { ...m.raft, stage: 3, parts: m.raft.parts.map((p) => ({ ...p, have: p.need })), ready: true, aboard: 4, total: 5 };
+        m.raft = { ...m.raft, stage: 6, parts: [], ready: true, aboard: 4, total: 5 };
         m.launch = { secLeft: 4, aboard: 4, total: 5 };
         m.boarded = true;
         m.prompt = null;

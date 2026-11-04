@@ -67,7 +67,7 @@ export interface WorldContext {
   lights(): LightRing[];
   /** (x, z) is inside any light ring (optionally ignoring rings smaller than `minR`). */
   inLight(x: number, z: number): boolean;
-  /** Remove hull wood (gnawing / fire); updates the stage; emits raftDamage. */
+  /** Lower the raft hp (gnawing / puffers / the boss; no-op before the keel exists); at 0 the highest assembled stage is lost; emits raftDamage. */
   damageRaft(team: number, amount: number, byMonsterId: string, pos: Vec3Like): void;
   /** Take one item (a random kind, or `kind`) out of the team chest; null when empty. Emits chestChanged "steal". */
   stealFromChest(team: number, kind?: ItemKind): ItemKind | null;

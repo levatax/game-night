@@ -6,8 +6,9 @@
 import {
   BAR_MAX,
   CHANNEL,
-  DAYS,
+  CHARACTERS,
   DEFAULT_CHARACTER,
+  FIRE_DAY_BURN_MULT,
   FIRE_FUEL_MAX_TICKS,
   FIRE_LOW_FRACTION,
   FIRE_START_FUEL_TICKS,
@@ -17,21 +18,27 @@ import {
   MAX_PLAYERS,
   PALETTE,
   PUFFER_FUSE_TICKS,
+  RAFT_HP_BOARD,
+  RAFT_HP_MAX,
+  RAFT_LAUNCH_STAGE,
+  RAFT_STAGES,
   RAIN_FIRE_DRAIN_MULT,
   REVIVE_TICKS,
   SOLO_AUTO_BOTS,
   STORM_WARN_SEC,
   TICK_RATE,
   TORCH_BURN_TICKS,
+  DIFFICULTIES,
+  fireRepels,
   playerColor,
   type Timings,
 } from "../../../shared/constants";
 import type { IslandDef, IslandSite } from "../../../shared/island/types";
-import { ITEM_KINDS, ITEMS, RECIPES, RECIPE_IDS, isItemKind, isThrowable, raftCost, type RaftCost } from "../../../shared/items";
+import { ITEM_KINDS, ITEMS, RECIPES, RECIPE_IDS, isHeavy, isItemKind, isThrowable } from "../../../shared/items";
 import type { MatchEndEvent, StandingEntry } from "../../../shared/protocol";
 import { channelTicksFor, type Interaction } from "../../../shared/rules/interact";
 import { countOf, roomFor, slotCount, slotKind, SLOTS, type Inventory } from "../../../shared/rules/inventory";
-import { clockAt, matchTicks, type ClockInfo } from "../../../shared/rules/schedule";
+import { clockAt, launchDayFor, matchTicks, stageDayLock, type ClockInfo } from "../../../shared/rules/schedule";
 import { wrapAngle, yawFromDir } from "../../../shared/sim/math";
 import { chargeFraction, heldKind } from "../../../shared/sim/player";
 import type {
@@ -59,7 +66,9 @@ import type {
   MatchEndModel,
   MatchEndRow,
   PromptModel,
+  RaftHudModel,
   RaftPartModel,
+  StatusModel,
   RecipeRowModel,
   ScoreRow,
   SlotModel,
@@ -334,11 +343,11 @@ export function buildHudModel(i: HudInputs): HudModel {
         : prompt
           ? "interact"
           : "dot";
-  const raft = raftHud(state, team);
+  const raft = raftHud(state, team, timings, clock.day);
   return {
     phase: i.phase,
     day: clock.day,
-    days: DAYS,
+    days: timings.days,
     dayPhase: clock.dayPhase,
     phaseSecLeft: i.phase === "landing" ? timings.day / TICK_RATE : clock.phaseLeft / TICK_RATE,
     stormSecLeft: clock.stormLeft / TICK_RATE,
@@ -360,13 +369,15 @@ export function buildHudModel(i: HudInputs): HudModel {
     charge,
     fishing: fishingHud(me, i.fishBite, i.serverTick),
     raft,
-    fire: fireHud(team, state.weather),
+    status: statusHud(i, team, timings, clock),
+    heavy: heavyHud(me),
+    fire: fireHud(team, state.weather, clock.dayPhase),
     compass: { yaw: i.origin?.yaw ?? me?.yaw ?? 0, marks: buildCompassMarks(i, clock) },
     downed: me && me.downed && me.alive ? { secLeft: me.downedTicks / TICK_RATE, revive: reviveProgress(state, me) } : null,
     washed:
       me && me.washed && !me.spectator
         ? {
-            willRespawn: (i.willRespawn ?? true) && clock.day < DAYS,
+            willRespawn: (i.willRespawn ?? true) && clock.day < timings.days,
             secToDawn: ticksToDawn(clock, timings) / TICK_RATE,
           }
         : null,
@@ -374,7 +385,7 @@ export function buildHudModel(i: HudInputs): HudModel {
     launch: state.launchTicksLeft > 0 && (i.phase === "playing" || i.phase === "landing") ? { secLeft: state.launchTicksLeft / TICK_RATE, aboard: raft.aboard, total: raft.total } : null,
     stormWarning:
       i.phase === "storm" ||
-      (i.phase === "playing" && clock.day >= DAYS && clock.dayPhase === "night" && clock.stormLeft <= STORM_WARN_SEC * TICK_RATE),
+      (i.phase === "playing" && clock.day >= timings.days && clock.dayPhase === "night" && clock.stormLeft <= STORM_WARN_SEC * TICK_RATE),
     spectator: !!me?.spectator,
     crosshair,
     teammates: buildTeammates(state, me),
@@ -436,7 +447,18 @@ function interactionPrompt(it: Interaction, i: Pick<HudInputs, "sim" | "me" | "i
     progress: channelProgress(it, i.sim, i.me, i.island, i.state),
     ok: it.ok,
     reason: it.ok ? "" : it.reason,
+    ...(it.ok ? {} : reasonParamsFor(it.reason, i.state, i.me)),
   };
+}
+
+/** {day} for the day-locked raft reasons (the server's reject carries none: computed from the shared schedule). */
+function reasonParamsFor(reason: string, state: RaftStateView, me: PlayerView | null): { reasonParams?: Record<string, string | number> } {
+  if (reason !== "stageLocked" && reason !== "seaRough") return {};
+  const team = me ? teamOf(state, me.team) : teamOf(state, 0);
+  if (!team) return {};
+  const timings = { cheapRaft: state.fast };
+  const day = reason === "seaRough" ? launchDayFor(state.difficulty, timings) : stageDayLock(team.stage, timings);
+  return { reasonParams: { day } };
 }
 
 /** 0..1 of the running hold channel when it targets this interaction. */
@@ -454,6 +476,12 @@ export function channelProgress(
     const need = channelTicksFor(CHANNEL.GATHER, node, me ? countOf(me, "axe") > 0 : false);
     return frac01(sim.channelTicks, need);
   }
+  if (it.channel === CHANNEL.BUILD) {
+    // Assembly is a team bar: the current stage's work.
+    const team = me ? teamOf(state, me.team) : null;
+    return team && team.raftWorkNeed > 0 ? frac01(team.raftWork, team.raftWorkNeed) : 0;
+  }
+  if (it.channel === CHANNEL.SALVAGE) return frac01(sim.channelTicks, channelTicksFor(CHANNEL.SALVAGE, null, false, me?.character));
   if (it.channel === CHANNEL.REVIVE) {
     const target = state.players.get(it.playerId);
     if (!target || target.seat !== sim.channelTarget) return 0;
@@ -473,48 +501,104 @@ function fishingHud(me: PlayerView | null, bite: HudInputs["fishBite"], serverTi
   return null;
 }
 
-/** Raft requirements for the team (fast test rooms: one of everything). */
-export function teamCost(state: RaftStateView, team: TeamView): RaftCost {
-  return raftCost(team.seats, state.fast);
+/** The current stage's requirement rows (have clamped to need), in slot order; empty on the launch stage. */
+export function raftParts(team: TeamView): RaftPartModel[] {
+  const def = RAFT_STAGES[team.stage];
+  if (!def) return [];
+  return def.req.map((r, i) => {
+    const need = team.raftNeed[i] ?? 0;
+    return { item: r.item, have: Math.max(0, Math.min(team.raftHave[i] ?? 0, need)), need };
+  });
 }
 
-/** All five requirements (have clamped to need), in stage order. */
-export function raftParts(team: TeamView, cost: RaftCost): RaftPartModel[] {
-  const part = (p: RaftPartModel["part"], have: number, need: number): RaftPartModel => ({ part: p, have: Math.max(0, Math.min(have, need)), need });
-  return [
-    part("hullWood", team.hullWood, cost.hullWood),
-    part("mastWood", team.mastWood, cost.mastWood),
-    part("mastRope", team.mastRope, cost.mastRope),
-    part("food", team.food, cost.food),
-    part("water", team.water, cost.water),
-  ];
+/** Day the team's current stage (or, on the launch stage, the launch window) opens; 0 once it is open on `day`. */
+export function raftLockDay(state: RaftStateView, team: TeamView, timings: Readonly<Timings>, day: number): number {
+  const lock = team.stage >= RAFT_LAUNCH_STAGE ? launchDayFor(state.difficulty, timings) : stageDayLock(team.stage, timings);
+  return Math.max(1, day) >= lock ? 0 : lock;
 }
 
-function raftHud(state: RaftStateView, team: TeamView | null): HudModel["raft"] {
-  if (!team) return { stage: 0, parts: [], ready: false, aboard: 0, total: 0 };
+/** The raft card for `team` (Long Tide: six build stages + the launch). */
+export function raftHud(state: RaftStateView, team: TeamView | null, timings: Readonly<Timings>, day: number): RaftHudModel {
+  const stages = RAFT_LAUNCH_STAGE + 1;
+  if (!team) return { stage: 0, stages, parts: [], lockDay: 0, assembly: -1, minHolders: 1, holders: 0, hp: -1, hpLow: false, ready: false, aboard: 0, total: 0 };
   let aboard = 0;
   let required = 0;
+  let holders = 0;
   state.players.forEach((p) => {
     if (p.spectator || p.team !== team.index) return;
     if (p.boarded) aboard++;
     else if (p.alive && !p.downed && !p.washed) required++;
+    if (p.alive && !p.downed && p.channel === CHANNEL.BUILD) holders++;
   });
+  const parts = raftParts(team);
+  const lockDay = raftLockDay(state, team, timings, day);
+  const finished = team.stage >= RAFT_LAUNCH_STAGE;
+  const matsDone = !finished && parts.every((p) => p.have >= p.need);
+  const hp = team.stage >= 1 ? frac01(team.raftHp, RAFT_HP_MAX) : -1;
+  const hpLow = team.stage >= 1 && team.raftHp < RAFT_HP_BOARD;
   return {
     stage: team.stage,
-    parts: raftParts(team, teamCost(state, team)),
-    ready: team.stage >= 3,
+    stages,
+    parts,
+    lockDay,
+    assembly: matsDone && team.raftWorkNeed > 0 ? frac01(team.raftWork, team.raftWorkNeed) : -1,
+    minHolders: RAFT_STAGES[team.stage]?.minHolders ?? 1,
+    holders,
+    hp,
+    hpLow,
+    // Boardable: the launch window open and hp ≥ 50, or the push-off already counting (anyone may still board).
+    ready: finished && (state.launchTicksLeft > 0 || (lockDay === 0 && !hpLow)),
     aboard,
     total: aboard + required,
   };
 }
 
-function fireHud(team: TeamView | null, weather: RaftStateView["weather"]): HudModel["fire"] {
+/** Objective / launch window / Captain Crab / spring line under the clock. */
+export function statusHud(i: Pick<HudInputs, "state" | "monsters" | "phase">, team: TeamView | null, timings: Readonly<Timings>, clock: ClockInfo): StatusModel {
+  if (!team || (i.phase !== "playing" && i.phase !== "landing")) return { objective: "", launchDay: 0, launchOpen: false, boss: "", spring: -1 };
+  const day = Math.max(1, clock.day);
+  const objDay = Math.min(7, team.stage >= RAFT_LAUNCH_STAGE ? 7 : Math.max(team.stage + 1, 1));
+  const launchDay = launchDayFor(i.state.difficulty, timings);
+  let boss: StatusModel["boss"] = "";
+  if (!team.bossDown) {
+    const here = i.monsters.some((m) => m.kind === "boss");
+    const from = timings.cheapRaft ? 1 : (DIFFICULTIES[i.state.difficulty] ?? DIFFICULTIES.normal).bossFromNight;
+    if (here) boss = "here";
+    else if (day > from) boss = "returns";
+    else if (day === from) boss = "tonight";
+  }
+  return { objective: `coach.obj_day${objDay}`, launchDay, launchOpen: day >= launchDay, boss, spring: team.springCharges };
+}
+
+/** Heavy cargo (log / barrel) in any slot: the escort indicator (loadMult above the lone value = escorted). */
+export function heavyHud(me: PlayerView | null): HudModel["heavy"] {
+  if (!me || !me.alive || me.washed) return null;
+  let heavy = false;
+  for (let s = 0; s < SLOTS; s++) {
+    const k = slotKind(me, s);
+    if (k !== "" && slotCount(me, s) > 0 && isHeavy(k)) heavy = true;
+  }
+  if (!heavy) return null;
+  const pct = me.loadMult > 0 && me.loadMult < 100 ? me.loadMult : 100;
+  const alone = carryAloneOf(me);
+  return { escorted: pct > alone, pct };
+}
+
+function carryAloneOf(me: PlayerView): number {
+  const c = CHARACTERS[me.character] ?? CHARACTERS[DEFAULT_CHARACTER];
+  const log = countOf(me, "log") > 0;
+  return log ? c.logCarryAlone : c.carryAlone;
+}
+
+function fireHud(team: TeamView | null, weather: RaftStateView["weather"], dayPhase: ClockInfo["dayPhase"]): HudModel["fire"] {
   const fuel = team?.fireFuel ?? 0;
-  const drain = weather === "rain" ? RAIN_FIRE_DRAIN_MULT : 1;
+  // Half rate by day, full at dusk / night; rain ×RAIN_FIRE_DRAIN_MULT (survival.ts; a hut's shelter is ignored here).
+  const drain = (weather === "rain" ? RAIN_FIRE_DRAIN_MULT : 1) * (dayPhase === "day" ? FIRE_DAY_BURN_MULT : 1);
   return {
     frac: frac01(fuel, FIRE_FUEL_MAX_TICKS),
     lit: fuel > 0,
-    low: fuel > 0 && fuel < FIRE_LOW_FRACTION * FIRE_START_FUEL_TICKS * (drain > 1 ? 2 : 1),
+    // Low: about to go out, or already too weak to keep monsters out of the ring (fireRepels).
+    low: fuel > 0 && (fuel < FIRE_LOW_FRACTION * FIRE_START_FUEL_TICKS * (weather === "rain" ? 2 : 1) || !fireRepels(fuel)),
     secLeft: fuel / TICK_RATE / drain,
   };
 }
@@ -666,9 +750,21 @@ export function buildCraftPanel(state: RaftStateView, me: PlayerView | null): Cr
       cost.push({ kind, have, need });
     }
     const alive = !!me && me.alive && !me.downed && !me.washed;
-    recipes.push({ id, cost, ok: alive && enough && !locked && (fireLit || def.effect === "fuel"), locked, out: def.out });
+    const tier = team?.benchTier ?? 0;
+    const day = Math.max(1, state.day);
+    let gate: NonNullable<RecipeRowModel["gate"]> = "";
+    const gateParams: Record<string, string | number> = {};
+    if (def.effect === "bench" && tier >= def.tier) gate = "built";
+    else if (def.bench > tier) {
+      gate = "needBench";
+      gateParams.bench = t(`hud.bench_${def.bench}`);
+    } else if (!state.fast && def.minDay > day) {
+      gate = "tooEarly";
+      gateParams.day = def.minDay;
+    }
+    recipes.push({ id, cost, ok: alive && enough && !locked && gate === "" && (fireLit || def.effect === "fuel"), locked, out: def.out, gate, gateParams });
   }
-  return { recipes, fireLit, fuelFrac: frac01(fuel, FIRE_FUEL_MAX_TICKS), fuelSec: fuel / TICK_RATE };
+  return { recipes, benchTier: team?.benchTier ?? 0, fireLit, fuelFrac: frac01(fuel, FIRE_FUEL_MAX_TICKS), fuelSec: fuel / TICK_RATE };
 }
 
 function chestCount(team: TeamView | null, kind: ItemKind): number {

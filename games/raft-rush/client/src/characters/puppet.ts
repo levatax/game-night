@@ -55,6 +55,7 @@ export function createPuppetFrame(character: CharacterId, id = "puppet", seat = 
     alive: true,
     downed: false,
     boarded: false,
+    loadMult: 100,
     fishState: 0,
     fishSpot: -1,
     fuseTicks: 0,

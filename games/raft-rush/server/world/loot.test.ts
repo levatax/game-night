@@ -91,8 +91,8 @@ describe("rollFish distribution", () => {
 describe("bad-luck protection", () => {
   it(`guarantees at least a fish after ${FISH_PITY} junk catches in a row`, () => {
     const table = baseFishLootTable();
-    // r = 0.65 lands on "boot" in the base table (fish 45 + crab 12 = 57 < 62.4 < 67).
-    const rigged = () => 0.65;
+    // r = 0.6 lands on "boot" in the base table (fish 45 + crab 12 = 57 < 57.6 < 61).
+    const rigged = () => 0.6;
     let streak = 0;
     const seen: FishLoot[] = [];
     for (let k = 0; k < FISH_PITY; k++) {

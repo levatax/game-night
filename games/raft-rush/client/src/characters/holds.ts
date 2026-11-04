@@ -43,6 +43,13 @@ const HOLDS: Record<ItemKind, HoldDef> = {
   jellyfish: { cls: "palm", third: 0.85, fp: 0.48 },
   puffer: { cls: "palm", third: 0.8, fp: 0.44 },
   kraken: { cls: "big", third: 0.75, fp: 0.5 },
+  log: { cls: "big", third: 0.9, fp: 0.5 },
+  cloth: { cls: "palm", third: 0.85, fp: 0.48 },
+  scrap: { cls: "palm", third: 0.9, fp: 0.48 },
+  nails: { cls: "palm", third: 1, fp: 0.5 },
+  barrel: { cls: "big", third: 0.8, fp: 0.5 },
+  compass: { cls: "palm", third: 0.9, fp: 0.48 },
+  hammer: { cls: "tool", third: 1, fp: 0.52 },
 };
 
 export function holdClass(kind: ItemKind): HoldClass {
@@ -65,7 +72,7 @@ export function createHeldItem(kind: ItemKind, view: "third" | "fp"): THREE.Grou
   holder.name = `held:${kind}`;
   const item = buildItemMesh(kind);
   const info = itemInfo(item);
-  if (info?.long) item.quaternion.copy(kind === "axe" ? AXE_Q : TOOL_Q);
+  if (info?.long) item.quaternion.copy(kind === "axe" || kind === "hammer" ? AXE_Q : TOOL_Q);
   const grip = info ? info.grip.clone() : new THREE.Vector3();
   item.position.copy(grip.applyQuaternion(item.quaternion)).negate();
   holder.add(item);

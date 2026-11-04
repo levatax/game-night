@@ -12,7 +12,6 @@ import {
   ARC_PREVIEW_MIN_CHARGE,
   CHEST_RANGE,
   CRAFT_RANGE,
-  DAYS,
   DT,
   EMOTE_COOLDOWN_TICKS,
   EMOTE_IDS,
@@ -598,7 +597,7 @@ export class GameController {
     if (this.phase !== "playing") return 0;
     const clock = hudClock(this.phase, state, timings, net.clockTicksAt(nowMs));
     const warn = STORM_WARN_SEC * TICK_RATE;
-    if (clock.day < DAYS || clock.dayPhase !== "night" || clock.stormLeft > warn) return 0;
+    if (clock.day < timings.days || clock.dayPhase !== "night" || clock.stormLeft > warn) return 0;
     return 0.4 * clamp(1 - clock.stormLeft / warn, 0, 1);
   }
 
@@ -1160,6 +1159,7 @@ function blankView(): PlayerView {
     alive: false,
     downed: false,
     boarded: false,
+    loadMult: 100,
     id: "",
     nickname: "",
     character: "kaptan",

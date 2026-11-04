@@ -1,27 +1,30 @@
-// Pure decision functions for the helper bots (§12 roles, §19 "Botlar"). Owner: server-bots.
+// Pure decision functions for the helper bots (§12 roles, §19 "Botlar", Long Tide §7). Owner: server-bots.
 //
-// chooseGoal(view) walks a fixed priority list and returns the first goal that applies (game4.md §19:
-// flee → attack → eat/drink → deliver → gather → fish → ammo → camp, with the survival / co-op duties of
-// docs/ARCHITECTURE.md §4.6 slotted in):
+// chooseGoal(view) walks a fixed priority list and returns the first goal that applies:
 //   0. puffer in the inventory → throw it away (it explodes in hand)
 //   1. flee        hp low and a monster close, outside a light ring
 //   2. revive      a downed teammate we can reach in time (the two closest bots go)
-//   3. board       the raft is ready and the humans are close (or aboard / nobody to wait for / storm close)
-//   4. attack      monsters threatening the raft, the camp, a downed mate or us; daytime thieves
+//   3. board       only while the push-off counts (a human starts it; with no human on the team, or the storm
+//                  close, a bot may start it)
+//   4. attack      monsters threatening the raft, the camp, a downed mate or us (spear holders go for Captain
+//                  Crab); daytime thieves
 //   5. self-care   eat / drink / warm up / rest at the fire / fetch food or water; Aşçı passes food to mates
-//   6. raft ready  wait at the raft
-//   7. evening     keep the fire fuelled through the night; the guard plants a torch at the raft
-//   8. deliver     carry what the current raft stage needs
-//   9. craft       cook catches, tools for the role (axe / rod / spear), raft parts from chest wood
-//  10. housekeep   burn jellyfish, stock surplus in the camp chest
-//  11. work        gather / fish / water / chest fetch / ammo, scored by team needs × role affinity
-//  12. pickups     useful items on the ground; flipped crabs
-//  13. camp / night post
-// At night the bot stays inside light rings (tiers 8–12 only run where it is lit). The current goal is kept
-// while it stays valid (stickiness), so a bot doesn't flip between two equally good trees. Team duties (night
-// guard + torch, fire, water) are spread over the bot seats by role (dutyOwner). Raft pacing (botNeeds.ts): far
-// ahead of the schedule the bots stock the chest instead of the raft so the nights still happen; behind it, or
-// on the last day, every role works on what the current raft stage needs.
+//   6. evening     keep the fire fuelled (and repelling) through the night; the guard plants a torch at the raft
+//   7. deliver     carry what the current raft stage needs (heavy cargo straight away)
+//   8. assemble    hold E at the raft once the stage's materials are in (every bot within ASSEMBLE_RADIUS; the
+//                  mast needs two holders, so the bots go together)
+//   9. repair      a bot with a hammer patches the raft (plank / 2 wood) when its hp is low
+//  10. craft       cook catches, role tools (axe + hammer, rod, spear), then the team plan's crafts: bench tiers,
+//                  planks, nails, sailcloth, barrels (bench / minDay / a lit fire respected)
+//  11. housekeep   burn jellyfish, stock surplus (and next-stage prestock, heavy cargo) in the camp chest
+//  12. escort      the nearest free bot walks beside a teammate carrying a log / barrel
+//  13. work        gather / fell / salvage / fish / water / chest fetch / ammo, scored by the team plan × role
+//  14. pickups     useful items on the ground; flipped crabs
+//  15. camp / night post (the guard and a second guard at the raft once the keel exists)
+// At night the bot stays inside light rings (tiers 7–14 only run where it is lit, the raft guards excepted). The
+// current goal is kept while it stays valid (stickiness). Team duties (night guards + torch, fire, water) are
+// spread over the bot seats by role (dutyOwner). The economy (what to gather / craft) comes from the team plan's
+// bill of materials (botNeeds.ts teamPlan); the day locks pace the raft, there is no schedule brake.
 //
 // chooseStandInGoal(view) is the much shorter menu of a reconnect stand-in (BotDesk.add with standIn: a bot
 // keeping a dropped human's character alive for RECONNECT_GRACE_SEC): it moves, never spends. Every goal it
@@ -32,38 +35,45 @@
 
 import {
   BOT_AIM_NOISE_DEG,
+  ESCORT_RADIUS,
   FIRE_FUEL_MAX_TICKS,
   FIRE_LIGHT_RADIUS,
   FIRE_WOOD_FUEL_TICKS,
+  RAFT_HP_BOARD,
+  RAFT_REPAIR_WOOD_COST,
   REVIVE_TICKS,
   TICK_RATE,
   WATER_Y,
   secToTicks,
 } from "../../shared/constants.js";
-import { RECIPES } from "../../shared/items.js";
+import { ITEMS, RECIPES } from "../../shared/items.js";
 import type { XZ } from "../../shared/island/types.js";
 import type { BotRole, InvKind, ItemKind, MonsterKind, RecipeId } from "../../shared/types.js";
 import {
-  aheadOfSchedule,
   countIn,
-  deliverBucket,
   deliverableUnits,
+  deliverWanted,
   emptySlotCount,
   fireShortfall,
+  heavyIn,
   missingFor,
   missingTools,
   palmHandSlot,
-  raftRemaining,
+  FUEL_RESERVE_WOOD,
+  RAFT_REPAIR_TARGET,
+  raftDone,
+  raftGood,
   raftUrgent,
   RESOURCES,
   roomIn,
   slotOf,
-  stageTotal,
-  stageWants,
-  teamWants,
+  stageAssembling,
+  stageMissing,
+  teamPlan,
   ticksToDawn,
   woodAt,
   type Resource,
+  type TeamPlan,
 } from "./botNeeds.js";
 import type { BotGroundItem, BotMate, BotMonster, BotNode, BotView, Goal, GoalKind } from "./botTypes.js";
 
@@ -80,13 +90,19 @@ export const STARVING = 18;
 export const FLEE_HP = 30;
 export const FLEE_RADIUS = 6;
 export const FLEE_RADIUS_BOSS = 9;
-/** Rest at the fire below this hp (inside its light ring; not while the boss prowls there). */
+/** Everyone (but a posted guard) keeps this far from Captain Crab. */
+export const BOSS_KEEP_AWAY = 5;
+/** Rest at the fire below this hp (inside its light ring; not while the boss prowls there); a raft guard below GUARD_REST_HP. */
 export const REST_HP = 40;
-/** Warm up at the fire below this warmth (night / rain). */
+export const GUARD_REST_HP = 60;
+/** Warm up at the fire below this warmth (night / rain); a posted raft guard holds out to GUARD_COLD. */
 export const COLD = 35;
+export const GUARD_COLD = 12;
 /** Throw at monsters within this range (the sharp-eyed Bekçi further): beyond it the aim noise wastes ammo. */
 export const ENGAGE_RANGE = 16;
 export const ENGAGE_RANGE_BEKCI = 22;
+/** By day the fire keeper tops the campfire up to this (the ring shrinks with the fuel and fails below 20 %). */
+export const FIRE_KEEP_TICKS = secToTicks(200);
 /** Seconds before dusk the evening duties start. */
 export const EVENING_SEC = 14;
 /** Sprint speed assumed when judging whether a revive can be reached in time (m/s). */
@@ -95,18 +111,27 @@ const RESCUE_SPEED = 6.2;
 const NIGHT_CRAB_REACH = 4;
 const HOSTILE: ReadonlySet<MonsterKind> = new Set(["crab", "puffer", "boss"]);
 
-/** How much each role likes each kind of work (§12 table). */
+/** How much each role likes each kind of work (§12 table; logs and scrap: Long Tide §7). */
 export const AFFINITY: Readonly<Record<BotRole, Readonly<Record<Resource, number>>>> = {
-  hamal: { wood: 1, rope: 0.85, stone: 0.7, food: 0.35, water: 0.35 },
-  balikci: { wood: 0.45, rope: 0.6, stone: 0.4, food: 1, water: 0.55 },
-  bekci: { wood: 0.7, rope: 0.55, stone: 0.8, food: 0.9, water: 0.5 },
-  asci: { wood: 0.55, rope: 0.5, stone: 0.35, food: 0.85, water: 1 },
+  hamal: { wood: 1, rope: 0.85, stone: 0.7, food: 0.35, water: 0.35, log: 1.25, scrap: 0.9 },
+  balikci: { wood: 0.45, rope: 0.7, stone: 0.4, food: 1, water: 0.55, log: 0.5, scrap: 0.7 },
+  bekci: { wood: 0.7, rope: 0.75, stone: 0.8, food: 0.8, water: 0.5, log: 0.8, scrap: 0.8 },
+  asci: { wood: 0.55, rope: 0.6, stone: 0.35, food: 0.85, water: 1, log: 0.5, scrap: 0.6 },
 };
 
-export type Duty = "fire" | "guard" | "water";
+/** Bots within this of the raft come and hold E when a stage's materials are in. */
+export const ASSEMBLE_RADIUS = 60;
+/** A free bot within this of a heavy carrier escorts it. */
+export const ESCORT_REACH = 18;
+/** By day the bots patch the raft below this hp (the launch: below RAFT_REPAIR_TARGET). */
+export const REPAIR_BELOW = 60;
+
+/** Team duties. "guard2": the second raft guard at night (Long Tide §7: the Bekçi plus one more). */
+export type Duty = "fire" | "guard" | "guard2" | "water";
 const DUTY_ORDER: Readonly<Record<Duty, ReadonlyArray<BotRole>>> = {
-  fire: ["asci", "hamal", "bekci", "balikci"],
+  fire: ["asci", "balikci", "hamal", "bekci"],
   guard: ["bekci", "hamal", "asci", "balikci"],
+  guard2: ["hamal", "bekci", "balikci", "asci"],
   water: ["asci", "balikci", "bekci", "hamal"],
 };
 
@@ -172,7 +197,7 @@ function isNight(v: BotView): boolean {
 }
 
 /** Duties are handed out in this order, each to the best free candidate (so two bots don't share all of them). */
-const DUTY_ASSIGN_ORDER: ReadonlyArray<Duty> = ["guard", "fire", "water"];
+const DUTY_ASSIGN_ORDER: ReadonlyArray<Duty> = ["guard", "fire", "guard2", "water"];
 
 /**
  * The bot-driven seat (self included) that owns a team duty. Duties are assigned in DUTY_ASSIGN_ORDER, each to
@@ -203,10 +228,28 @@ function owns(v: BotView, duty: Duty): boolean {
   return dutyOwner(v, duty) === v.self.id;
 }
 
+/** One of the two night raft guards, once there is a raft to guard (the keel assembled), and no solo bot left. */
+function raftGuardDuty(v: BotView): boolean {
+  if (v.team.stage < 1 || v.team.raftHp <= 0) return false;
+  if (owns(v, "guard")) return true;
+  // The second guard only when there are at least 3 bot seats (else it would also be the fire keeper).
+  const bots = 1 + v.mates.filter((m) => m.driven && m.alive && !m.washed && m.role !== "").length;
+  return bots >= 3 && owns(v, "guard2");
+}
+
+/** The raft lies inside the campfire's ring (torches don't keep raft-bound crabs off it). */
+function raftFireLit(v: BotView): boolean {
+  const r = v.site.raft;
+  for (const l of v.lights) if (l.kind === "fire" && d2(r.x, r.z, l.x, l.z) <= l.r - 1) return true;
+  return false;
+}
+
 /** Ingredients for `recipe` are in reach (inventory + chest), plus a wood to relight the fire when it is out. */
 export function canCraft(v: BotView, recipe: RecipeId): boolean {
   const def = RECIPES[recipe];
   if (def.duelOnly || def.locked || v.blocked(`craft:${recipe}`)) return false;
+  if (def.bench > v.team.benchTier || def.minDay > v.clock.day) return false;
+  if (def.effect === "bench" && v.team.benchTier >= def.tier) return false;
   if (Object.keys(missingFor(recipe, v.self.slots, v.team.chest)).length) return false;
   if (recipe === "fuel" || fireLit(v)) return true;
   // Relight first: one wood beyond the recipe's own wood.
@@ -283,9 +326,22 @@ function itemValue(v: BotView, kind: ItemKind): number {
     case "spear":
       return countIn(s.slots, "spear") ? 1 : 3;
     case "raft_part":
-      return v.team.stage <= 1 ? 2.6 : 0;
+      return deliverWanted("raft_part", v.team) ? 2.8 : 1.8;
+    case "log":
+      return deliverWanted("log", v.team) || raftGood("log", v.team) || raftGood("raft_part", v.team) ? 3.5 : 1.5;
+    case "barrel":
+      return 3;
+    case "compass":
+      return 10;
+    case "scrap":
+    case "nails":
+    case "cloth":
+      return 2.4;
+    case "hammer":
+      return countIn(s.slots, "hammer") ? 0 : role === "hamal" ? 3 : 1.2;
     case "coconut":
-      return 2.2;
+      // The Hamal's hands are for tools and cargo; the others pick coconuts up (food, ammo).
+      return role === "hamal" ? (s.hunger < HUNGRY ? 1.5 : 0) : 2.2;
     case "fish_cooked":
     case "crab_cooked":
     case "fish_golden":
@@ -297,7 +353,7 @@ function itemValue(v: BotView, kind: ItemKind): number {
     case "crab_raw":
       return 1.4;
     case "wood":
-      return role === "hamal" || v.team.stage <= 1 ? 1.7 : 1;
+      return role === "hamal" ? 1.7 : 1;
     case "stone":
       return role === "bekci" || owns(v, "guard") ? 2.2 : 1.2;
     case "rope":
@@ -337,7 +393,36 @@ function puffer(v: BotView): Goal | null {
 }
 
 function flee(v: BotView): Goal | null {
-  return fleeAt(v, FLEE_HP);
+  return fleeBoss(v) ?? fleeAt(v, FLEE_HP);
+}
+
+/**
+ * Captain Crab bites for 35 and light only slows him: whoever he comes for walks away at any hp (he is slower,
+ * at half speed in the light) and throws from a distance. A posted raft guard kites him itself (botMotor guard).
+ */
+function fleeBoss(v: BotView): Goal | null {
+  const s = v.self;
+  if (isNight(v) && guardPosted(v)) return null;
+  for (const m of v.monsters) {
+    if (m.kind !== "boss" || !isHostile(m) || m.mode === "emerge") continue;
+    const d = d2(s.x, s.z, m.x, m.z);
+    if (d > BOSS_KEEP_AWAY && !(m.targetId === s.id && d < FLEE_RADIUS_BOSS)) continue;
+    // Inside the fire's ring on the far side from him (he is slowed there, the crabs can't come in) when that is
+    // out of his reach; else straight away from him.
+    const fire = v.lights.find((l) => l.kind === "fire");
+    if (fire) {
+      const fx = fire.x - m.x;
+      const fz = fire.z - m.z;
+      const fl = Math.hypot(fx, fz) || 1;
+      const to = { x: fire.x + (fx / fl) * Math.max(0.5, fire.r - 1), z: fire.z + (fz / fl) * Math.max(0.5, fire.r - 1) };
+      if (d2(to.x, to.z, m.x, m.z) > BOSS_KEEP_AWAY + 0.5) return { kind: "flee", to, from: m.id };
+    }
+    const ax = s.x - m.x;
+    const az = s.z - m.z;
+    const al = Math.hypot(ax, az) || 1;
+    return { kind: "flee", to: { x: s.x + (ax / al) * 8, z: s.z + (az / al) * 8 }, from: m.id };
+  }
+  return null;
 }
 
 /** Run from the closest hostile monster in flee range when hp ≤ `hpLimit` (a stand-in, which can't fight: always). */
@@ -378,6 +463,17 @@ function fleeAt(v: BotView, hpLimit: number): Goal | null {
   return { kind: "flee", to, from: threat.id };
 }
 
+/** Threat around (x, z): hostile crabs / puffers within 5 m count 1, Captain Crab within 7 m counts 2. */
+function dangerAt(v: BotView, x: number, z: number): number {
+  let n = 0;
+  for (const m of v.monsters) {
+    if (!isHostile(m) || m.mode === "emerge") continue;
+    const d = d2(m.x, m.z, x, z);
+    if (m.kind === "boss" ? d < 7 : d < 5) n += m.kind === "boss" ? 2 : 1;
+  }
+  return n;
+}
+
 function revive(v: BotView): Goal | null {
   const s = v.self;
   let target: BotMate | null = null;
@@ -387,6 +483,10 @@ function revive(v: BotView): Goal | null {
     const d = d2(s.x, s.z, m.x, m.z);
     const secsLeft = m.downedTicks / TICK_RATE;
     if (d / RESCUE_SPEED + REVIVE_TICKS / TICK_RATE + 0.4 > secsLeft) continue;
+    // Don't walk into the pack that downed them (they stay down DOWNED_TICKS: wait until it moves on).
+    const danger = dangerAt(v, m.x, m.z);
+    const boss = v.monsters.some((o) => o.kind === "boss" && isHostile(o) && d2(o.x, o.z, m.x, m.z) < 7);
+    if ((boss || (!lit(v, m.x, m.z, 0) && danger >= 2)) && secsLeft > REVIVE_TICKS / TICK_RATE + d / RESCUE_SPEED + 3) continue;
     // Only the two closest able helpers go (a human standing right next to them counts as one).
     let closer = 0;
     for (const o of v.mates) {
@@ -403,19 +503,23 @@ function revive(v: BotView): Goal | null {
   return target ? { kind: "revive", playerId: target.id } : null;
 }
 
-/** Board now, or wait so the humans aren't stranded on the beach (§2.5 boarding countdown). */
+/** With the storm this close a bot starts the push-off itself (a finished raft never waits for the storm). */
+export const BOT_PUSH_OFF_STORM_SEC = 90;
+
+/**
+ * Board now (Long Tide §7.8): bots board only while the push-off counts; a human starts it. With no living human
+ * on the team (bot-only matches, every human gone) or the storm less than BOT_PUSH_OFF_STORM_SEC away, a bot may
+ * start it.
+ */
 export function shouldBoard(v: BotView): boolean {
-  if (v.team.stage !== 3) return false;
+  if (!raftDone(v.team) || !v.team.canBoard) return false;
   if (v.team.launchTicksLeft > 0) return true;
-  if (v.clock.stormLeft <= secToTicks(45)) return true;
-  const humans = v.mates.filter((m) => m.human && m.alive && !m.washed);
-  if (!humans.length || humans.some((h) => h.boarded)) return true;
-  const raft = v.site.raft;
-  return humans.every((h) => h.downed || d2(h.x, h.z, raft.x, raft.z) <= 14);
+  if (v.clock.stormLeft <= secToTicks(BOT_PUSH_OFF_STORM_SEC)) return true;
+  return !v.mates.some((m) => m.human && m.alive && !m.washed);
 }
 
 function board(v: BotView): Goal | null {
-  if (v.team.stage !== 3 || v.blocked("board")) return null;
+  if (!raftDone(v.team) || !v.team.canBoard || v.blocked("board")) return null;
   return shouldBoard(v) ? { kind: "board" } : null;
 }
 
@@ -423,8 +527,12 @@ function attack(v: BotView): Goal | null {
   const s = v.self;
   const raft = v.site.raft;
   const fire = v.site.campfire;
-  const raftSafe = lit(v, raft.x, raft.z, 1);
-  const guardPush = isNight(v) && !raftSafe && owns(v, "guard") && s.hp > 55;
+  const raftSafe = raftFireLit(v);
+  const guard = guardPosted(v);
+  const guardPush = isNight(v) && !raftSafe && guard && s.hp > 55;
+  // A posted guard swings its torch at the crabs (botMotor guard) instead of throwing its ammo away at them.
+  const swinger = isNight(v) && guard;
+  const spear = countIn(s.slots, "spear") > 0;
   const baseRange = s.role === "bekci" ? ENGAGE_RANGE_BEKCI : ENGAGE_RANGE;
   const current = v.current?.kind === "attack" ? v.current.monsterId : "";
   let best: BotMonster | null = null;
@@ -434,11 +542,13 @@ function attack(v: BotView): Goal | null {
     const hostile = isHostile(m);
     if (!hostile && !isThief(m)) continue;
     if (v.blocked(`attack:${m.id}`)) continue;
+    if (swinger && m.kind === "crab") continue;
     const d = d2(s.x, s.z, m.x, m.z);
-    const range = guardPush && d2(m.x, m.z, raft.x, raft.z) < 5 ? 45 : baseRange;
+    const range = guardPush && d2(m.x, m.z, raft.x, raft.z) < 5 ? 45 : m.kind === "boss" ? Math.max(baseRange, spear ? 30 : 26) : baseRange;
     if (d > range) continue;
-    // Still in the surf: a throw would just sink. Wait until it's on the beach (unless it's right here).
-    if (m.y < WATER_Y - 0.25 && d > 6) continue;
+    // Still in the surf: a throw would just sink. Wait until it's on the beach (unless it's right here). Captain
+    // Crab stands tall: he can be hit in the shallows by the raft slip.
+    if (m.y < WATER_Y - (m.kind === "boss" ? 1 : 0.25) && d > 6) continue;
     if (m.mode === "emerge" && d > 8) continue;
     let score = 1;
     let close = d < 10;
@@ -455,7 +565,8 @@ function attack(v: BotView): Goal | null {
         }
       }
       if (d2(m.x, m.z, fire.x, fire.z) < FIRE_LIGHT_RADIUS + 4) score += 1;
-      if (m.kind === "boss") score += 2;
+      // Every bot with a spear goes for Captain Crab (the compass, Long Tide §7.6); the others throw what they have.
+      if (m.kind === "boss") score += spear ? 6 : 3.5;
       if (m.kind === "puffer") score += 1.5;
       if (m.mode === "emerge") score -= 0.5;
     } else {
@@ -473,10 +584,17 @@ function attack(v: BotView): Goal | null {
   }
   if (!best) return null;
   const slot = ammoSlot(v, best.kind, bestClose);
-  if (slot < 0) return null;
-  // Night, the raft is dark and something chews on it: a healthy guard walks out to deal with it.
+  if (slot < 0) {
+    // Out of ammo with Captain Crab about: restock stones from the camp chest (he takes many hits).
+    if (best.kind === "boss" && (v.team.chest.stone ?? 0) > 0 && roomIn(s.slots, "stone") > 0 && distTo(v, v.site.chest) < 25 && !v.blocked("chestTake:stone")) {
+      return { kind: "chestTake", items: [{ kind: "stone", count: Math.min(3, v.team.chest.stone ?? 0, roomIn(s.slots, "stone")) }] };
+    }
+    return null;
+  }
+  // Night, the raft is dark and something chews on it: a healthy guard walks out to deal with it. Captain Crab
+  // (the compass): a healthy bot closes to throwing range (fleeBoss keeps it out of his reach).
   const atRaft = d2(best.x, best.z, raft.x, raft.z) < 5 && !raftSafe;
-  const push = atRaft && isNight(v) && owns(v, "guard") && s.hp > 55;
+  const push = (atRaft && isNight(v) && guard && s.hp > 55) || (best.kind === "boss" && s.hp > 50 && !guard);
   return push ? { kind: "attack", monsterId: best.id, slot, push } : { kind: "attack", monsterId: best.id, slot };
 }
 
@@ -494,7 +612,8 @@ function selfCare(v: BotView): Goal | null {
   }
   if (s.hp < 60 && s.hunger < 85) {
     const slot = foodSlot(v);
-    if (slot >= 0 && !v.blocked(`eat:${slot}`) && v.team.stage !== 2) return { kind: "eat", slot };
+    const kind = slot >= 0 ? s.slots[slot]!.kind : "";
+    if (slot >= 0 && !v.blocked(`eat:${slot}`) && !deliverWanted(kind, v.team)) return { kind: "eat", slot };
   }
   // Warm up / heal at the fire.
   if (needsFire(v)) return { kind: "warm" };
@@ -517,9 +636,12 @@ function needsFire(v: BotView): boolean {
   const fire = v.site.campfire;
   // Warmth drops at night (unless the ground is volcanic), in the rain and in the water (survival rules).
   const chilly = (night && v.clock.nightChill) || v.clock.weather === "rain";
-  const cold = chilly && s.warmth < COLD;
-  // The fire's light ring keeps crabs out, so it's the place to heal even at night (the boss excepted).
-  const hurt = s.hp < REST_HP && !v.monsters.some((m) => m.kind === "boss" && isHostile(m) && d2(m.x, m.z, fire.x, fire.z) < 10);
+  // A raft guard with a torch in hand loses warmth slowly: it holds out longer before leaving its post.
+  const cold = chilly && s.warmth < (night && guardPosted(v) ? GUARD_COLD : COLD);
+  // The fire's light ring keeps crabs out, so it's the place to heal even at night (the boss excepted). A raft
+  // guard leaves its post earlier: alone in the dark a second bite would down it.
+  const restBelow = night && guardPosted(v) ? GUARD_REST_HP : REST_HP;
+  const hurt = s.hp < restBelow && !v.monsters.some((m) => m.kind === "boss" && isHostile(m) && d2(m.x, m.z, fire.x, fire.z) < 10);
   const keepWarming = v.current?.kind === "warm" && ((night && s.warmth < 85) || s.hp < 75);
   return fireLit(v) && (cold || hurt || keepWarming);
 }
@@ -605,54 +727,163 @@ function evening(v: BotView): Goal | null {
       if (tree) return { kind: "gather", node: tree.i };
     }
   }
-  // A bot carrying a torch while the guard has none plants it itself.
+  // Torches for the raft guards (Long Tide §3.3: crabs going for the raft walk through torch light, so the guards
+  // swing a lit torch at them; a torch planted by the raft keeps the puffers off it and lights the deck).
+  const want = guardTorchWant(v);
+  const mine = countIn(s.slots, "torch");
+  if (want > 0) {
+    const planter = !raftGuardDuty(v);
+    if ((mine >= 2 || (planter && mine >= 1)) && raftTorchLife(v) < ticksToDawn(v.clock) * 0.6 && !v.blocked("plantTorch")) {
+      // Only by light: the raft in the dark is no place for the fire keeper once the crabs are out.
+      const stand = raftStand(v);
+      if (!isNight(v) || lit(v, stand.x, stand.z, 0) || !v.monsters.some((m) => isHostile(m) && d2(m.x, m.z, stand.x, stand.z) < 10)) return { kind: "plantTorch", slot: slotOf(s.slots, "torch") };
+    }
+    if (mine < want) {
+      if (chestHas(v, "torch") && roomIn(s.slots, "torch") > 0 && !v.blocked("chestTake:torch")) return { kind: "chestTake", items: [{ kind: "torch", count: 1 }] };
+      if (canCraft(v, "torch") && roomIn(s.slots, "torch") > 0) return { kind: "craft", recipe: "torch", count: 1 };
+      if (!night && countIn(s.slots, "rope") + (v.team.chest.rope ?? 0) === 0 && roomIn(s.slots, "rope") > 0) {
+        const bush = nearestNode(v, (n) => n.kind === "bush" && n.yield === "rope", 25);
+        if (bush) return { kind: "gather", node: bush.i };
+      }
+    }
+    return null;
+  }
+  // A bot carrying a torch while no guard can light the raft plants it itself.
   const myTorch = slotOf(s.slots, "torch");
-  if (myTorch >= 0 && !owns(v, "guard") && raftTorchLife(v) < ticksToDawn(v.clock) * 0.6 && !v.blocked("plantTorch")) {
+  if (myTorch >= 0 && v.team.stage >= 1 && raftTorchLife(v) < ticksToDawn(v.clock) * 0.6 && !v.blocked("plantTorch")) {
     const guard = v.mates.find((m) => m.id === dutyOwner(v, "guard"));
     if (!guard || countIn(guard.slots, "torch") === 0) return { kind: "plantTorch", slot: myTorch };
   }
-  // The guard lights up the raft.
-  if (owns(v, "guard") && raftTorchLife(v) < ticksToDawn(v.clock) * 0.6) {
-    const t = slotOf(s.slots, "torch");
-    if (t >= 0 && !v.blocked("plantTorch")) return { kind: "plantTorch", slot: t };
-    if (chestHas(v, "torch") && roomIn(s.slots, "torch") > 0 && !v.blocked("chestTake:torch")) return { kind: "chestTake", items: [{ kind: "torch", count: 1 }] };
-    if (canCraft(v, "torch")) return { kind: "craft", recipe: "torch", count: 1 };
-    if (!night && countIn(s.slots, "rope") + (v.team.chest.rope ?? 0) === 0 && roomIn(s.slots, "rope") > 0) {
-      const bush = nearestNode(v, (n) => n.kind === "bush" && n.yield === "rope", 25);
-      if (bush) return { kind: "gather", node: bush.i };
-    }
-  }
   return null;
+}
+
+/**
+ * Torches a bot wants for the night: a raft guard one to swing; the fire keeper one to plant by the raft (it keeps
+ * the puffers off the deck).
+ */
+function guardTorchWant(v: BotView): number {
+  // Only from the afternoon on: by day a slot is worth more for cargo (the torch waits in the chest).
+  if (!afternoon(v) && !isEvening(v) && !isNight(v)) return 0;
+  if (raftGuardDuty(v)) return 1;
+  return owns(v, "fire") && v.team.stage >= 1 ? 1 : 0;
+}
+
+/** On raft watch tonight: a raft guard holding a torch to swing (without one it stays in the fire's ring). */
+function guardPosted(v: BotView): boolean {
+  return raftGuardDuty(v) && countIn(v.self.slots, "torch") > 0;
 }
 
 function deliver(v: BotView): Goal | null {
   const s = v.self;
-  if (v.team.stage >= 3 || v.blocked("deliver") || aheadOfSchedule(v)) return null;
-  const units = deliverableUnits(s.slots, v.team, s.character);
+  if (raftDone(v.team) || v.blocked("deliver")) return null;
+  const units = deliverableUnits(s.slots, v.team);
   if (units <= 0) return null;
   const stand = raftStand(v);
-  if (isNight(v) && !lit(v, stand.x, stand.z, 0)) return null;
-  const want = stageTotal(stageWants(v.team));
+  if (isNight(v) && !lit(v, stand.x, stand.z, 0) && !guardPosted(v)) return null;
+  // Heavy cargo goes straight to the raft (it slows us down while we carry it).
+  for (const slot of s.slots) if (slot.kind !== "" && ITEMS[slot.kind].heavy && deliverWanted(slot.kind, v.team)) return { kind: "deliver" };
+  const want = stageMissing(v.team);
   if (units >= want) return { kind: "deliver" };
-  if (isEvening(v) || distTo(v, v.site.raft) < 10) return { kind: "deliver" };
+  if (isEvening(v) || distTo(v, v.site.raft) < 12) return { kind: "deliver" };
   if (raftUrgent(v) && units >= Math.min(want, 3)) return { kind: "deliver" };
-  if (v.team.stage === 2 && units >= Math.min(want, 2)) return { kind: "deliver" };
-  if (units >= 10) return { kind: "deliver" };
+  if (units >= 6) return { kind: "deliver" };
   // Can't carry any more of what we're carrying.
   for (const slot of s.slots) {
-    if (slot.kind !== "" && deliverBucket(slot.kind, v.team.stage) && roomIn(s.slots, slot.kind) === 0) return { kind: "deliver" };
+    if (slot.kind !== "" && deliverWanted(slot.kind, v.team) && roomIn(s.slots, slot.kind) === 0) return { kind: "deliver" };
   }
   return null;
 }
 
-function craft(v: BotView): Goal | null {
+/** Hold E at the raft once the current stage's materials are all in (Long Tide T2). */
+function assemble(v: BotView): Goal | null {
+  if (!stageAssembling(v.team) || v.blocked("assemble")) return null;
+  if (isNight(v) && !guardPosted(v) && !raftFireLit(v)) return null;
+  if (distTo(v, v.site.raft) > ASSEMBLE_RADIUS && !raftUrgent(v)) return null;
+  return { kind: "assemble" };
+}
+
+/** Raft hp the bots want now: RAFT_REPAIR_TARGET on the launch stage (boarding needs RAFT_HP_BOARD), else REPAIR_BELOW. */
+function repairBelow(v: BotView): number {
+  return raftDone(v.team) ? RAFT_REPAIR_TARGET : REPAIR_BELOW;
+}
+
+/** A bot with a hammer patches the raft (Long Tide §3.3): a plank (+20) or 2 wood (+10) per E. */
+function repair(v: BotView): Goal | null {
+  const s = v.self;
+  const team = v.team;
+  if (team.stage < 1 || team.raftHp >= repairBelow(v) || v.blocked("repair")) return null;
+  if (countIn(s.slots, "hammer") === 0) return null;
+  const urgent = raftDone(team) && team.raftHp < RAFT_HP_BOARD;
+  if (isNight(v) && !urgent && !guardPosted(v) && !raftFireLit(v)) return null;
+  // E at the raft would deliver / assemble first.
+  if (deliverableUnits(s.slots, team) > 0 || stageAssembling(team)) return null;
+  // Only one repairer at a time (the closest bot with a hammer), unless the launch is at stake.
+  if (!urgent) {
+    const me = distTo(v, v.site.raft);
+    for (const m of v.mates) {
+      if (!m.driven || !m.alive || m.downed || m.role === "" || countIn(m.slots, "hammer") === 0) continue;
+      if (d2(m.x, m.z, v.site.raft.x, v.site.raft.z) < me - 0.5) return null;
+    }
+  }
+  if (countIn(s.slots, "raft_part") > 0 || countIn(s.slots, "wood") >= RAFT_REPAIR_WOOD_COST) return { kind: "repair" };
+  const chest = v.team.chest;
+  if ((chest.raft_part ?? 0) > 0 && roomIn(s.slots, "raft_part") > 0 && !v.blocked("chestTake:raft_part")) {
+    const n = Math.min(chest.raft_part ?? 0, roomIn(s.slots, "raft_part"), Math.ceil((RAFT_REPAIR_TARGET - team.raftHp) / 20));
+    return { kind: "chestTake", items: [{ kind: "raft_part", count: Math.max(1, n) }] };
+  }
+  if ((chest.wood ?? 0) >= RAFT_REPAIR_WOOD_COST && roomIn(s.slots, "wood") >= RAFT_REPAIR_WOOD_COST && !v.blocked("chestTake:wood")) {
+    return { kind: "chestTake", items: [{ kind: "wood", count: Math.min(chest.wood ?? 0, roomIn(s.slots, "wood"), 4) }] };
+  }
+  return null;
+}
+
+/** The nearest free bot walks beside a teammate carrying a log / barrel (Long Tide T1: 85 % instead of 55 %). */
+function escort(v: BotView): Goal | null {
+  const s = v.self;
+  if (isNight(v) || heavyIn(s.slots) > 0) return null;
+  let best: BotMate | null = null;
+  let bestD = ESCORT_REACH;
+  for (const c of v.mates) {
+    if (!c.alive || c.downed || c.washed || c.boarded || heavyIn(c.slots) === 0 || v.blocked(`escort:${c.id}`)) continue;
+    const d = d2(s.x, s.z, c.x, c.z);
+    if (d > bestD) continue;
+    // Someone else already walks with them, or a free bot is closer.
+    const mine = v.current?.kind === "escort" && v.current.playerId === c.id;
+    let taken = false;
+    for (const o of v.mates) {
+      if (o.id === c.id || !o.alive || o.downed || o.boarded) continue;
+      const od = d2(o.x, o.z, c.x, c.z);
+      if (!mine && od <= ESCORT_RADIUS - 0.3) taken = true;
+      else if (o.driven && o.role !== "" && heavyIn(o.slots) === 0 && od < d - 2) taken = true;
+    }
+    if (taken) continue;
+    bestD = d;
+    best = c;
+  }
+  return best ? { kind: "escort", playerId: best.id } : null;
+}
+
+/** Recipes a bot crafts for itself (role tools); the plan's other crafts are team materials. */
+const TOOL_RECIPES: ReadonlySet<RecipeId> = new Set<RecipeId>(["axe", "hammer", "rod", "spear", "torch"]);
+/** Plan crafts in priority order (Long Tide §7.4: benches, then processed materials). */
+const CRAFT_PRIORITY: ReadonlyArray<RecipeId> = ["bench_1", "bench_2", "raft_part", "nails", "cloth", "barrel"];
+
+/** How many times `recipe` can be made from the inventory + chest right now. */
+function craftableTimes(v: BotView, recipe: RecipeId): number {
+  let n = Infinity;
+  for (const [k, c] of Object.entries(RECIPES[recipe].cost) as [ItemKind, number][]) {
+    n = Math.min(n, Math.floor((countIn(v.self.slots, k) + (v.team.chest[k] ?? 0)) / c));
+  }
+  return Number.isFinite(n) ? n : 0;
+}
+
+function craft(v: BotView, plan: TeamPlan): Goal | null {
   const s = v.self;
   const nearFire = distTo(v, v.site.campfire) < 9;
   const crabs = countIn(s.slots, "crab_raw");
   if (crabs > 0 && canCraft(v, "cook_crab")) return { kind: "craft", recipe: "cook_crab", count: crabs };
   const raw = countIn(s.slots, "fish_raw");
-  const stageFood = v.team.stage === 2 && stageWants(v.team).food > 0;
-  if (raw > 0 && !stageFood && (raw >= 2 || nearFire || isEvening(v)) && canCraft(v, "cook_fish")) {
+  if (raw > 0 && (raw >= 2 || nearFire || isEvening(v) || deliverWanted("fish_cooked", v.team)) && canCraft(v, "cook_fish")) {
     return { kind: "craft", recipe: "cook_fish", count: raw };
   }
   if (countIn(s.slots, "kraken") > 0 && canCraft(v, "cook_kraken")) return { kind: "craft", recipe: "cook_kraken", count: 1 };
@@ -663,21 +894,31 @@ function craft(v: BotView): Goal | null {
     if (chestHas(v, out) && !v.blocked(`chestTake:${out}`)) return { kind: "chestTake", items: [{ kind: out, count: 1 }] };
     if (canCraft(v, tool)) return { kind: "craft", recipe: tool, count: 1 };
   }
-  // Hamal turns chest wood into raft parts it can carry (it doesn't carry wood of its own).
-  if (s.role === "hamal" && v.team.stage <= 1 && countIn(s.slots, "wood") === 0 && !aheadOfSchedule(v)) {
-    const r = raftRemaining(v.team);
-    const need = v.team.stage === 0 ? r.hull : r.mastWood;
-    const chestWood = v.team.chest.wood ?? 0;
-    const parts = Math.min(Math.floor(chestWood / 3), Math.floor(need / 3), emptySlotCount(s.slots));
-    if (parts > 0 && canCraft(v, "raft_part")) return { kind: "craft", recipe: "raft_part", count: parts };
+  // The team plan's crafts: the Hamal / Aşçı walk to the fire for them, anyone already by the fire helps.
+  const hamal = v.mates.some((m) => m.driven && m.alive && !m.washed && m.role === "hamal");
+  const crafter = s.role === "hamal" || s.role === "asci" || distTo(v, v.site.campfire) < 14 || !hamal;
+  if (crafter) {
+    for (const id of CRAFT_PRIORITY) {
+      const want = plan.crafts[id] ?? 0;
+      if (want <= 0 || TOOL_RECIPES.has(id) || !canCraft(v, id)) continue;
+      const def = RECIPES[id];
+      let count = Math.min(want, craftableTimes(v, id));
+      if (def.out) count = Math.min(count, Math.floor(roomIn(s.slots, def.out) / Math.max(1, def.outCount)));
+      if (count <= 0) continue;
+      return { kind: "craft", recipe: id, count };
+    }
   }
-  // The guard makes the night torch in the afternoon (unless someone already carries one).
-  if (owns(v, "guard") && afternoon(v) && !torchAround(v) && canCraft(v, "torch") && roomIn(s.slots, "torch") > 0) {
-    return { kind: "craft", recipe: "torch", count: 1 };
+  // The raft guards make their night torches (they keep them: a torch only burns while it is in hand).
+  if (countIn(s.slots, "torch") < guardTorchWant(v) && roomIn(s.slots, "torch") > 0) {
+    if (chestHas(v, "torch") && !v.blocked("chestTake:torch")) return { kind: "chestTake", items: [{ kind: "torch", count: 1 }] };
+    if (canCraft(v, "torch")) return { kind: "craft", recipe: "torch", count: 1 };
   }
-  // Daytime upkeep: whoever owns the fire keeps a little fuel in it while working at camp.
-  if (owns(v, "fire") && nearFire && v.team.fireFuel < secToTicks(20) && woodAt(v) > 0 && !v.blocked("craft:fuel")) {
-    return { kind: "craft", recipe: "fuel", count: 1 };
+  // Daytime upkeep: the fire keeper keeps it well fed while there is wood to spare; anyone by a dying fire feeds it.
+  const keeper = owns(v, "fire") && distTo(v, v.site.campfire) < 14;
+  if ((keeper || (nearFire && v.team.fireFuel < secToTicks(40))) && v.team.fireFuel < FIRE_KEEP_TICKS && woodAt(v) > 0 && !v.blocked("craft:fuel")) {
+    const room = Math.floor((FIRE_FUEL_MAX_TICKS - v.team.fireFuel) / FIRE_WOOD_FUEL_TICKS);
+    const count = Math.max(1, Math.min(room, woodAt(v), Math.ceil((FIRE_KEEP_TICKS - v.team.fireFuel) / FIRE_WOOD_FUEL_TICKS)));
+    return { kind: "craft", recipe: "fuel", count };
   }
   return null;
 }
@@ -686,14 +927,15 @@ function craft(v: BotView): Goal | null {
 function keepCount(v: BotView, kind: ItemKind): number {
   const s = v.self;
   const guard = s.role === "bekci" || owns(v, "guard");
-  // Raft goods are carried to the raft — unless the team is ahead of the schedule, then they wait in the chest.
-  if (deliverBucket(kind, v.team.stage) && !aheadOfSchedule(v)) return Infinity;
+  // What the current stage takes is carried to the raft.
+  if (deliverWanted(kind, v.team)) return Infinity;
   switch (kind) {
     case "rod":
-      return s.role === "balikci" || !v.mates.some((m) => m.driven && m.role === "balikci") ? Infinity : 0;
+      return s.role === "balikci" || s.role === "asci" || !v.mates.some((m) => m.driven && (m.role === "balikci" || m.role === "asci")) ? Infinity : 0;
     case "torch":
-      return guard || isEvening(v) || isNight(v) ? Infinity : 0;
+      return guardTorchWant(v) > 0 || isEvening(v) || isNight(v) ? Infinity : 0;
     case "axe":
+    case "hammer":
     case "spear":
     case "coconut_ball":
     case "fish_raw":
@@ -702,12 +944,17 @@ function keepCount(v: BotView, kind: ItemKind): number {
     case "puffer":
       return Infinity;
     case "wood":
-      return s.role === "hamal" || owns(v, "fire") ? (aheadOfSchedule(v) ? 5 : Infinity) : 0;
+      // Into the chest, where every recipe (and the fire keeper) can reach it; hands stay free for cargo.
+      return 0;
+    case "raft_part":
+      // The repairer keeps a couple of planks once there is a raft.
+      return countIn(s.slots, "hammer") > 0 && v.team.stage >= 1 ? 2 : 0;
     case "rope":
       if (guard && isEvening(v)) return 1;
-      return s.role === "hamal" && !aheadOfSchedule(v) ? Infinity : missingTools(s.role, s.slots).length ? 1 : 0;
+      return missingTools(s.role, s.slots).length ? 1 : 0;
     case "stone":
-      return guard ? 3 : missingTools(s.role, s.slots).length ? 1 : 0;
+      // Ammo for the nights (Captain Crab takes many hits): everyone but the Hamal (full hands) keeps a stack.
+      return s.role !== "hamal" ? 3 : missingTools(s.role, s.slots).length ? 1 : 0;
     case "coconut":
       return guard ? 3 : 2;
     case "fish_cooked":
@@ -719,6 +966,7 @@ function keepCount(v: BotView, kind: ItemKind): number {
     case "boot":
       return guard ? 1 : 0;
     default:
+      // Logs, barrels, scrap, nails, sailcloth, the compass: into the chest (crafting reads it; prestock).
       return 0;
   }
 }
@@ -743,7 +991,9 @@ function housekeep(v: BotView): Goal | null {
   if (v.blocked(`chestPut:${items.map((i) => i.kind).join(",")}`)) return null;
   const chestD = distTo(v, v.site.chest);
   if (chestD < 7) return goal;
-  if (emptySlotCount(s.slots) === 0 && chestD < 45) return goal;
+  // Heavy cargo (a log for planks, a barrel waiting for its stage) goes to the chest at once: it slows us down.
+  if (items.some((i) => ITEMS[i.kind].heavy)) return goal;
+  if (emptySlotCount(s.slots) === 0 && chestD < 60) return goal;
   return null;
 }
 
@@ -785,19 +1035,50 @@ function nearestFishSpot(v: BotView): number {
   return best;
 }
 
-/** Concrete goal that produces `res`, or null when there is no source in reach / no room. */
+/** A tree worth felling with an axe: the fewer units left the sooner its log drops (cost ≈ walk + chop time). */
+function treeToFell(v: BotView): BotNode | null {
+  let best: BotNode | null = null;
+  let bestCost = Infinity;
+  for (const n of v.nodes) {
+    if (n.kind !== "tree" || v.claims.nodes.has(n.i) || v.blocked(`fell:${n.i}`) || v.blocked(`gather:${n.i}`)) continue;
+    const d = distTo(v, n);
+    if (d > 80) continue;
+    const cost = d + n.amount * 4 + 0.3 * d2(n.x, n.z, v.site.campfire.x, v.site.campfire.z);
+    if (cost < bestCost) {
+      bestCost = cost;
+      best = n;
+    }
+  }
+  return best;
+}
+
+/** Concrete goal that produces `res`, or null when there is no source in reach / no room / no tool. */
 function sourceFor(v: BotView, res: Resource): Goal | null {
   const s = v.self;
-  const raft = v.site.raft;
   switch (res) {
     case "wood": {
       if (roomIn(s.slots, "wood") <= 0) return null;
-      const n = nearestNode(v, (x) => x.kind === "tree", 70, s, v.team.stage <= 1 ? raft : v.site.campfire);
+      const n = nearestNode(v, (x) => x.kind === "tree", 70, s, v.site.campfire);
       return n ? { kind: "gather", node: n.i } : null;
+    }
+    case "log": {
+      // Only an axe fells a tree (Long Tide §4.1), and one heavy item at a time.
+      if (countIn(s.slots, "axe") === 0 || roomIn(s.slots, "log") <= 0) return null;
+      const n = treeToFell(v);
+      return n ? { kind: "fell", node: n.i } : null;
+    }
+    case "scrap": {
+      if (roomIn(s.slots, "scrap") <= 0) return null;
+      if (countIn(s.slots, "hammer") > 0 && v.team.wreckScrap > 0 && !v.blocked("salvage")) return { kind: "salvage" };
+      if (countIn(s.slots, "rod") > 0) {
+        const spot = nearestFishSpot(v);
+        if (spot >= 0 && emptySlotCount(s.slots) > 0) return { kind: "fish", spot };
+      }
+      return null;
     }
     case "rope": {
       if (roomIn(s.slots, "rope") <= 0) return null;
-      const n = nearestNode(v, (x) => x.kind === "bush" && x.yield === "rope", 70);
+      const n = nearestNode(v, (x) => x.kind === "bush" && x.yield === "rope", 80);
       return n ? { kind: "gather", node: n.i } : null;
     }
     case "stone": {
@@ -817,27 +1098,25 @@ function sourceFor(v: BotView, res: Resource): Goal | null {
       return null;
     }
     case "water":
-      if (roomIn(s.slots, "water") <= 0 || v.blocked("spring")) return null;
-      return { kind: "spring", uses: Math.min(roomIn(s.slots, "water"), 3) };
+      if (roomIn(s.slots, "water") <= 0 || v.blocked("spring") || v.team.springCharges <= 0) return null;
+      return { kind: "spring", uses: Math.min(roomIn(s.slots, "water"), 3, v.team.springCharges) };
   }
 }
 
 /** Current-stage needs the chest could cover right now, as a chestTake for this bot. */
 function chestFetch(v: BotView): Goal | null {
-  if (aheadOfSchedule(v)) return null;
-  const want = stageWants(v.team);
-  if (stageTotal(want) === 0) return null;
+  if (stageMissing(v.team) === 0) return null;
   const items: { kind: ItemKind; count: number }[] = [];
-  const add = (kind: ItemKind, need: number): void => {
-    const have = v.team.chest[kind] ?? 0;
-    const n = Math.min(have, need, roomIn(v.self.slots, kind));
-    if (n > 0) items.push({ kind, count: n });
-  };
-  if (want.wood > 0) add("raft_part", Math.ceil(want.wood / 3));
-  if (want.wood > 0) add("wood", want.wood);
-  if (want.rope > 0) add("rope", want.rope);
-  if (want.water > 0) add("water", want.water);
-  if (want.food > 0) for (const k of ["fish_cooked", "crab_cooked", "fish_raw", "coconut", "fish_golden"] as ItemKind[]) add(k, want.food);
+  for (const r of v.team.rows) {
+    let need = Math.max(0, r.need - r.have);
+    for (const kind of r.kinds) {
+      if (need <= 0) break;
+      const n = Math.min(v.team.chest[kind] ?? 0, need, roomIn(v.self.slots, kind));
+      if (n <= 0) continue;
+      items.push({ kind, count: n });
+      need -= n;
+    }
+  }
   if (!items.length) return null;
   const goal: Goal = { kind: "chestTake", items };
   return v.blocked(`chestTake:${items.map((i) => i.kind).join(",")}`) ? null : goal;
@@ -854,60 +1133,77 @@ function workStillValid(v: BotView, g: Goal): boolean {
       const y: ItemKind = n.kind === "tree" ? "wood" : n.kind === "rock" ? "stone" : "rope";
       return roomIn(s.slots, y) > 0;
     }
+    case "fell":
+      return v.nodes.some((x) => x.i === g.node) && countIn(s.slots, "axe") > 0 && heavyIn(s.slots) === 0;
+    case "salvage":
+      return v.team.wreckScrap > 0 && countIn(s.slots, "hammer") > 0 && roomIn(s.slots, "scrap") > 0;
     case "shake":
       return v.nodes.some((x) => x.i === g.node) && handFreeForPalm(v);
     case "fish":
       return countIn(s.slots, "rod") > 0 && (emptySlotCount(s.slots) > 0 || roomIn(s.slots, "fish_raw") > 0 || s.fishState !== 0);
     case "spring":
-      return true;
+      return v.team.springCharges > 0;
     default:
       return false;
   }
 }
 
-/** Personal extras on top of the team wants: tool ingredients, the guard's ammo. */
+/** Personal extras on top of the team plan: tool ingredients, the guard's torch and ammo. */
 function personalWants(v: BotView): Partial<Record<Resource | "ammo", number>> {
   const s = v.self;
   const out: Partial<Record<Resource | "ammo", number>> = {};
   for (const tool of missingTools(s.role, s.slots)) {
+    if (RECIPES[tool].bench > v.team.benchTier) continue;
     for (const [k, n] of Object.entries(missingFor(tool, s.slots, v.team.chest)) as [ItemKind, number][]) {
       const r = k === "wood" ? "wood" : k === "rope" ? "rope" : k === "stone" ? "stone" : null;
       if (r) out[r] = (out[r] ?? 0) + n;
     }
   }
-  // The guard needs a torch for the night: its rope / wood become personal wants in the afternoon.
-  if (owns(v, "guard") && afternoon(v) && !torchAround(v)) {
+  // The fire keeper makes sure tonight's fuel (and a reserve) is in the chest or its pockets.
+  if (owns(v, "fire")) {
+    const want = Math.ceil(fireShortfall(v) / FIRE_WOOD_FUEL_TICKS) + FUEL_RESERVE_WOOD;
+    const have = woodAt(v);
+    if (have < want) out.wood = (out.wood ?? 0) + (want - have);
+  }
+  // The raft guards need torches for the night: their rope / wood become personal wants.
+  if (countIn(s.slots, "torch") < guardTorchWant(v)) {
     for (const [k, n] of Object.entries(missingFor("torch", s.slots, v.team.chest)) as [ItemKind, number][]) {
       const r = k === "wood" ? "wood" : k === "rope" ? "rope" : null;
       if (r) out[r] = (out[r] ?? 0) + n;
     }
   }
-  // Ammo for the night: the Bekçi's job all day; another guard only stocks up in the afternoon.
-  if (s.role === "bekci" || (owns(v, "guard") && afternoon(v))) {
+  // Ammo for the night: the Bekçi's job all day; the other bots (not the Hamal, whose hands are full of tools)
+  // stock up in the afternoon.
+  if (s.role === "bekci" || (s.role !== "hamal" && afternoon(v))) {
     const ammo = countIn(s.slots, "stone") + countIn(s.slots, "coconut") + countIn(s.slots, "spear") + countIn(s.slots, "boot");
     if (ammo < 4) out.ammo = 4 - ammo;
   }
   return out;
 }
 
-function work(v: BotView): Goal | null {
+/** The plan's raw wants spread over the bots: how much of `res` this bot should still go for. */
+function work(v: BotView, plan: TeamPlan): Goal | null {
   const s = v.self;
-  if (v.current && workStillValid(v, v.current) && !(raftUrgent(v) && v.current.kind === "fish" && stageWants(v.team).food === 0)) return v.current;
-  const wants = teamWants(v);
+  if (v.current && workStillValid(v, v.current) && !(raftUrgent(v) && v.current.kind === "fish" && !deliverWanted("fish_cooked", v.team))) return v.current;
+  const wants = plan.raw;
   const personal = personalWants(v);
   const aff = AFFINITY[s.role];
-  // Raft in trouble: whatever the current stage needs comes first, for every role.
   const urgent = raftUrgent(v);
-  const stage = stageWants(v.team);
-  const stageNeeds: Partial<Record<Resource, number>> = { wood: stage.wood, rope: stage.rope, food: stage.food, water: stage.water };
   const options: { score: number; goal: Goal }[] = [];
   for (const res of RESOURCES) {
-    const need = Math.min(wants[res], 6) + (personal[res] ?? 0) * 6;
+    // A log becomes 3 planks and a scrap 3 nails: weigh them by what they unlock, or one gating log (the anvil's
+    // planks) loses to a pile of rope forever.
+    const leverage = res === "log" ? 3 : res === "scrap" ? 2 : 1;
+    const need = Math.min(wants[res] * leverage, 6) + (personal[res] ?? 0) * 6;
     if (need <= 0) continue;
-    const critical = urgent && (stageNeeds[res] ?? 0) > 0;
-    let score = (critical ? Math.max(aff[res], 0.9) * 2.5 : aff[res]) * need;
+    let score = aff[res] * need;
+    if (urgent) score *= 1.5;
     // A fisher with a rod catches food much better than anyone shaking palms.
-    if (res === "food" && s.role === "balikci" && countIn(s.slots, "rod") > 0) score *= 1.4;
+    if (res === "food" && (s.role === "balikci" || s.role === "asci") && countIn(s.slots, "rod") > 0) score *= 1.4;
+    // Logs gate the most (keel, planks, mast): an axe holder goes for them first. Scrap only comes from the wreck
+    // to a hammer (or rarely off a fishing line): its holder goes when the plan needs it.
+    if (res === "log") score *= 1.3;
+    if (res === "scrap" && countIn(s.slots, "hammer") > 0) score *= 1.8;
     const goal = sourceFor(v, res);
     if (goal) options.push({ score, goal });
   }
@@ -919,11 +1215,15 @@ function work(v: BotView): Goal | null {
     else if (rock) options.push({ score: score * 0.9, goal: { kind: "gather", node: rock.i } });
   }
   const fetch = chestFetch(v);
-  if (fetch) options.push({ score: s.role === "hamal" || s.role === "asci" ? 6 : 3.5, goal: fetch });
+  if (fetch) options.push({ score: s.role === "hamal" || s.role === "asci" ? 7 : 4, goal: fetch });
   if (!options.length) {
-    // Nothing the team lacks: the Balıkçı keeps fishing, the rest stockpile wood (fuel, later stages).
-    const fallback = s.role === "balikci" ? sourceFor(v, "food") : sourceFor(v, s.role === "asci" ? "water" : "wood");
-    return fallback;
+    // Nothing the team lacks right now: stock what the later stages eat most (rope, logs), the fishers fish.
+    const order: Resource[] = s.role === "balikci" || s.role === "asci" ? ["food", "rope", "wood"] : s.role === "hamal" ? ["log", "wood", "rope"] : ["rope", "stone", "wood"];
+    for (const res of order) {
+      const g = sourceFor(v, res);
+      if (g) return g;
+    }
+    return null;
   }
   // Small random tie-break so identical bots don't all pick the same resource.
   let best = options[0]!;
@@ -986,18 +1286,21 @@ function campOrPost(v: BotView): Goal {
   const s = v.self;
   const raft = v.site.raft;
   if (isNight(v) || isEvening(v)) {
-    if (owns(v, "guard") && raftTorchLife(v) > 0) return { kind: "guard", at: spreadSpot(raftStand(v, 2.2), s.seat, 1.2) };
-    return { kind: "camp", at: spreadSpot(v.site.campfire, s.seat, 2.2) };
+    // The two raft guards stand by the raft once there is one (Long Tide §7.6), the others in the fire's ring.
+    if (guardPosted(v)) return { kind: "guard", at: spreadSpot(raftStand(v, 2.2), s.seat, 1.2) };
+    return { kind: "camp", at: spreadSpot(v.site.campfire, s.seat, 2) };
   }
-  // Daytime idle: near the fire, or by the raft when it's close to done.
-  if (v.team.stage >= 2 && d2(raft.x, raft.z, v.site.campfire.x, v.site.campfire.z) < 30) return { kind: "camp", at: spreadSpot(raftStand(v, 3), s.seat, 1.5) };
+  // Daytime idle: by the raft when it's finished or close to it, else near the fire.
+  if (raftDone(v.team) || (v.team.stage >= 4 && d2(raft.x, raft.z, v.site.campfire.x, v.site.campfire.z) < 30)) return { kind: "wait", at: spreadSpot(raftStand(v, 3), s.seat, 1.4) };
   return { kind: "camp", at: spreadSpot(v.site.campfire, s.seat, 2.6) };
 }
 
-/** Downed: crawl toward the nearest teammate who can revive us (else the campfire). */
+/** Downed: crawl toward the nearest teammate who can revive us (else the campfire); at night into the fire's ring. */
 function crawl(v: BotView): Goal {
   const s = v.self;
   let to: XZ = v.site.campfire;
+  // In the dark the crabs follow whoever comes to help: crawl into the fire's light instead, where they can't.
+  if ((isNight(v) || isEvening(v)) && fireLit(v) && v.lights.some((l) => l.kind === "fire")) return { kind: "crawl", to };
   let best = Infinity;
   for (const m of v.mates) {
     if (!m.alive || m.downed || m.washed || m.boarded) continue;
@@ -1020,20 +1323,13 @@ export function chooseGoal(v: BotView): Goal {
   if (s.downed) return crawl(v);
   const starving = s.hunger < STARVING || s.thirst < STARVING;
   const night = isNight(v);
-  const tiers: ((v: BotView) => Goal | null)[] = [
-    puffer,
-    flee,
-    revive,
-    board,
-    ...(starving ? [selfCare, attack] : [attack, selfCare]),
-    pass,
-  ];
+  const tiers: ((v: BotView) => Goal | null)[] = [puffer, flee, revive, board, ...(starving ? [selfCare, attack] : [attack, selfCare]), pass];
   for (const tier of tiers) {
     const g = tier(v);
     if (g) return g;
   }
-  if (v.team.stage === 3) return { kind: "wait", at: spreadSpot(raftStand(v, 3), s.seat, 1.4) };
-  const late: ((v: BotView) => Goal | null)[] = [evening, deliver, craft, housekeep];
+  const plan = teamPlan(v);
+  const late: ((v: BotView) => Goal | null)[] = [evening, deliver, assemble, repair, (x) => craft(x, plan), housekeep, escort];
   for (const tier of late) {
     const g = tier(v);
     if (g) return g;
@@ -1041,7 +1337,7 @@ export function chooseGoal(v: BotView): Goal {
   const near = pickup(v, 5);
   if (near) return near;
   if (!night) {
-    const w = work(v);
+    const w = work(v, plan);
     if (w) return w;
   }
   return collectCrab(v) ?? pickup(v, night ? 30 : 16) ?? campOrPost(v);
@@ -1078,7 +1374,7 @@ export function chooseStandInGoal(v: BotView): Goal {
   if (s.swimming) return { kind: "camp", at: spreadSpot(fire, s.seat, 2.4) };
   if (needsFire(v)) return { kind: "warm" };
   const dark = isNight(v) || isEvening(v);
-  if (v.team.stage === 3) {
+  if (raftDone(v.team)) {
     const at = spreadSpot(raftStand(v, 3), s.seat, 1.4);
     if (!dark || lit(v, at.x, at.z)) return { kind: "wait", at };
   }

@@ -168,7 +168,7 @@ export function lowestFreeSeat(used: Iterable<number>): number {
   return -1;
 }
 
-/** Raft seats for a match: players incl. bots, clamped to the RAFT_COSTS table (2..MAX_PLAYERS). */
+/** Raft seats for a match: players incl. bots, clamped to the RAFT_STAGES bySeats table (2..MAX_PLAYERS). */
 export function raftSeats(participants: number): number {
   return Math.max(2, Math.min(MAX_PLAYERS, participants));
 }

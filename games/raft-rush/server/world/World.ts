@@ -26,10 +26,13 @@
 import {
   BAR_MAX,
   CHANNEL,
+  CHARACTERS,
   DEFAULT_CHARACTER,
   DIFFICULTIES,
   DT,
-  FIRE_LIGHT_RADIUS,
+  ESCORT_RADIUS,
+  fireLightRadius,
+  fireRepels,
   FIRE_START_FUEL_TICKS,
   HIT_STUN_TICKS,
   MAX_HP,
@@ -41,7 +44,8 @@ import {
   type Timings,
 } from "../../shared/constants.js";
 import type { IslandDef, IslandSite } from "../../shared/island/types.js";
-import { isRecipeId } from "../../shared/items.js";
+import { isHeavy, isRecipeId } from "../../shared/items.js";
+import { slotKind } from "../../shared/rules/inventory.js";
 import type { ChestMsg, InputCmd, PickupEvent } from "../../shared/protocol.js";
 import type { ClockInfo } from "../../shared/rules/schedule.js";
 import type { SimContext } from "../../shared/sim/context.js";
@@ -51,6 +55,7 @@ import type { Difficulty, HurtCause, InteractKind, ItemKind, RecipeId, TreasureI
 import { TeamState, type PlayerState, type RaftState, type StructureState } from "../schema.js";
 import { ActionSystem } from "./actions.js";
 import { Bag } from "./bag.js";
+import { CampSystem } from "./camp.js";
 import type { LightRing, ProjectileEntity, SpawnProjectileOptions } from "./context.js";
 import type { RejectAction, WorldCore } from "./core.js";
 import { CraftSystem } from "./crafting.js";
@@ -134,6 +139,7 @@ export class RaftWorld implements WorldCore {
   readonly nodes: NodeSystem;
   readonly structures: StructureSystem;
   readonly raft: RaftSystem;
+  readonly camp: CampSystem;
   readonly survival: SurvivalSystem;
   readonly crafting: CraftSystem;
   readonly effects: EffectSystem;
@@ -182,6 +188,7 @@ export class RaftWorld implements WorldCore {
     this.nodes = new NodeSystem(this);
     this.structures = new StructureSystem(this);
     this.raft = new RaftSystem(this);
+    this.camp = new CampSystem(this);
     this.survival = new SurvivalSystem(this);
     this.crafting = new CraftSystem(this);
     this.effects = new EffectSystem(this);
@@ -253,8 +260,8 @@ export class RaftWorld implements WorldCore {
 
   /**
    * Start a match on the current island: one TeamState per site (coop: 1) sized for `seats`; every participant
-   * alive at a spawn point with full bars and one random starter item (wood ×2, coconut, stone, rope…); the
-   * wreck counts WRECK_HULL_WOOD toward the hull; the camp chest holds 2 random starter items; campfire
+   * alive at a spawn point with full bars and one random starter item (wood ×2, coconut, stone, rope…); a fresh
+   * raft (nothing built), a full spring, the wreck's scrap, no bench; the camp chest holds 2 random starter items; campfire
    * FIRE_START_FUEL_TICKS; nodes reset; projectiles / monsters / structures cleared; per-match loot table
    * shuffled from the seed and biome; stats and scores reset.
    */
@@ -299,6 +306,7 @@ export class RaftWorld implements WorldCore {
     this.nodes.reset();
     this.runtime.clear();
     this.raft.reset();
+    this.camp.reset();
     this.survival.reset();
     this.prevClock = null;
     this.dayClock = null;
@@ -318,6 +326,7 @@ export class RaftWorld implements WorldCore {
 
   private setupTeam(team: TeamState, seats: number): void {
     this.raft.setup(team, seats);
+    this.camp.setup(team);
     team.fireFuel = FIRE_START_FUEL_TICKS;
     team.chest.clear();
     team.flare = false;
@@ -393,6 +402,7 @@ export class RaftWorld implements WorldCore {
     this.nodes.step();
     // 6–8. survival, downed / wash, boarding / launch
     if (clock) {
+      this.camp.step();
       this.survival.step(clock);
       this.survival.stepDowned(clock);
       this.raft.step(clock);
@@ -417,7 +427,10 @@ export class RaftWorld implements WorldCore {
    */
   private onClock(clock: ClockInfo): void {
     const prev = this.prevClock;
-    if (prev && clock.dayPhase === "day" && clock.day > prev.day) this.survival.respawnWashed();
+    if (prev && clock.dayPhase === "day" && clock.day > prev.day) {
+      this.survival.respawnWashed();
+      this.camp.onDawn(clock.day);
+    }
     this.monsters.onClock(prev, clock);
     this.weather.onClock(prev, clock);
     this.prevClock = Object.assign(this.prevClockBuf, clock);
@@ -438,10 +451,40 @@ export class RaftWorld implements WorldCore {
       }
       const cmd = this.nextInput(id, p);
       ctx.character = p.character;
+      this.updateLoad(p);
       const res = stepPlayerInto(p, cmd, ctx, this.stepResult);
       if (p.boarded) this.raft.pinSeat(p);
       this.actions.handle(p, cmd, res);
     });
+  }
+
+  /**
+   * Heavy carry (Long Tide T1): loadMult from the cargo in any slot — CharacterDef.carryAlone (logCarryAlone for a
+   * log) alone, carryEscort with another living, standing teammate (bot included) within ESCORT_RADIUS; 100 when
+   * nothing heavy is carried. Set before stepPlayer so the sim (and the client's prediction) read it.
+   */
+  updateLoad(p: PlayerState): void {
+    let heavy: ItemKind | "" = "";
+    for (let s = 0; s < 4 && heavy === ""; s++) {
+      const k = slotKind(p, s);
+      if (isHeavy(k)) heavy = k as ItemKind;
+    }
+    let mult = 100;
+    if (heavy !== "" && !p.boarded) {
+      const c = CHARACTERS[p.character];
+      const r2 = ESCORT_RADIUS * ESCORT_RADIUS;
+      let escorted = false;
+      for (const q of this.state.players.values()) {
+        if (q === p || q.team !== p.team || !q.alive || q.downed || q.boarded || q.spectator) continue;
+        if (dist2(q.x, q.z, p.x, p.z) <= r2) {
+          escorted = true;
+          break;
+        }
+      }
+      mult = escorted ? c.carryEscort : heavy === "log" ? c.logCarryAlone : c.carryAlone;
+    }
+    mult = Math.max(1, Math.min(100, Math.round(mult)));
+    if (p.loadMult !== mult) p.loadMult = mult;
   }
 
   /** An alive player's input this tick: the queue (inputs.ts rules), else standing still looking the same way. */
@@ -552,6 +595,7 @@ export class RaftWorld implements WorldCore {
     this.runtime.delete(id);
     this.fishing.forget(id);
     this.weather.forget(id);
+    this.raft.forget(id);
     this.lightsChanged();
   }
 
@@ -677,7 +721,9 @@ export class RaftWorld implements WorldCore {
     this.lightSeen = 0;
     this.lightSame = true;
     for (const site of this.island.sites) {
-      if (this.team(site.team).fireFuel > 0) this.lightFrom(build, site, site.campfire.x, site.campfire.z, "fire", site.team);
+      // The campfire's ring shrinks with its fuel and stops keeping monsters out below FIRE_REPEL_MIN_FRACTION.
+      const fuel = this.team(site.team).fireFuel;
+      if (fireRepels(fuel)) this.lightFrom(build, site, site.campfire.x, site.campfire.z, "fire", site.team, fireLightRadius(fuel));
     }
     for (const p of this.state.players.values()) {
       if (p.alive && !p.spectator && p.torchTicks > 0 && heldKind(p) === "torch") this.lightFrom(build, p, p.x, p.z, "torch", p.team);
@@ -687,10 +733,10 @@ export class RaftWorld implements WorldCore {
     }
   }
 
-  private lightFrom(build: LightBuild | null, source: LightSource, x: number, z: number, kind: LightRing["kind"], team: number): void {
+  private lightFrom(build: LightBuild | null, source: LightSource, x: number, z: number, kind: LightRing["kind"], team: number, radius = TORCH_LIGHT_RADIUS): void {
     const i = this.lightSeen++;
     if (build) {
-      build.rings.push({ x, z, r: kind === "fire" ? FIRE_LIGHT_RADIUS : TORCH_LIGHT_RADIUS, kind, team });
+      build.rings.push({ x, z, r: radius, kind, team });
       build.sources.push(source);
       return;
     }
@@ -701,10 +747,11 @@ export class RaftWorld implements WorldCore {
     const l = this.lightRings[i]!;
     l.x = x;
     l.z = z;
+    l.r = radius;
     l.team = team;
   }
 
-  /** Remove hull wood (gnawing / fire); updates the stage; emits raftDamage. */
+  /** Lower the raft hp (gnawing / puffers / the boss); at 0 a stage is lost; emits raftDamage. */
   damageRaft(team: number, amount: number, byMonsterId: string, pos: Vec3Like): void {
     this.raft.damage(team, amount, byMonsterId, pos);
   }

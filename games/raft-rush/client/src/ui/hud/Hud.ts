@@ -115,6 +115,7 @@ export class Hud {
     this.compass.update(m.compass.yaw, mode === "washed" || cinematic ? [] : m.compass.marks);
     this.clock.update(m);
     this.raft.update(m.raft);
+    this.raft.updateStatus(m.status, m.heavy);
     this.fire.update(m.fire);
     this.mates.update(m.teammates);
     this.launch.update(cinematic ? null : m.launch, m.boarded);

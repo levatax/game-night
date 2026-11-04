@@ -7,7 +7,7 @@
 // state.clockTicks and the clock it passes to step() consistent (the life systems re-derive the clock from
 // state.clockTicks).
 
-import { BAR_MAX, DAYS, MAX_HP, NODE_AMOUNT, PALM_TRUNK_RADIUS, SOLO_GRID, TREE_TRUNK_RADIUS, WORLD_EDGE_MARGIN, timingsFor } from "../../shared/constants.js";
+import { BAR_MAX, MAX_HP, NODE_AMOUNT, PALM_TRUNK_RADIUS, SOLO_GRID, TREE_TRUNK_RADIUS, WORLD_EDGE_MARGIN, timingsFor } from "../../shared/constants.js";
 import { defHash } from "../../shared/island/generate.js";
 import { createHeightfield, gridHash, heightAt } from "../../shared/island/heightfield.js";
 import type { IslandDef, IslandSite, NodeDef, XZ } from "../../shared/island/types.js";
@@ -210,7 +210,7 @@ export class Bench {
   setClock(day: number, phase: "day" | "dusk" | "night", elapsed = 5): void {
     const t = this.timings;
     const offset = phase === "day" ? 0 : phase === "dusk" ? t.day : t.day + t.dusk;
-    this.clockTicks = (Math.min(DAYS, Math.max(1, day)) - 1) * cycleTicks(t) + offset + elapsed;
+    this.clockTicks = (Math.min(t.days, Math.max(1, day)) - 1) * cycleTicks(t) + offset + elapsed;
   }
 
   tick(): GameEvent[] {

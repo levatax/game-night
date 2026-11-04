@@ -1,12 +1,13 @@
 // Builds the BotView snapshot the brain decides on (botTypes.ts) from the authoritative room state.
 // Owner: server-bots. Read-only: bots never mutate state; they act through inputs and the host's craft / chest.
 //
-// Light rings are computed here from the state (lit campfire FIRE_LIGHT_RADIUS, planted torches and held lit
+// Light rings are computed here from the state (lit campfire fireLightRadius while fireRepels, planted torches and held lit
 // torches TORCH_LIGHT_RADIUS), the same rule the monsters obey (docs/ARCHITECTURE.md §2.10), so the brain
 // doesn't depend on world internals.
 
-import { BIOMES, FIRE_LIGHT_RADIUS, TORCH_LIGHT_RADIUS, type Timings } from "../../shared/constants.js";
-import { ITEMS, isItemKind, raftCost } from "../../shared/items.js";
+import { BIOMES, DIFFICULTIES, fireLightRadius, fireRepels, RAFT_STAGES, TORCH_LIGHT_RADIUS, type Timings } from "../../shared/constants.js";
+import { ITEMS, isItemKind, raftStageNeeds } from "../../shared/items.js";
+import { raftBoardable, raftStageOpen } from "../../shared/rules/interact.js";
 import type { IslandDef } from "../../shared/island/types.js";
 import { slotsOf } from "../../shared/rules/inventory.js";
 import { clockAt, inputLocked, matchTicks } from "../../shared/rules/schedule.js";
@@ -14,7 +15,7 @@ import type { WorldQuery } from "../../shared/sim/context.js";
 import type { BotRole, ItemKind } from "../../shared/types.js";
 import type { PlayerState, RaftState } from "../schema.js";
 import { fishStandsFor } from "./botNav.js";
-import type { BotClaims, BotClock, BotLight, BotMate, BotSlot, BotView, Goal } from "./botTypes.js";
+import type { BotClaims, BotClock, BotLight, BotMate, BotRaftRow, BotSlot, BotView, Goal } from "./botTypes.js";
 
 export interface SenseInput {
   state: RaftState;
@@ -40,11 +41,19 @@ function slots(p: PlayerState): BotSlot[] {
   return slotsOf(p).map((s) => ({ kind: s.kind, count: s.count }));
 }
 
+/** Requirement rows of raft stage `stage` (empty past the last stage). */
+export function raftRows(stage: number, have: (i: number) => number, need: (i: number) => number): BotRaftRow[] {
+  const def = RAFT_STAGES[stage];
+  if (!def) return [];
+  return def.req.map((r, i) => ({ item: r.item, kinds: r.kinds, have: have(i), need: need(i) }));
+}
+
 /** The match clock as the brain needs it (the landing counts as the start of day 1). */
 export function clockView(state: RaftState, timings: Readonly<Timings>, island: IslandDef): BotClock {
   const base = {
     phase: state.phase,
     locked: inputLocked(state.phase, state.phaseTicksLeft, timings),
+    days: timings.days,
     dayTicks: timings.day,
     duskTicks: timings.dusk,
     nightTicks: timings.night,
@@ -70,7 +79,8 @@ export function lightsOf(state: RaftState, island: IslandDef): BotLight[] {
   const out: BotLight[] = [];
   state.teams.forEach((t, i) => {
     const site = island.sites[i];
-    if (site && t.fireFuel > 0) out.push({ x: site.campfire.x, z: site.campfire.z, r: FIRE_LIGHT_RADIUS, kind: "fire" });
+    // The campfire's ring follows its fuel and stops keeping monsters out below the repel floor (Long Tide §6).
+    if (site && fireRepels(t.fireFuel)) out.push({ x: site.campfire.x, z: site.campfire.z, r: fireLightRadius(t.fireFuel), kind: "fire" });
   });
   state.structures.forEach((s) => {
     if (s.kind === "torch" && s.life > 0) out.push({ x: s.x, z: s.z, r: TORCH_LIGHT_RADIUS, kind: "planted" });
@@ -91,6 +101,7 @@ export function buildView(inp: SenseInput): BotView | null {
   const team = state.teams[p.team] ?? state.teams[0];
   const site = island.sites[p.team] ?? island.sites[0];
   if (!team || !site) return null;
+  const nextNeeds = raftStageNeeds(team.stage + 1, team.seats, (DIFFICULTIES[state.difficulty] ?? DIFFICULTIES.normal).raftCostMult, timings.cheapRaft);
 
   const mates: BotMate[] = [];
   state.players.forEach((m, id) => {
@@ -193,16 +204,20 @@ export function buildView(inp: SenseInput): BotView | null {
     team: {
       stage: team.stage,
       seats: team.seats,
-      cost: raftCost(team.seats, timings.cheapRaft),
-      hullWood: team.hullWood,
-      mastWood: team.mastWood,
-      mastRope: team.mastRope,
-      food: team.food,
-      water: team.water,
+      rows: raftRows(team.stage, (i) => team.raftHave[i] ?? 0, (i) => team.raftNeed[i] ?? 0),
+      stageOpen: raftStageOpen(team, state.phase === "playing" ? state.day : 1, timings.cheapRaft),
+      nextRows: raftRows(team.stage + 1, () => 0, (i) => nextNeeds[i] ?? 0),
+      raftWork: team.raftWork,
+      raftWorkNeed: team.raftWorkNeed,
+      raftHp: team.raftHp,
+      canBoard: raftBoardable(team, state.phase === "playing" ? state.day : 1, state.difficulty, timings.cheapRaft, state.launchTicksLeft > 0).ok,
+      benchTier: team.benchTier,
+      wreckScrap: team.wreckScrap,
+      springCharges: team.springCharges,
+      bossDown: team.bossDown,
       fireFuel: team.fireFuel,
       chest,
       launchTicksLeft: state.launchTicksLeft,
-      sail: team.sail,
     },
     clock: clockView(state, timings, island),
     lights: lightsOf(state, island),

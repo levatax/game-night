@@ -8,13 +8,13 @@ Commands run from the repo root. `C` = `shared/constants.ts`, `I` = `shared/item
 
 | File | Holds | Client sees it |
 |---|---|---|
-| `C` | every game4.md §21 number, plus world size, movement, throws, survival, raft, fishing, monsters (`MONSTERS`, `nightWave`), `DIFFICULTIES`, the day schedule (`NORMAL_TIMINGS` / `FAST_TIMINGS`), scoring, room limits, net smoothing, camera, `CHARACTERS` (perks), `BIOMES` | yes |
-| `I` | `ITEMS` (stack, damage, knock, food, water, physics), `RECIPES` (costs), `raftCost()`, `FISH_LOOT` / `TREASURE_LOOT` weights | yes |
-| `server/world/life/tuning.ts` | what game4.md leaves open: monster steering, bite / gnaw reach, `BOSS_RAFT_GNAW` 2, `PUFFER_RAFT_DAMAGE` 1, monkey / gull timings, `MONKEY_FENOMEN_RADIUS` 25, `GIFT_TREASURE_CHANCE` 0.25 | no |
+| `C` | every game4.md §21 number, plus world size, movement, throws, survival, the raft (`RAFT_STAGES`: per-stage requirement rows by seats, `minDay`, `assemblySec`, `minHolders`; `RAFT_HP_*`, `RAFT_REPAIR_*`, `ASSEMBLY_*`, `ESCORT_RADIUS`, `HEAVY_CARRY_*`), spring / wreck charges, fishing, monsters (`MONSTERS`, `nightWave`, `bossHpFor`), `DIFFICULTIES` (`raftCostMult`, `bossHp`, `bossFromNight`, `launchDay`), the day schedule (`NORMAL_TIMINGS` / `FAST_TIMINGS`, `Timings.days`), scoring (`WIN_*`, `LEFT_BEHIND_PENALTY`, `LOSS_PER_STAGE`), room limits, net smoothing, camera, `CHARACTERS` (role kits), `BIOMES` | yes |
+| `I` | `ITEMS` (stack, damage, knock, food, water, physics, `heavy`), `RECIPES` (costs, `bench` tier, `minDay`), `raftStageNeeds()` / `raftAssemblyTicks()` (seats × `raftCostMult`; fast: 1 / 1 s), `FISH_LOOT` / `TREASURE_LOOT` weights | yes |
+| `server/world/life/tuning.ts` | what game4.md leaves open: monster steering, bite / gnaw reach, raft hp per gnaw (`CRAB_RAFT_GNAW` 2, `BOSS_RAFT_GNAW` 16, `PUFFER_RAFT_DAMAGE` 10), `CHEST_RAID_TICKS` 8 s, the boss unstick (`BOSS_STUCK_TICKS` 8 s), monkey / gull timings, `MONKEY_FENOMEN_RADIUS` 25, `GIFT_TREASURE_CHANCE` 0.25 | no |
 | `server/world/loot.ts`, `server/world/rules.ts` | `LOOT_JITTER` 0.2 (per-match ±20 % on each fish-loot weight); `RANGE_SLACK` 0.5 m on every server range check | no |
 | `server/room/timings.ts` | `NEVER_JOINED_DISPOSE_SEC` 10, `PREVIEW_COOLDOWN_SEC` 1, `ACTION_COOLDOWN_TICKS` 5, `ACTION_BURST` 4; asserts `RECONNECT_GRACE_SEC < EMPTY_ROOM_DISPOSE_SEC` at startup | no |
 | `server/room/flood.ts`, `registry.ts`, `server/world/eventBuffer.ts` | `MESSAGE_RATE` 120/s, `MESSAGE_BURST` 240; `DEFAULT_MAX_ROOMS` 64, `STALL_MS` 5000; `EVENT_BUFFER_CAP` 512 | no |
-| `server/room/botBrain.ts`, `botNeeds.ts` | bot thresholds (`HUNGRY` / `THIRSTY` 45, `STARVING` 18, `FLEE_HP` 30, `REST_HP` 40, `COLD` 35, `ENGAGE_RANGE` 16 / `ENGAGE_RANGE_BEKCI` 22, `EVENING_SEC` 14, role `AFFINITY`) and raft pacing (`PACE_FINISH_FRACTION` 0.75, `PACE_SLACK` 0.06, `PACE_SLACK_PER_HUMAN` 0.08: bots stop feeding the raft while the team is that far ahead of a schedule that finishes at 75 % of the match) | no |
+| `server/room/botBrain.ts`, `botNeeds.ts` | bot thresholds (`HUNGRY` / `THIRSTY` 45, `STARVING` 18, `FLEE_HP` 30, `REST_HP` 40, `COLD` 35, `ENGAGE_RANGE` 16 / `ENGAGE_RANGE_BEKCI` 22, `EVENING_SEC` 14, role `AFFINITY`), the bill of materials (`teamPlan`: current stage + next-stage prestock + role tools + repairs to `RAFT_REPAIR_TARGET` 80 + fuel), the work weighting (a wanted log counts ×3, scrap ×2: what they unlock). No pacing brake any more: the day locks pace the raft | no |
 
 Rules for a retune:
 - Changing a value is tuning. Renaming, removing or retyping an export is a contract change (one line in
@@ -34,31 +34,31 @@ Rules for a retune:
 
 | §21 row | Constants | Now | Notes |
 |---|---|---|---|
-| Landing / day / dusk / night / storm 10 / 95 / 10 / 50 / 20 s | `LANDING_SEC`, `DAY_SEC`, `DUSK_SEC`, `NIGHT_SEC`, `STORM_SEC` (`C`) → `NORMAL_TIMINGS` | 10 / 95 / 10 / 50 / **12** | `DAYS` 3; storm at 7:45 after the landing (`matchTicks`, `shared/rules/schedule.ts`). `LANDING_LOCK_SEC` 3 (input locked), `LAUNCH_SEC` 8 (win cinematic), `STORM_WARN_SEC` 30, `MATCH_END_LOBBY_SEC` 60. Storm: drift 9 |
-| Hunger / thirst 25 / 33 per min (sprint ×1.5, heat wave thirst ×2) | `HUNGER_PER_MIN`, `THIRST_PER_MIN`, `SPRINT_HUNGER_MULT`, `HEATWAVE_THIRST_MULT` | 25, 33, 1.5, 2 | × `DIFFICULTIES[d].bars` × `Timings.barMult`; heat wave ×1 within `SHADE_RADIUS` 2.5 m of a tree |
+| Landing / day / dusk / night / storm (Long Tide) 10 / 165 / 15 / 80 / 20 s | `LANDING_SEC`, `DAY_SEC`, `DUSK_SEC`, `NIGHT_SEC`, `STORM_SEC` (`C`) → `NORMAL_TIMINGS` | 10 / 165 / 15 / 80 / **12** | `Timings.days` 8 (fast 3); storm at 34:40 after the landing (`matchTicks`, `shared/rules/schedule.ts`). Launch window from `DIFFICULTIES[d].launchDay` (normal 7 = 26:00; `launchDayFor`), stage locks `RAFT_STAGES[s].minDay` (`stageDayLock`); both 1 in fast mode. Push-off `LAUNCH_WAIT_TICKS` 60 s, earliest departure `LAUNCH_MIN_TICKS` 30 s. `LANDING_LOCK_SEC` 3 (input locked), `LAUNCH_SEC` 8 (win cinematic), `STORM_WARN_SEC` 30, `MATCH_END_LOBBY_SEC` 60. Storm: drift 9 |
+| Hunger / thirst per min (Long Tide: 12 / 16; sprint ×1.5, heat wave thirst ×2) | `HUNGER_PER_MIN`, `THIRST_PER_MIN`, `SPRINT_HUNGER_MULT`, `HEATWAVE_THIRST_MULT` | 12, 16, 1.5, 2 | × `DIFFICULTIES[d].bars` × `Timings.barMult`; heat wave ×1 within `SHADE_RADIUS` 2.5 m of a tree |
 | Warmth −2/s; fire within 3 m +5/s; torch in hand −1/s | `WARMTH_LOSS_PER_SEC`, `FIRE_WARM_RADIUS`, `WARMTH_GAIN_FIRE_PER_SEC`, `TORCH_WARMTH_LOSS_PER_SEC` | 2, 3, 5, 1 | Drops at night, in rain, in water (not Çocuk: `waterChill`); volcanic: `BIOMES.volcanic.nightChill` false; cave: `SHELTER_RADIUS` 3.5 |
-| Empty bar −2 hp/s each | `EMPTY_BAR_DAMAGE_PER_SEC` | 2 | Neighbours (game4.md §5): `FIRE_HEAL_PER_SEC` 3, `EAT_HEAL` 10 |
+| Empty bar (Long Tide) −3 hp/s each, cold −1.5 | `EMPTY_BAR_DAMAGE_PER_SEC`, `COLD_DAMAGE_PER_SEC` | 3, 1.5 | Neighbours: `FIRE_HEAL_PER_SEC` 1 (only while fed and watered), `EAT_HEAL` 10 |
 | Food: berry 15 · coconut 25 (+25 water) · raw fish 20 · cooked fish 45 · cooked crab 50 · golden fish 100 | `BERRY_FOOD` (`C`); `ITEMS.<kind>.food` / `.water` (`I`) | 15; 25 + 25; 20; 45; 50; 100 + 50 | `crab_raw` 10 (not in §21); Şef +5 on cooked food (`CHARACTERS.sef.cookedBonus`) |
 | Water: spring 50 · coconut 25 · collector 40 | `SPRING_WATER`, `ITEMS.water.water`, `COLLECTOR_WATER` | 50, 50 (gourd), 40 | `COLLECTOR_USES` 3, rain refills one per `COLLECTOR_FILL_TICKS` 10 s |
-| Gathering: wood 2.5 s (axe 1) · rope 1.5 · stone 2 · berry 1 | `GATHER_SEC` | as §21 | Hold-E channel per unit |
-| Nodes (solo): 120 trees ×3 wood · 30 palms ×2 (60 s regrow) · 60 rocks ×2 · 80 bushes (50 % rope, 40 % berry) | `BASE_NODE_COUNTS`, `NODE_AMOUNT`, `PALM_REGROW_TICKS`, `BIOMES[b].ropeShare` / `berryShare` | as §21 (tropic 0.5 / 0.4) | × `BIOMES[b].counts`; `BERRY_REGROW_TICKS` 90 s. Changes every island |
-| Fire: 60 s full, wood +30 s, fuel can +120 s | `FIRE_START_FUEL_TICKS`, `FIRE_WOOD_FUEL_TICKS`, `FUEL_CAN_TICKS` | 60, 30, 120 s | The cap `FIRE_FUEL_MAX_TICKS` 180 s is ours; jellyfish +60 s (`JELLYFISH_FUEL_TICKS`, game4.md §8); `RAIN_FIRE_DRAIN_MULT` 3 (drift 1); low-fire banner below `FIRE_LOW_FRACTION` 0.2 |
+| Gathering (Long Tide): wood 4 s (axe 1.5, Amca 1.1) · rope 1.5 · stone 2.5 · berry 1 · salvage 3 (Fenomen 2) | `GATHER_SEC`, `CHARACTERS[c].woodAxeSec` / `salvageSec` | as Long Tide | Hold-E channel per unit; the last unit of a tree taken with an axe drops a heavy `log` (`server/world/nodes.ts`); salvage needs a hammer (`CHANNEL.SALVAGE`) |
+| Nodes (solo): 120 trees ×4 wood · 30 palms ×2 (90 s regrow) · 60 rocks ×2 · 80 bushes (50 % rope, 40 % berry; rope regrows in 150 s) | `BASE_NODE_COUNTS`, `NODE_AMOUNT`, `PALM_REGROW_TICKS`, `ROPE_REGROW_TICKS`, `BIOMES[b].ropeShare` / `berryShare` | tree 4 (Long Tide) | × `BIOMES[b].counts`; `BERRY_REGROW_TICKS` 90 s. Spring: `SPRING_BASE_CHARGES` + `SPRING_CHARGES_PER_SEAT` × seats charges, +1 per `SPRING_RECHARGE_TICKS`; wreck scrap `WRECK_SCRAP_BASE` + seats, +`WRECK_SCRAP_PER_DAWN` from day 2. Changes every island hash |
+| Fire (Long Tide): 120 s full, wood +40 s, cap 300 s, fuel can +120 s | `FIRE_START_FUEL_TICKS`, `FIRE_WOOD_FUEL_TICKS`, `FIRE_FUEL_MAX_TICKS`, `FUEL_CAN_TICKS` | 120, 40, 300, 120 s | Burns ×`FIRE_DAY_BURN_MULT` 0.5 by day; jellyfish +60 s; `RAIN_FIRE_DRAIN_MULT` 2; ring `fireLightRadius` 3–6 m with the fuel, no ring below `FIRE_REPEL_MIN_FRACTION` 0.2; heals `FIRE_HEAL_PER_SEC` 1 only while fed and watered; low-fire banner below `FIRE_LOW_FRACTION` 0.2 |
 | Torch 90 s / 4 m (fire 5 m) | `TORCH_BURN_TICKS`, `TORCH_LIGHT_RADIUS`, `FIRE_LIGHT_RADIUS` | 90 s, 4, 5 | Keep `ITEMS.torch.lightRadius` (`I`, 4) equal: the bots' sense of a held torch reads it. Boss in light: `BOSS_LIGHT_SLOW` 0.5 |
-| Raft cost: §7 table (2 seats 10 wood … 6 seats 24) | `RAFT_COSTS` (`C`) via `raftCost(seats)` (`I`) | as game4.md §7 | Seats = participants incl. bots, 2..6 (`server/room/lobby.ts` `raftSeats`). `WRECK_HULL_WOOD` 3 (free part), `RAFT_PART_WOOD` 3, `RECIPES.raft_part` 3 wood (drift 7) |
-| Crab gnawing −1 hull wood / 4 s; a player within 6 m is targeted first | `RAFT_GNAW_TICKS`, `RAFT_GUARD_RADIUS` | 4 s, 6 | Reach `RAFT_GNAW_REACH` 2.5, boss gnaws `BOSS_RAFT_GNAW` 2 (`life/tuning.ts`) |
-| Waves: night 1: 3 + seats · night 2: 5 + seats×1.5 + 2 puffers · night 3: 6 + seats×2 + 3 puffers + boss | `nightWave(night, seats)` | as §21 | × `DIFFICULTIES[d].monsters` × `BIOMES[b].crabMult` / `pufferMult` × `FULLMOON_MONSTER_MULT` 1.5 (`server/world/life/waves.ts` `planWave`); `MONSTER_CAP` 16 alive, spawns over `MONSTER_SPAWN_WINDOW` 0.6 of the night |
+| Raft (Long Tide): six stages + the launch, game4.md §7 table | `RAFT_STAGES` (`C`) via `raftStageNeeds(stage, seats, raftCostMult)` / `raftAssemblyTicks` (`I`) | keel 2/4 · deck 12/4 · mast 1/4/5 · sail 4/2 · rudder 4/4/1 · provisions 5/2 at 3 seats | Seats = participants incl. bots, 2..6 (`server/room/lobby.ts` `raftSeats`). Assembly 1 work/s per holder with a hammer (0.5 by hand) × Kaptan 1.5 × `ASSEMBLY_GROUP_MULT` 1 / 1.2 / 1.4, ≤ 4 holders; the mast needs 2. Raft hp `RAFT_HP_MAX` 100, boarding ≥ `RAFT_HP_BOARD` 50; at 0 hp the raft is wrecked (keeps its stages, takes no more damage, can't be boarded until repaired; only a push-off in progress rolls Provisions back to `RAFT_HP_AFTER_LOSS` 40); repair plank +20 / 2 wood +10. Plank = `RECIPES.raft_part` (1 log → 3, bench 1) |
+| Crab gnawing −raft hp / 4 s; a player within 6 m is targeted first | `RAFT_GNAW_TICKS`, `RAFT_GUARD_RADIUS` | 4 s, 6 | Reach `RAFT_GNAW_REACH` 2.5; crab −2 hp (Long Tide says 4: halved, see CONTRACT_CHANGES), boss −16 (`life/tuning.ts`); crabs going for the raft ignore torch rings |
+| Waves (Long Tide): crabs round((2 + 1.2n)(0.7 + 0.3s)), puffers min(5, n − 1); Captain Crab every night from `bossFromNight` until killed, hp round((4 + 2s) × bossHp), wounds carry over between nights (`monsters.ts` `bossHpLeft`) | `nightWave(night, seats)`, `bossHpFor` | — | × `DIFFICULTIES[d].monsters` × `BIOMES[b].crabMult` / `pufferMult` × `FULLMOON_MONSTER_MULT` 1.5, puffers ≤ `MAX_PUFFERS` 6 (`server/world/life/waves.ts` `planWave`); `MONSTER_CAP` 24 alive, spawns over `MONSTER_SPAWN_WINDOW` 0.7; push-off launch wave `planLaunchWave` |
 | Monster hp / damage: crab 2 / 15 · puffer 1 / 20 · boss 12 / 35 | `MONSTERS.crab` / `.puffer` / `.boss` | as §21 | Same records: speed, bite cooldown, radius, knockback; `CRAB_FLIP_TICKS` 8 s |
 | Throw: charge 0.6 s, speed 34, gravity −20 → ~58 m; strait 26–30 m | `CHARGE_FULL_TICKS`, `THROW_SPEED_MAX`, `GRAVITY`, `STRAIT_MIN` / `STRAIT_MAX` | 0.6 s, 34, −20, 26 / 30 | `THROW_SPEED_MIN` 12; strait is duel only |
 | Throw damage: coconut 1 · stone 1 · spear 2 · boot 1 (+knock) · puffer 2 in 3 m · fish 0 (bait 8 s, 15 m) | `ITEMS.<kind>.damage` / `.knock` (`I`); `PUFFER_BLAST_DAMAGE`, `PUFFER_BLAST_RADIUS`, `BAIT_TICKS`, `BAIT_RADIUS` (`C`) | as §21 (boot knock 2) | Boss takes bait for `BOSS_BAIT_TICKS` 5 s |
 | Fishing: wait 2–6 s, window 0.6 s, loot §8, pity 4 | `FISH_WAIT_MIN_TICKS` / `MAX`, `FISH_BITE_TICKS`, `FISH_LOOT` (`I`), `FISH_PITY` | as §21 | Server slack ≤ `FISH_LAG_ALLOWANCE_MAX_TICKS` 0.15 s; weights × `BIOMES[b].loot` × `LOOT_JITTER` |
-| Downed / revive: 10 s, hold E 3 s, half hp | `DOWNED_TICKS`, `REVIVE_TICKS`, `REVIVE_HP` | 10 s, 3 s, 50 | Dawn respawn with `RESPAWN_BARS` / `RESPAWN_HP` 60 |
+| Downed / revive: 25 s (Long Tide), hold E 3 s, half hp | `DOWNED_TICKS`, `REVIVE_TICKS`, `REVIVE_HP` | 25 s, 3 s, 50 | Dawn respawn with `RESPAWN_BARS` / `RESPAWN_HP` 60, only while a teammate lives; everyone washed = team wipe on any day |
 | Reconnect 30 s | `RECONNECT_GRACE_SEC` | 30 | Server grace and the client's retry window; must stay below `EMPTY_ROOM_DISPOSE_SEC` 60 |
 | Bot think 0.6–1.5 s; aim noise ±3° (Hamal / Aşçı), ±1° (Bekçi) | `BOT_THINK_MIN_SEC`, `BOT_THINK_MAX_SEC`, `BOT_AIM_NOISE_DEG` | 0.6, 1.5; hamal 3, balikci 2, bekci 1, asci 3 | Balıkçı's 2° is ours |
-| Difficulty: Tatil monsters ×0.6, bars ×0.7 · Normal ×1 · Kabus ×1.5, ×1.3, boss on night 2 | `DIFFICULTIES` | as §21 | `DEFAULT_DIFFICULTY` normal |
-| MVP: gather 1 · deliver 3 · hit 2 · kill 5 · revive 10 · fish 2 · golden 25 · raid 8 · first aboard +5 | `MVP_POINTS` | as §21 | `PIRATE_HAT_SCORE` 20; team score on a launch = Σ MVP points + `LAUNCH_BONUS` 500 + `LAUNCH_BONUS_PER_SEC` 2 × seconds left (`server/room/scoring.ts`) |
+| Difficulty: Tatil monsters ×0.6, bars ×0.7 · Normal ×1 · Kabus ×1.5, ×1.3, boss from night 2 | `DIFFICULTIES` | + Long Tide `raftCostMult` 0.75 / 1 / 1.25, `bossHp` 0.7 / 1 / 1.4, `bossFromNight` 3 / 3 / 2, `launchDay` 6 / 7 / 7 | `DEFAULT_DIFFICULTY` normal |
+| MVP: gather 1 · deliver 3 · hit 2 · kill 5 · revive 10 · fish 2 · golden 25 · raid 8 · first aboard +5 | `MVP_POINTS` | + Long Tide: assemble 1 per 2 s held, heavy +4, escort 2, salvage 2, repair 3, processed craft 1 | `PIRATE_HAT_SCORE` 20; team score = Σ MVP points + (win) `LAUNCH_BONUS` 500 + `WIN_SURVIVOR_BONUS` 200 × survivors aboard + `WIN_RAFT_HP_BONUS` 5 × raft hp + `WIN_BOSS_BONUS` 100 if Captain Crab is down − `LEFT_BEHIND_PENALTY` 150 × living left behind, or (loss) `LOSS_PER_STAGE` 40 × stages assembled (`server/room/scoring.ts`). No seconds bonus any more |
 | Titles | `TITLE_IDS` | mvp + the seven of §21 | Rules: `server/room/scoring.ts` `awardTitles` |
 
-§21's tempo paragraph (4 seats: hull 16, mast 4 + 6, provisions 4 + 4) is `RAFT_COSTS[4]`.
+§21's old tempo paragraph (one shopping list, hull 16 / mast 4 + 6 / provisions 4 + 4) is gone: the Long Tide stage table is `RAFT_STAGES`.
 
 ## 3. Known deviations from game4.md
 
@@ -66,13 +66,13 @@ Design calls the build made that game4.md doesn't (ARCHITECTURE §2 marks each).
 
 | # | game4.md | Build | Where to change it |
 |---|---|---|---|
-| 1 | Rain puts the campfire out (§9) | Fuel drains ×3 while it rains (a duel hut shelters it) | `RAIN_FIRE_DRAIN_MULT`; `server/world/survival.ts` fire step |
-| 2 | The raft leaves when every survivor has boarded (§4) | The first boarder starts a 20 s countdown; then the raft leaves with whoever is aboard ("Wilson finale") | `LAUNCH_WAIT_TICKS` (`Timings.launchWait`); `server/world/raft.ts` `step` |
+| 1 | Rain puts the campfire out (§9) | Fuel drains ×2 while it rains (a hut shelters it) | `RAIN_FIRE_DRAIN_MULT`; `server/world/survival.ts` fire step |
+| 2 | The raft leaves when every survivor has boarded (§4) | The first boarder starts a 60 s push-off (and the launch wave); the raft leaves once every living participant is aboard and 30 s have passed, else at 60 s with whoever is aboard (−150 per living one left behind) | `LAUNCH_WAIT_TICKS`, `LAUNCH_MIN_TICKS` (`Timings.launchWait` / `launchMin`); `server/world/raft.ts` `step` |
 | 3 | Treasures come out of the chest reel (§8) | Instant team effects when the reel stops, never an inventory item | `server/world/effects.ts` `EffectSystem`; reels `server/world/life/treasure.ts` |
-| 4 | Kaptan: raft delivery +10 % faster (§14) | A raft part he delivers counts +1 wood (4) | `CHARACTERS.kaptan.raftPartBonus`; `shared/rules/interact.ts` `raftPartValue` |
-| 5 | Şef: cooks 2× faster, cooked food +5 (§14) | Only the +5; cooking is instant for everyone | `CHARACTERS.sef.cookedBonus`; `server/world/actions.ts` eat |
+| 4 | Kaptan: raft delivery +10 % faster (§14) | Long Tide role kit: assembles ×1.5, a plank repair gives +10 more | `CHARACTERS.kaptan.assemblyMult` / `repairBonus` |
+| 5 | Şef: cooks 2× faster, cooked food +5 (§14) | Cooking is instant for everyone; Şef gets 2 cooked from 1 raw (Long Tide) and +5 on cooked food | `CHARACTERS.sef.cookOut` / `cookedBonus` |
 | 6 | Monkeys steal Fenomen's selfie stick first (§14) | 1–2 monkeys each grab one item from the chest; the first goes for Fenomen's pockets instead when she is within 25 m of the chest carrying something | `server/world/life/dayEvents.ts`, `visitors.ts`; `MONKEY_FENOMEN_RADIUS` |
-| 7 | Raft part: 3 wood, +1 rope in the mast stage (§7) | 3 wood only; rope is delivered straight to the mast | `RECIPES.raft_part` (`I`); `shared/rules/interact.ts` `planRaftDelivery` |
+| 7 | Raft part: 3 wood, +1 rope in the mast stage (§7) | Long Tide: `raft_part` is the Plank (1 log → 3 at the workbench), delivered like any other requirement | `RECIPES.raft_part` (`I`); `shared/rules/interact.ts` `planRaftDelivery` |
 | 8 | No eat key (§15) | F eats / drinks the held item (H in the left-handed preset; LMB on food charges a throw); E also picks up ground items and flipped crabs | `client/src/input/bindings.ts` (`eat`), `BTN.EAT`; `game.json` `controls` / `howToPlay` say F |
 | 9 | Storm scene 20 s (§4, §21) | `STORM_SEC` 12 | `C` |
 
@@ -93,7 +93,8 @@ games/raft-rush/client/dev/vite.<name>.config.ts`, then open `http://localhost:<
 **Bot balance harness** (`server/room/botBalance.test.ts`, skipped by default): bot-only matches on the real
 RaftWorld + BotDesk with the room's phase loop reproduced (no Colyseus, so stand-ins, budgets and reject routing
 aren't in it). One line per seed (outcome launched / storm / wiped / timeout, seconds, raft, deliveries, downs,
-kills, goal shares, rejects) and a summary, on stdout (a plain run shows it). About 0.7 s a match.
+kills, stages lost, Captain Crab's nights / damage taken / the day he went down, goal shares, rejects) and a
+summary, on stdout (a plain run shows it). About 1.5 s a 35-minute match.
 
 ```
 RAFT_BALANCE=1 npx vitest run games/raft-rush/server/room/botBalance.test.ts
@@ -108,12 +109,20 @@ RAFT_BALANCE=1 npx vitest run games/raft-rush/server/room/botBalance.test.ts
 | `RAFT_BALANCE_IDLE_HUMANS` | 0 | humans who never move (1 with 2 bots = the worst solo match) |
 | `RAFT_BALANCE_DIFFICULTY` | normal | vacation / normal / nightmare |
 | `RAFT_BALANCE_FAST` | off | `1` = the RAFT_TEST timers: a smoke run of the match flow (bots lose every match there) |
-| `RAFT_BALANCE_TRACE` | off | print every bot goal change, throw and hit |
+| `RAFT_BALANCE_TRACE` | off | print every bot goal change (and why the last one failed), throw and hit, plus a team status line every 10 s (fire, raft stage / rows / work / hp, bench, wreck scrap, Captain Crab, chest) |
+| `RAFT_BALANCE_BOSS_HELP` | 0 | `<day>`: Captain Crab is down by the dawn of that day and his compass is in the chest — the "human helps a bit" stand-in (bots alone rarely kill him) |
 | `RAFT_BALANCE_BAND` | — | `lo-hi` win %: assert it. Only for the target scenario (normal, 3 bots, 0 idle humans, real timings); with any other scenario the run fails |
 
-Target: game4.md §20's test plan asks 55–75 % wins on Normal. No band is agreed yet, so it reports only; the bots
-win nearly every Normal match today. The levers are §1–§2 (bars, waves, raft costs) and the bot pacing in
-`botNeeds.ts`.
+Target (Long Tide): 55–75 % Normal wins, the launch between 26:00 and 34:40 (the day locks make an earlier one
+impossible). No band is agreed yet, so it reports only. Measured in the Long Tide verifier pass (10 seeds, Normal,
+after the bots' log / scrap weighting): bots alone 0 % (Captain Crab is never killed, so the rudder never gets its
+compass; the bots land ~1–2 hits a night on him); with `RAFT_BALANCE_BOSS_HELP=4` 3 bots 5/10 launch (26:40,
+26:51, 31:57, 32:20, 32:23) and 4 bots 5/10 (26:30–31:43); `BOSS_HELP=5` 3 bots 4/10; 2 bots + 1 idle human 0/10
+(the bots spend a quarter of their time reviving the passenger). Losses are mostly storms at stage 4–5 or a wipe on
+night 4–5. The levers: the threat
+numbers in `C` (`nightWave`, `bossHpFor`, bars, fire) and `server/world/life/tuning.ts` (`CRAB_RAFT_GNAW`,
+`BOSS_RAFT_GNAW`, `PUFFER_RAFT_DAMAGE`, `CHEST_RAID_TICKS`), the raft table `RAFT_STAGES`, and the bots' night
+duties (`botBrain.ts` guard / guard2, `botMotor.ts` guard: torch swings, throws at scared crabs, kiting the boss).
 
 **Nightly CI**: `.github/workflows/balance.yml` ("Raft Rush balance", 03:23 UTC daily and on demand) runs the
 target scenario with 30 seeds and writes the table into the run summary. It fails only when the harness breaks;

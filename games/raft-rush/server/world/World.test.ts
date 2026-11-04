@@ -9,12 +9,21 @@ import {
   CHARGE_FULL_TICKS,
   COCONUT_BALL_COUNT,
   COLLECTOR_FILL_TICKS,
+  BIOMES,
   DIFFICULTIES,
   DOWNED_TICKS,
   DROWN_DAMAGE_PER_SEC,
   DROWN_TICKS,
   FENCE_HP,
+  ESCORT_RADIUS,
+  FIRE_DAY_BURN_MULT,
+  HEAVY_CARRY_ALONE,
+  HEAVY_CARRY_ESCORT,
   FIRE_FUEL_MAX_TICKS,
+  FIRE_LIGHT_RADIUS_MIN,
+  FIRE_REPEL_MIN_FRACTION,
+  fireLightRadius,
+  fireRepels,
   FIRE_START_FUEL_TICKS,
   FIRE_WOOD_FUEL_TICKS,
   FUEL_CAN_TICKS,
@@ -22,25 +31,30 @@ import {
   JELLYFISH_DAMAGE_PER_SEC,
   KRAKEN_HIT_INTERVAL_TICKS,
   KRAKEN_TICKS,
+  LAUNCH_MIN_TICKS,
   LAUNCH_WAIT_TICKS,
   MVP_POINTS,
   PALM_REGROW_TICKS,
   PIRATE_HAT_SCORE,
   PUFFER_FUSE_TICKS,
   PUFFER_SELF_DAMAGE,
-  RAFT_PART_WOOD,
+  RAFT_HP_AFTER_LOSS,
+  RAFT_HP_MAX,
+  RAFT_LAUNCH_STAGE,
+  RAFT_REPAIR_PLANK_HP,
   RAIN_FIRE_DRAIN_MULT,
   RESPAWN_BARS,
   RESPAWN_HP,
   REVIVE_HP,
   REVIVE_TICKS,
+  SPRING_RECHARGE_TICKS,
   SPRING_WATER,
   SPYGLASS_TICKS,
   TORCH_BURN_TICKS,
-  WRECK_HULL_WOOD,
+  WRECK_SCRAP_BASE,
   secToTicks,
 } from "../../shared/constants.js";
-import { raftCost } from "../../shared/items.js";
+import { raftAssemblyTicks, raftStageNeeds } from "../../shared/items.js";
 import { BTN } from "../../shared/protocol.js";
 import { countOf, slotCount, slotKind } from "../../shared/rules/inventory.js";
 import { snapYaw8, type CoverCircle } from "../../shared/sim/cover.js";
@@ -48,6 +62,7 @@ import { computeThrowVelocities } from "../../shared/sim/throw.js";
 import { RaftState, PlayerState } from "../schema.js";
 import { hungerDrainPerTick, secondsToEmpty, thirstDrainPerTick, warmthPerSec } from "./rules.js";
 import { Bench, benchIsland, NODE, PLATEAU_Y } from "./testkit.js";
+import { planLaunchWave } from "./life/waves.js";
 import { mulberry32 } from "../../shared/island/noise.js";
 import { RaftWorld, STARTER_ITEMS } from "./World.js";
 
@@ -65,11 +80,15 @@ function atRaft(b: Bench, id: string, dx = 0): PlayerState {
   return b.placeFacing(id, r.x + dx, r.z, 0, -2);
 }
 
+/** Every stage assembled, a sound raft, and the clock on the launch day (Normal: day 7). */
 function readyRaft(b: Bench): void {
-  const team = b.state.teams[0]!;
-  const cost = raftCost(team.seats, b.timings.cheapRaft);
-  Object.assign(team, { hullWood: cost.hullWood, mastWood: cost.mastWood, mastRope: cost.mastRope, food: cost.food, water: cost.water });
-  b.world.raft.refreshStage(0);
+  b.world.raft.setStage(0, RAFT_LAUNCH_STAGE);
+  b.setClock(DIFFICULTIES.normal.launchDay, "day");
+}
+
+/** Hold E at the raft (assembly) for `ticks`. */
+function assemble(b: Bench, id: string, ticks: number): ReturnType<Bench["run"]> {
+  return b.hold(id, BTN.INTERACT, ticks, BTN.INTERACT_PRESS);
 }
 
 describe("RaftWorld: match start", () => {
@@ -98,17 +117,20 @@ describe("RaftWorld: match start", () => {
     expect(state.players.get("watcher")!.alive).toBe(false);
     const team = state.teams[0]!;
     expect(team.seats).toBe(3);
-    expect(team.hullWood).toBe(WRECK_HULL_WOOD);
     expect(team.stage).toBe(0);
+    expect([...team.raftHave]).toEqual([0, 0, 0]);
+    expect([...team.raftNeed]).toEqual(raftStageNeeds(0, 3));
+    expect([team.raftWork, team.raftWorkNeed, team.raftHp]).toEqual([0, raftAssemblyTicks(0), 0]);
+    expect([team.benchTier, team.wreckScrap, team.springCharges, team.bossDown]).toEqual([0, WRECK_SCRAP_BASE + 3, 4 + 2 * 3, false]);
     expect(team.fireFuel).toBe(FIRE_START_FUEL_TICKS);
     expect(team.chest.size).toBe(2);
-    expect(state.nodes[NODE.tree]).toBe(3);
+    expect(state.nodes[NODE.tree]).toBe(4);
   });
 
-  it("never lets the wreck finish a one-wood test raft by itself", () => {
+  it("the fast test raft needs one of everything", () => {
     const b = new Bench([["a"]], { fast: true });
-    expect(b.state.teams[0]!.hullWood).toBe(0);
-    expect(b.state.teams[0]!.stage).toBe(0);
+    expect([...b.state.teams[0]!.raftNeed]).toEqual([1, 1, 0]);
+    expect(b.state.teams[0]!.raftWorkNeed).toBe(secToTicks(1));
   });
 
   it("resetToLobby clears entities and bodies in place", () => {
@@ -125,7 +147,7 @@ describe("RaftWorld: match start", () => {
 });
 
 describe("RaftWorld: gathering", () => {
-  it("a hold-E channel yields one wood per 2.5 s, decrements the node and fills a slot", () => {
+  it("a hold-E channel yields one wood per 4 s, decrements the node and fills a slot; by hand no log", () => {
     const b = new Bench([["a"]]);
     const tree = b.island.nodes[NODE.tree]!;
     b.placeFacing("a", tree.x, tree.z, 0, 1.5);
@@ -134,25 +156,39 @@ describe("RaftWorld: gathering", () => {
     const g = b.of("gather", first);
     expect(g).toHaveLength(1);
     expect(g[0]).toMatchObject({ playerId: "a", node: NODE.tree, kind: "wood", count: 1, depleted: false, dropped: false, eaten: false });
-    expect(b.state.nodes[NODE.tree]).toBe(2);
+    expect(b.state.nodes[NODE.tree]).toBe(3);
     expect(countOf(b.p("a"), "wood")).toBe(1);
     expect(b.p("a").stats.gathered).toBe(1);
     expect(b.p("a").score).toBe(MVP_POINTS.gather);
     // Keep holding: the channel restarts on the same tree until it is empty.
-    b.hold("a", BTN.INTERACT, unit * 2);
+    b.hold("a", BTN.INTERACT, unit * 3);
     expect(b.state.nodes[NODE.tree]).toBe(0);
-    expect(countOf(b.p("a"), "wood")).toBe(3);
+    expect(countOf(b.p("a"), "wood")).toBe(4);
     expect(b.of("gather").at(-1)!.depleted).toBe(true);
+    expect(b.of("gather").at(-1)!.felled).toBeUndefined();
+    expect([...b.state.projectiles.values()].some((p) => p.kind === "log")).toBe(false);
     expect(b.p("a").channel).toBe(0);
   });
 
-  it("an axe anywhere in the inventory makes wood take 1 s", () => {
+  it("an axe anywhere in the inventory makes wood take 1.5 s, and its last chop fells the tree: a log", () => {
     const b = new Bench([["a"]]);
     const tree = b.island.nodes[NODE.tree]!;
     b.placeFacing("a", tree.x, tree.z, 0, 1.5);
     b.give("a", "axe", 1, 3);
-    b.hold("a", BTN.INTERACT, secToTicks(GATHER_SEC.woodAxe) + 1, BTN.INTERACT_PRESS);
+    const unit = secToTicks(GATHER_SEC.woodAxe);
+    b.hold("a", BTN.INTERACT, unit + 1, BTN.INTERACT_PRESS);
     expect(countOf(b.p("a"), "wood")).toBe(1);
+    b.hold("a", BTN.INTERACT, unit * 3 + 3);
+    const last = b.of("gather").at(-1)!;
+    expect(last.depleted).toBe(true);
+    const log = b.state.projectiles.get(last.felled!)!;
+    expect(log.kind).toBe("log");
+    b.run(60);
+    expect(log.state).toBe("rest");
+    // Logs never despawn.
+    b.state.tick += secToTicks(400);
+    b.run(2);
+    expect(b.state.projectiles.has(log.id)).toBe(true);
   });
 
   it("releasing E stops the channel without a unit", () => {
@@ -397,9 +433,9 @@ describe("RaftWorld: eating", () => {
     Object.assign(p, { hunger: 50, thirst: 60, hp: 70 });
     b.send("a", { buttons: BTN.EAT });
     const eat = b.of("eat", b.tick());
-    expect(eat[0]).toMatchObject({ kind: "coconut", hunger: 25, thirst: 25 });
-    expect(p.hunger).toBeGreaterThanOrEqual(74);
-    expect(p.thirst).toBeGreaterThanOrEqual(84);
+    expect(eat[0]).toMatchObject({ kind: "coconut", hunger: 20, thirst: 20 });
+    expect(p.hunger).toBeGreaterThanOrEqual(69);
+    expect(p.thirst).toBeGreaterThanOrEqual(79);
     expect(p.hp).toBeGreaterThanOrEqual(79);
     expect(countOf(p, "coconut")).toBe(1);
     expect(p.stats.eaten).toBe(1);
@@ -498,10 +534,12 @@ describe("RaftWorld: crafting & the camp chest", () => {
     const evs = b.world.drainEvents();
     expect(b.of("eat", evs).map((e) => e.playerId).sort()).toEqual(["a", "b"]);
     expect(b.p("b").hunger).toBeGreaterThanOrEqual(49);
-    b.give("a", "wood", 3, 0);
+    b.state.teams[0]!.benchTier = 1;
+    b.give("a", "log", 1, 0);
     expect(b.world.craft("a", "raft_part")).toBe(true);
-    // wood (3) consumed → slot 0 freed → the part fits there.
+    // the log consumed → slot 0 freed → the 3 planks fit there.
     expect(b.of("crafted", b.world.drainEvents())[0]!.dropped).toBe(false);
+    expect(countOf(b.p("a"), "raft_part")).toBe(3);
     for (let s = 0; s < 4; s++) b.give("a", "stone", 3, s);
     b.state.teams[0]!.chest.set("wood", 1);
     b.state.teams[0]!.chest.set("rope", 1);
@@ -604,47 +642,88 @@ describe("RaftWorld: crafting & the camp chest", () => {
   });
 });
 
-describe("RaftWorld: the raft", () => {
-  it("delivery fills the current stage exactly, surplus moves on only when the next stage is current", () => {
-    const b = new Bench([["a"], ["b"]]); // 2 seats: hull 10 (wreck 3), mast 4 + 4, provisions 2 + 2
-    atRaft(b, "a");
-    b.give("a", "raft_part", 1, 0);
-    b.give("a", "wood", 5, 1);
-    b.give("a", "fish_cooked", 1, 2);
-    b.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
-    const evs = b.tick();
-    const d = b.of("deliver", evs);
-    expect(d).toHaveLength(2);
-    expect(d[0]).toMatchObject({ stage: 0, newStage: 1, items: [{ kind: "raft_part", count: 1 }, { kind: "wood", count: 4 }] });
-    expect(d[1]).toMatchObject({ stage: 1, newStage: 1, items: [{ kind: "wood", count: 1 }] });
+describe("RaftWorld: crafting tiers", () => {
+  it("bench recipes need the workbench / anvil; the anvil waits for day 3; a bench is built once", () => {
+    const b = new Bench([["a"]]);
+    atCamp(b, "a");
     const team = b.state.teams[0]!;
-    expect([team.hullWood, team.mastWood, team.stage]).toEqual([10, 1, 1]);
-    expect(countOf(b.p("a"), "fish_cooked")).toBe(1); // not needed yet: stays with you
-    expect(b.p("a").stats.delivered).toBe(RAFT_PART_WOOD + 4 + 1);
-    expect(b.p("a").score).toBe(MVP_POINTS.deliver * (RAFT_PART_WOOD + 5));
-    b.run(3, () => b.send("a"));
-    b.give("a", "wood", 3, 0);
-    b.give("a", "rope", 5, 1);
-    b.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
+    team.chest.clear();
+    const reasons = (): string[] => b.of("reject", b.world.drainEvents()).map((r) => r.reason);
+    b.give("a", "log", 1, 0);
+    expect(b.world.craft("a", "raft_part")).toBe(false);
+    expect(reasons()).toEqual(["needBench"]);
+    for (const [k, n] of [["wood", 6], ["rope", 2], ["stone", 2]] as const) team.chest.set(k, n);
+    expect(b.world.craft("a", "bench_1")).toBe(true);
+    expect(team.benchTier).toBe(1);
+    expect(b.p("a").score).toBe(MVP_POINTS.craftProcessed);
+    for (const [k, n] of [["wood", 6], ["rope", 2], ["stone", 2]] as const) team.chest.set(k, n);
+    expect(b.world.craft("a", "bench_1")).toBe(false);
+    expect(reasons()).toEqual(["built"]);
+    expect(b.world.craft("a", "raft_part")).toBe(true);
+    for (const [k, n] of [["raft_part", 3], ["stone", 4], ["scrap", 2]] as const) team.chest.set(k, n);
+    expect(b.world.craft("a", "bench_2")).toBe(false);
+    expect(reasons()).toEqual(["tooEarly"]);
+    b.setClock(3, "day");
     b.tick();
-    expect([team.mastWood, team.mastRope, team.stage]).toEqual([4, 4, 2]);
-    expect(countOf(b.p("a"), "rope")).toBe(1);
-    b.run(3, () => b.send("a"));
-    b.give("a", "coconut", 1, 0);
-    b.give("a", "water", 2, 1);
-    b.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
-    const last = b.tick();
-    expect([team.food, team.water, team.stage]).toEqual([2, 2, 3]);
-    expect(b.of("raftReady", last)).toHaveLength(1);
+    expect(b.world.craft("a", "bench_2")).toBe(true);
+    expect(team.benchTier).toBe(2);
+    b.give("a", "scrap", 1, 1);
+    b.give("a", "stone", 1, 2);
+    b.give("a", "", 0, 3);
+    expect(b.world.craft("a", "nails")).toBe(true);
+    expect(countOf(b.p("a"), "nails")).toBe(3);
   });
 
-  it("the captain's raft parts count one extra wood", () => {
-    const b = new Bench([["cap", "kaptan"], ["b"]]);
-    atRaft(b, "cap");
-    b.give("cap", "raft_part", 1);
-    b.send("cap", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
+  it("the chef cooks two from one raw fish", () => {
+    const b = new Bench([["sef", "sef"], ["b"]]);
+    atCamp(b, "sef");
+    b.give("sef", "fish_raw", 1);
+    expect(b.world.craft("sef", "cook_fish")).toBe(true);
+    expect(countOf(b.p("sef"), "fish_cooked")).toBe(2);
+    atCamp(b, "b");
+    b.give("b", "fish_raw", 1);
+    expect(b.world.craft("b", "cook_fish")).toBe(true);
+    expect(countOf(b.p("b"), "fish_cooked")).toBe(1);
+  });
+});
+
+describe("RaftWorld: the raft", () => {
+  it("delivery fills the current stage from the pockets; surplus stays; nothing before the stage's day", () => {
+    const b = new Bench([["a"], ["b"]]); // 2 seats: keel 2 logs + 3 rope
+    atRaft(b, "a");
+    b.give("a", "log", 1, 0);
+    b.give("a", "rope", 5, 1);
+    b.give("a", "raft_part", 2, 2);
+    b.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
+    const d = b.of("deliver", b.tick());
+    expect(d).toHaveLength(1);
+    expect(d[0]).toMatchObject({ stage: 0, newStage: 0, materialsDone: false, items: [{ kind: "log", count: 1 }, { kind: "rope", count: 3 }] });
+    const team = b.state.teams[0]!;
+    expect([...team.raftHave]).toEqual([1, 3, 0]);
+    expect(countOf(b.p("a"), "rope")).toBe(2);
+    expect(countOf(b.p("a"), "raft_part")).toBe(2); // the deck's, not the keel's
+    expect(b.p("a").stats.delivered).toBe(4);
+    expect(b.p("a").score).toBe(MVP_POINTS.deliver * 4 + MVP_POINTS.heavy);
+    // The deck is day 2: planks are refused on day 1 even once the keel is assembled.
+    b.world.raft.setStage(0, 1);
+    b.run(3, () => b.send("a"));
+    b.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
+    expect(b.of("reject", b.tick())[0]).toMatchObject({ action: "deliver", reason: "stageLocked" });
+    expect(countOf(b.p("a"), "raft_part")).toBe(2);
+    b.setClock(2, "day");
+    b.run(3, () => b.send("a"));
+    b.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
+    expect(b.of("deliver", b.tick())[0]).toMatchObject({ stage: 1, items: [{ kind: "raft_part", count: 2 }, { kind: "rope", count: 2 }] });
+  });
+
+  it("a heavy delivery pays the escort walking beside the carrier", () => {
+    const b = new Bench([["a"], ["b"]]);
+    atRaft(b, "a");
+    atRaft(b, "b", 1.5);
+    b.give("a", "log", 1);
+    b.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
     b.tick();
-    expect(b.state.teams[0]!.hullWood).toBe(WRECK_HULL_WOOD + RAFT_PART_WOOD + 1);
+    expect(b.p("b").score).toBe(MVP_POINTS.escort);
   });
 
   it("says why when there is nothing the stage needs", () => {
@@ -653,50 +732,114 @@ describe("RaftWorld: the raft", () => {
     b.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
     expect(b.of("reject", b.tick())[0]).toMatchObject({ reason: "nothingToDeliver", interact: "deliver" });
     b.run(3, () => b.send("a"));
-    b.give("a", "water", 1);
+    b.give("a", "cloth", 1);
     b.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
     expect(b.of("reject", b.tick())[0]).toMatchObject({ reason: "wrongStage" });
   });
 
-  it("the old sail completes the mast as soon as the hull is done", () => {
+  it("assembly: hold E once the materials are in; a hammer works twice as fast; progress is kept", () => {
     const b = new Bench([["a"], ["b"]]);
-    b.world.applyTreasure(b.p("a"), "old_sail");
-    const team = b.state.teams[0]!;
-    expect(team.sail).toBe(true);
     atRaft(b, "a");
-    b.give("a", "wood", 5, 0);
-    b.give("a", "wood", 2, 1);
+    b.give("a", "log", 2, 0);
+    b.give("a", "rope", 3, 1);
     b.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
-    b.tick();
-    expect(team.stage).toBe(2);
-    expect(team.sail).toBe(false);
-    const cost = raftCost(2);
-    expect([team.mastWood, team.mastRope]).toEqual([cost.mastWood, cost.mastRope]);
+    expect(b.of("deliver", b.tick())[0]!.materialsDone).toBe(true);
+    b.run(3, () => b.send("a"));
+    const team = b.state.teams[0]!;
+    const need = raftAssemblyTicks(0);
+    // Bare hands: half speed.
+    assemble(b, "a", 61);
+    expect(b.p("a").channel).toBe(3);
+    expect(team.raftWork).toBeGreaterThanOrEqual(29);
+    expect(team.raftWork).toBeLessThanOrEqual(31);
+    b.run(3, () => b.send("a")); // let go: the work stays
+    expect(team.raftWork).toBeGreaterThanOrEqual(29);
+    b.give("a", "hammer", 1, 2);
+    const evs = assemble(b, "a", need);
+    const done = b.of("raftStage", evs);
+    expect(done).toHaveLength(1);
+    expect(done[0]).toMatchObject({ stage: 0, newStage: 1, lost: false, playerIds: ["a"] });
+    expect(team.stage).toBe(1);
+    expect(team.raftHp).toBe(RAFT_HP_MAX);
+    expect([...team.raftHave]).toEqual([0, 0, 0]);
+    expect(team.raftWork).toBe(0);
+    expect(b.p("a").channel).toBe(0);
+    expect(b.p("a").score).toBeGreaterThan(MVP_POINTS.deliver * 5);
   });
 
-  it("gnawing lowers the hull and drops a finished raft back to the hull stage", () => {
+  it("the mast needs two people holding E at once", () => {
     const b = new Bench([["a"], ["b"]]);
-    readyRaft(b);
+    b.world.raft.setStage(0, 2);
+    b.setClock(3, "day");
+    const team = b.state.teams[0]!;
+    const prog = b.world.raft as unknown as { progress: Map<number, { have: number[] }[]> };
+    prog.progress.get(0)![2]!.have = [...team.raftNeed];
+    b.world.raft.sync(team);
+    atRaft(b, "a", -0.8);
+    atRaft(b, "b", 0.8);
+    b.give("a", "hammer", 1);
+    b.give("b", "hammer", 1);
+    assemble(b, "a", 60);
+    expect(team.raftWork).toBe(0);
+    expect(b.p("a").channel).toBe(3); // holding, but alone
+    b.run(30, () => {
+      b.send("a", { buttons: BTN.INTERACT });
+      b.send("b", { buttons: BTN.INTERACT | (b.p("b").channel === 0 ? BTN.INTERACT_PRESS : 0) });
+    });
+    expect(team.raftWork).toBeGreaterThan(50); // 2 × 1.0 × 1.2 per tick
+  });
+
+  it("raft hp: a hammer repairs; at 0 the raft is wrecked but keeps its assembled stages", () => {
+    const b = new Bench([["a"], ["b"]]);
+    b.world.raft.setStage(0, 2, 30);
+    b.setClock(3, "day");
     const team = b.state.teams[0]!;
     atRaft(b, "a");
+    b.give("a", "hammer", 1, 0);
+    b.give("a", "raft_part", 1, 1);
+    b.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
+    expect(b.of("raftRepair", b.tick())[0]).toMatchObject({ kind: "raft_part", added: RAFT_REPAIR_PLANK_HP, hp: 30 + RAFT_REPAIR_PLANK_HP });
+    expect(b.p("a").score).toBe(MVP_POINTS.repair);
+    b.world.damageRaft(0, 49, "m7", { x: 0, y: 0, z: 0 });
+    expect(team.raftHp).toBe(1);
+    b.world.damageRaft(0, 4, "m7", { x: 0, y: 0, z: 0 });
+    const evs = b.world.drainEvents();
+    expect(b.of("raftStage", evs)).toHaveLength(0);
+    expect(b.of("raftDamage", evs).at(-1)).toMatchObject({ amount: 1, hp: 0 });
+    expect(team.stage).toBe(2);
+    // A wrecked raft takes no more damage until it is repaired.
+    b.world.damageRaft(0, 4, "m7", { x: 0, y: 0, z: 0 });
+    expect(b.of("raftDamage", b.world.drainEvents())).toHaveLength(0);
+    // Before the keel nothing can be gnawed.
+    b.world.raft.setStage(0, 0);
+    b.world.damageRaft(0, 10, "m7", { x: 0, y: 0, z: 0 });
+    expect(b.of("raftDamage", b.world.drainEvents())).toHaveLength(0);
+  });
+
+  it("the finished raft can't be boarded before the launch day, nor with a weak hull", () => {
+    const b = new Bench([["a"], ["b"]]);
+    b.world.raft.setStage(0, RAFT_LAUNCH_STAGE);
+    b.setClock(DIFFICULTIES.normal.launchDay - 1, "night", b.timings.night - 3);
+    atRaft(b, "a");
+    b.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
+    expect(b.of("reject", b.tick())[0]).toMatchObject({ action: "board", reason: "seaRough" });
+    expect(b.p("a").boarded).toBe(false);
+    b.setClock(DIFFICULTIES.normal.launchDay, "day");
+    b.state.teams[0]!.raftHp = 49;
+    b.run(3, () => b.send("a"));
+    b.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
+    expect(b.of("reject", b.tick())[0]).toMatchObject({ action: "board", reason: "raftWeak" });
+    b.state.teams[0]!.raftHp = 50;
+    b.run(3, () => b.send("a"));
     b.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
     b.tick();
     expect(b.p("a").boarded).toBe(true);
-    b.world.damageRaft(0, 1, "m7", { x: 0, y: 0, z: 0 });
-    const dmg = b.of("raftDamage", b.world.drainEvents());
-    expect(dmg[0]).toMatchObject({ amount: 1, byMonsterId: "m7", hullWood: raftCost(2).hullWood - 1 });
-    expect(team.stage).toBe(0);
-    expect(b.p("a").boarded).toBe(false);
-    expect(b.state.launchTicksLeft).toBe(0);
-    b.world.damageRaft(0, 100, "m7", { x: 0, y: 0, z: 0 });
-    expect(team.hullWood).toBe(0);
   });
 
-  it("boarding: the first aboard starts the countdown, the last one requests the launch", () => {
+  it("push-off: the first aboard starts it; everyone aboard leaves only after the minimum", () => {
     const b = new Bench([["a"], ["b"]]);
     readyRaft(b);
     b.world.drainEvents();
-    b.setClock(3, "night", 1350); // the departure gate is open: 5 s before the storm
     atRaft(b, "a", -0.6);
     atRaft(b, "b", 0.6);
     b.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
@@ -706,64 +849,131 @@ describe("RaftWorld: the raft", () => {
     expect(b.state.launchTicksLeft).toBe(LAUNCH_WAIT_TICKS - 1);
     b.run(5, () => b.send("b"));
     b.send("b", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
-    const last = b.tick();
-    expect(b.of("board", last)[0]).toMatchObject({ playerId: "b", launchTicksLeft: 0 });
-    const req = b.of("launchRequest", last);
+    expect(b.of("launchRequest", b.tick())).toHaveLength(0); // everyone aboard, but not 30 s yet
+    expect(b.p("b").boarded).toBe(true);
+    // (The launch wave is another test's business: keep the beach empty here.)
+    const evs = b.run(LAUNCH_MIN_TICKS, () => b.state.monsters.clear());
+    const req = b.of("launchRequest", evs);
     expect(req).toHaveLength(1);
+    expect(req[0]!.tick - first[0]!.tick).toBe(LAUNCH_MIN_TICKS - 1); // the boarding tick already counted one
     expect(req[0]!.aboard.sort()).toEqual(["a", "b"]);
-    expect(req[0]!.left).toEqual([]);
+    expect([req[0]!.left, req[0]!.leftBehind]).toEqual([[], []]);
     expect(b.p("b").score).toBe(0);
-    // Only once.
-    expect(b.of("launchRequest", b.run(5))).toHaveLength(0);
+    expect(b.of("launchRequest", b.run(5))).toHaveLength(0); // only once
   });
 
-  it("the countdown leaves the latecomers on the beach; downed players don't hold the raft", () => {
+  it("the push-off brings the launch wave: 0.6 × the last night's crabs, 3 puffers and Captain Crab", () => {
+    const b = new Bench([["a"], ["b"]]);
+    readyRaft(b);
+    atRaft(b, "a");
+    b.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
+    const evs = [...b.tick(), ...b.run(Math.floor(LAUNCH_WAIT_TICKS / 2) + 5)];
+    const kinds = b.of("monsterSpawn", evs).map((e) => e.kind);
+    const plan = planLaunchWave({ seats: b.state.teams[0]!.seats, difficulty: DIFFICULTIES.normal, biome: BIOMES[b.island.biome], lastNight: b.timings.days });
+    expect(kinds.filter((k) => k === "boss")).toHaveLength(1);
+    expect(kinds.filter((k) => k === "puffer")).toHaveLength(3);
+    expect(kinds.filter((k) => k === "crab")).toHaveLength(plan.crabs);
+  });
+
+  it("the push-off leaves the latecomers behind; a broken raft aborts it", () => {
     const b = new Bench([["a"], ["b"]], { fast: true });
     readyRaft(b);
-    b.setClock(3, "night", 5); // gate open; the countdown then runs out and leaves b behind
     atRaft(b, "a");
     b.place("b", 0, 0, 0);
     b.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
     b.tick();
-    const evs = b.run(b.timings.launchWait + 1);
-    const req = b.of("launchRequest", evs);
+    const req = b.of("launchRequest", b.run(b.timings.launchWait + 1));
     expect(req).toHaveLength(1);
-    expect(req[0]).toMatchObject({ aboard: ["a"], left: ["b"] });
+    expect(req[0]).toMatchObject({ aboard: ["a"], left: ["b"], leftBehind: ["b"] });
 
     const c = new Bench([["a"], ["b"]]);
     readyRaft(c);
-    c.setClock(3, "night", 1350);
     atRaft(c, "a");
-    c.place("b", 0, 0, 0);
-    c.world.damagePlayer(c.p("b"), 500, "crab", "m1");
     c.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
-    const now = c.tick();
-    expect(c.of("launchRequest", now)[0]).toMatchObject({ aboard: ["a"], left: ["b"] });
+    c.tick();
+    expect(c.state.launchTicksLeft).toBeGreaterThan(0);
+    c.world.damageRaft(0, 200, "m7", { x: 0, y: 0, z: 0 });
+    expect(c.p("a").boarded).toBe(false);
+    expect(c.state.launchTicksLeft).toBe(0);
+    expect(c.state.teams[0]!.stage).toBe(RAFT_LAUNCH_STAGE - 1);
+    expect(c.of("launchRequest", c.run(LAUNCH_WAIT_TICKS + 5))).toHaveLength(0);
   });
 
-  it("the departure gate holds a fully boarded raft until the storm window", () => {
+  it("regression: a solo player with every stage built still can't sail before the launch day", () => {
     const b = new Bench([["a"], ["b"]]);
-    readyRaft(b);
-    b.world.drainEvents();
-    atRaft(b, "a", -0.6);
-    atRaft(b, "b", 0.6);
-    b.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
-    b.tick();
-    b.send("b", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
-    b.tick();
-    expect(b.p("a").boarded && b.p("b").boarded).toBe(true);
-    expect(b.of("launchRequest", b.run(30))).toHaveLength(0); // day 1: the gate is shut
-    b.setClock(3, "night", 1350); // 5 s before the storm
-    const req = b.of("launchRequest", b.run(2));
-    expect(req).toHaveLength(1);
-    expect(req[0]!.aboard.sort()).toEqual(["a", "b"]);
+    b.world.raft.setStage(0, RAFT_LAUNCH_STAGE);
+    atRaft(b, "a");
+    for (let day = 1; day < DIFFICULTIES.normal.launchDay; day++) {
+      b.setClock(day, "day", 30);
+      b.run(3, () => b.send("a"));
+      b.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
+      b.tick();
+      expect(b.p("a").boarded, `day ${day}`).toBe(false);
+    }
+    expect(b.of("launchRequest")).toHaveLength(0);
   });
 
-  it("a raft that isn't ready can't be boarded", () => {
+  it("a raft that isn't finished can't be boarded", () => {
     const b = new Bench([["a"], ["b"]]);
     b.give("a", "wood", 1);
     expect(b.world.raft.board(b.p("a"))).toBe(false);
     expect(b.of("reject", b.world.drainEvents())[0]).toMatchObject({ action: "board", reason: "notReady" });
+  });
+});
+
+describe("RaftWorld: the camp economy", () => {
+  it("spring charges run out and refill", () => {
+    const b = new Bench([["a"]]);
+    const spring = b.island.sites[0]!.spring;
+    b.placeFacing("a", spring.x, spring.z, 1.5, 0);
+    const team = b.state.teams[0]!;
+    team.springCharges = 1;
+    b.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
+    expect(b.of("pickup", b.tick())[0]).toMatchObject({ kind: "water", source: "spring" });
+    expect(team.springCharges).toBe(0);
+    b.run(2, () => b.send("a"));
+    b.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
+    expect(b.of("reject", b.tick())[0]).toMatchObject({ reason: "springDry" });
+    b.run(SPRING_RECHARGE_TICKS);
+    expect(team.springCharges).toBe(1);
+  });
+
+  it("the wreck yields scrap to a hammer, one per 3 s, and more at dawn", () => {
+    const b = new Bench([["a", "gelin"]]);
+    const w = b.island.sites[0]!.wreck;
+    b.placeFacing("a", w.x, w.z, 0, 2);
+    const team = b.state.teams[0]!;
+    team.wreckScrap = 2;
+    b.hold("a", BTN.INTERACT, 10, BTN.INTERACT_PRESS);
+    expect(b.p("a").channel).toBe(0); // no hammer
+    b.run(2, () => b.send("a"));
+    b.give("a", "hammer", 1, 0);
+    b.hold("a", BTN.INTERACT, secToTicks(GATHER_SEC.salvage) * 2 + 3, BTN.INTERACT_PRESS);
+    expect(countOf(b.p("a"), "scrap")).toBe(2);
+    expect(team.wreckScrap).toBe(0);
+    expect(b.p("a").score).toBe(2 * MVP_POINTS.salvage);
+    b.setClock(2, "day");
+    b.tick();
+    expect(team.wreckScrap).toBe(1);
+  });
+
+  it("the old sail puts sailcloth into the chest", () => {
+    const b = new Bench([["a"]]);
+    const team = b.state.teams[0]!;
+    team.chest.clear();
+    b.world.applyTreasure(b.p("a"), "old_sail");
+    expect(team.chest.get("cloth")).toBe(2);
+  });
+
+  it("a compass is never lost: washed ashore with it, it goes back to the chest", () => {
+    const b = new Bench([["a"], ["b"]]);
+    const team = b.state.teams[0]!;
+    team.chest.clear();
+    b.give("b", "compass", 1);
+    b.world.damagePlayer(b.p("b"), 200, "crab", "m1");
+    b.run(DOWNED_TICKS + 1);
+    expect(b.p("b").washed).toBe(true);
+    expect(team.chest.get("compass")).toBe(1);
   });
 });
 
@@ -817,9 +1027,35 @@ describe("RaftWorld: downed, revive, wash, respawn", () => {
     expect([p.hunger, p.thirst, p.warmth].every((v) => Math.abs(v - RESPAWN_BARS) <= 1)).toBe(true);
   });
 
-  it("on day 3 nobody comes back: everyone washed is a team wipe", () => {
-    const b = new Bench([["a"]]);
+  it("Long Tide T4: a team wipe on day 2 is a loss; the washed only come back while a teammate lives", () => {
+    const b = new Bench([["a"], ["b"]]);
+    b.setClock(2, "night");
+    b.tick();
+    expect(DOWNED_TICKS).toBe(25 * SEC);
+    b.world.damagePlayer(b.p("a"), 200, "crab", "m1");
+    b.run(DOWNED_TICKS + 1);
+    expect(b.p("a").washed).toBe(true);
+    b.world.damagePlayer(b.p("b"), 200, "crab", "m1");
+    const evs = b.run(DOWNED_TICKS + 1);
+    expect(b.of("playerWashed", evs)[0]).toMatchObject({ playerId: "b", willRespawn: false });
+    expect(b.of("teamWiped", evs)).toEqual([expect.objectContaining({ type: "teamWiped", team: 0 })]);
     b.setClock(3, "day");
+    expect(b.of("playerRespawn", b.tick())).toHaveLength(0);
+    expect([b.p("a").alive, b.p("b").alive]).toEqual([false, false]);
+  });
+
+  it("a downed player's compass goes straight back to the team chest", () => {
+    const b = new Bench([["a"], ["b"]]);
+    const p = b.place("a", 0, 0, 0);
+    b.give("a", "compass", 1, 1);
+    b.world.damagePlayer(p, 200, "boss", "m1");
+    expect(countOf(p, "compass")).toBe(0);
+    expect(b.state.teams[0]!.chest.get("compass")).toBe(1);
+  });
+
+  it("on the last day nobody comes back: everyone washed is a team wipe", () => {
+    const b = new Bench([["a"]]);
+    b.setClock(b.timings.days, "day");
     b.tick();
     b.world.damagePlayer(b.p("a"), 200, "crab", "m1");
     const evs = b.run(DOWNED_TICKS + 1);
@@ -828,39 +1064,100 @@ describe("RaftWorld: downed, revive, wash, respawn", () => {
   });
 });
 
+describe("RaftWorld: heavy cargo (Long Tide T1)", () => {
+  it("loadMult is 55 alone and 85 with an escort within 3 m; character kits change it", () => {
+    const b = new Bench([["a"], ["b"], ["kid", "cocuk"], ["amca", "amca"]]);
+    const a = b.place("a", -10, -10, 0);
+    b.place("b", 10, 10, 0);
+    b.place("kid", -10, 10, 0);
+    b.place("amca", 10, -10, 0);
+    b.give("a", "log", 1, 1);
+    b.give("kid", "barrel", 1);
+    b.give("amca", "log", 1);
+    b.tick();
+    expect([a.loadMult, b.p("kid").loadMult, b.p("amca").loadMult, b.p("b").loadMult]).toEqual([HEAVY_CARRY_ALONE, 75, 70, 100]);
+    b.place("b", -10 + ESCORT_RADIUS - 0.5, -10, 0);
+    b.place("kid", 10, -10 + 2, 0);
+    b.tick();
+    expect([a.loadMult, b.p("kid").loadMult, b.p("amca").loadMult]).toEqual([HEAVY_CARRY_ESCORT, 95, HEAVY_CARRY_ESCORT]);
+    // A downed teammate escorts nobody.
+    b.world.damagePlayer(b.p("b"), 200, "crab", "m1");
+    b.tick();
+    expect(a.loadMult).toBe(HEAVY_CARRY_ALONE);
+  });
+
+  it("loaded: slower, no sprint, no throw; the drop key sets the cargo down; one heavy item at a time", () => {
+    const b = new Bench([["a"], ["b"]]);
+    const free = b.place("b", 8, -12, 0);
+    const a = b.place("a", -8, -12, 0);
+    b.give("a", "log", 1, 1);
+    b.give("a", "stone", 2, 0);
+    b.run(SEC, () => {
+      b.send("a", { moveZ: -1, buttons: BTN.SPRINT });
+      b.send("b", { moveZ: -1, buttons: BTN.SPRINT });
+    });
+    expect(a.sprinting).toBe(false);
+    expect(free.sprinting).toBe(true);
+    const speed = (p: PlayerState) => Math.hypot(p.vx, p.vz);
+    expect(speed(a)).toBeLessThan(speed(free) * 0.5);
+    // No throw while loaded (the stone stays in hand).
+    b.run(10, () => b.send("a", { buttons: BTN.THROW }));
+    b.send("a");
+    b.tick();
+    expect(countOf(a, "stone")).toBe(2);
+    // A second log is too heavy.
+    b.world.spawnProjectile("log", { x: a.x + 0.3, y: a.y + 0.35, z: a.z }, { x: 0, y: 0, z: 0 }, { state: "rest" });
+    b.send("a", { buttons: BTN.INTERACT_PRESS | BTN.INTERACT });
+    expect(b.of("reject", b.tick())).toEqual([expect.objectContaining({ reason: "tooHeavy", interact: "pickup" })]);
+    expect(countOf(a, "log")).toBe(1);
+    // The drop key (whatever slot is active) puts the log down at the feet.
+    b.run(12, () => b.send("a"));
+    b.send("a", { buttons: BTN.DROP });
+    b.tick();
+    expect(countOf(a, "log")).toBe(0);
+    expect(countOf(a, "stone")).toBe(2);
+    expect([...b.state.projectiles.values()].filter((pr) => pr.kind === "log" && pr.state === "rest")).toHaveLength(2);
+    b.tick();
+    expect(a.loadMult).toBe(100);
+  });
+});
+
 describe("RaftWorld: survival bars", () => {
   it("drain rates empty a full bar in the documented time per difficulty", () => {
     for (const [id, mult] of [["vacation", 0.7], ["normal", 1], ["nightmare", 1.3]] as const) {
       const diff = DIFFICULTIES[id];
-      expect(secondsToEmpty(hungerDrainPerTick(diff, 1, false))).toBeCloseTo(240 / mult, 6);
-      expect(secondsToEmpty(thirstDrainPerTick(diff, 1, false, false))).toBeCloseTo((100 / 33) * 60 / mult, 6);
+      expect(secondsToEmpty(hungerDrainPerTick(diff, 1, false))).toBeCloseTo(500 / mult, 6);
+      expect(secondsToEmpty(thirstDrainPerTick(diff, 1, false, false))).toBeCloseTo(375 / mult, 6);
     }
     const normal = DIFFICULTIES.normal;
-    expect(secondsToEmpty(hungerDrainPerTick(normal, 1, true))).toBeCloseTo(160, 6);
-    expect(secondsToEmpty(thirstDrainPerTick(normal, 1, true, false))).toBeCloseTo((100 / 66) * 60, 6);
-    expect(secondsToEmpty(thirstDrainPerTick(normal, 1, true, true))).toBeCloseTo((100 / 33) * 60, 6);
-    expect(secondsToEmpty(hungerDrainPerTick(normal, 20, false))).toBeCloseTo(12, 6);
+    expect(secondsToEmpty(hungerDrainPerTick(normal, 1, true))).toBeCloseTo(500 / 1.5, 6);
+    expect(secondsToEmpty(thirstDrainPerTick(normal, 1, true, false))).toBeCloseTo(375 / 2, 6);
+    expect(secondsToEmpty(thirstDrainPerTick(normal, 1, true, true))).toBeCloseTo(375, 6);
+    expect(secondsToEmpty(hungerDrainPerTick(normal, 20, false))).toBeCloseTo(25, 6);
     const cold = { nearFire: false, nightChill: true, rainChill: false, waterChill: false, litTorch: false, daylight: false };
     expect(100 / -warmthPerSec(cold)).toBe(50);
+    expect(warmthPerSec({ ...cold, nightChillMult: 0.5 })).toBe(-1); // volcanic ground
+    expect(warmthPerSec({ ...cold, nightChillMult: 0.5, rainChill: true })).toBe(-2); // rain chills in full
     expect(warmthPerSec({ ...cold, litTorch: true })).toBe(-1);
     expect(warmthPerSec({ ...cold, nearFire: true })).toBe(5);
     expect(warmthPerSec({ ...cold, nightChill: false })).toBe(0);
   });
 
-  it("hunger empties in 4 minutes of play on normal, then costs hp", () => {
+  it("hunger empties in 500 s of play on normal, then costs 3 hp a second", () => {
     const b = new Bench([["a"]]);
     const p = b.place("a", -12, -12, 0);
     let ticks = 0;
-    while (p.hunger > 0 && ticks < 9000) {
+    while (p.hunger > 0 && ticks < 20000) {
       if (ticks % 300 === 0) p.thirst = 100;
       b.tick();
       ticks++;
     }
-    expect(Math.abs(ticks - 240 * SEC)).toBeLessThanOrEqual(2);
+    expect(Math.abs(ticks - 500 * SEC)).toBeLessThanOrEqual(2);
     expect(p.hp).toBe(100);
     p.thirst = 100;
     b.run(SEC * 2);
-    expect(p.hp).toBeLessThanOrEqual(98);
+    expect(p.hp).toBeLessThanOrEqual(100 - 3);
+    expect(p.hp).toBeGreaterThanOrEqual(100 - 2 * 3);
     expect(b.of("playerHurt").some((e) => e.cause === "hunger")).toBe(true);
     expect(b.of("lowBar").some((e) => e.bar === "hunger")).toBe(true);
   });
@@ -873,12 +1170,12 @@ describe("RaftWorld: survival bars", () => {
     expect([p.hunger, p.thirst]).toEqual([100, 100]);
     b.clockTicks = 10;
     let ticks = 0;
-    while (p.thirst > 0 && ticks < 9000) {
+    while (p.thirst > 0 && ticks < 20000) {
       if (ticks % 300 === 0) p.hunger = 100;
       b.tick();
       ticks++;
     }
-    expect(Math.abs(ticks - ((100 / 33) * 60 * SEC) / 1.3)).toBeLessThanOrEqual(2);
+    expect(Math.abs(ticks - (375 * SEC) / 1.3)).toBeLessThanOrEqual(2);
   });
 
   it("warmth: the night chills, a lit torch halves it, the fire warms and heals", () => {
@@ -896,11 +1193,11 @@ describe("RaftWorld: survival bars", () => {
     expect(Math.abs(cold.warmth - 80)).toBeLessThanOrEqual(1);
     expect(Math.abs(torch.warmth - 90)).toBeLessThanOrEqual(1);
     expect(camp.warmth).toBeGreaterThanOrEqual(99);
-    expect(Math.abs(camp.hp - 80)).toBeLessThanOrEqual(1);
+    expect(Math.abs(camp.hp - 60)).toBeLessThanOrEqual(1); // FIRE_HEAL_PER_SEC 1
     expect(torch.torchTicks).toBe(TORCH_BURN_TICKS - 10 * SEC);
   });
 
-  it("rain chills outside the cave and makes the fire burn three times faster", () => {
+  it("rain chills outside the cave and makes the fire burn twice as fast", () => {
     const b = new Bench([["a"], ["b"]]);
     b.tick();
     b.state.weather = "rain";
@@ -909,26 +1206,60 @@ describe("RaftWorld: survival bars", () => {
     const wet = b.place("a", -12, -12, 0);
     const cave = b.island.sites[0]!.cave!;
     const dry = b.place("b", cave.x, cave.z, 0);
-    const evs = b.run(100);
+    // By day the fire burns at half rate; the rain doubles it back to one fuel tick per tick.
+    expect(RAIN_FIRE_DRAIN_MULT * FIRE_DAY_BURN_MULT).toBe(1);
+    const evs = b.run(300);
     expect(team.fireFuel).toBe(0);
     expect(b.of("fireFuel", evs)[0]).toMatchObject({ source: "out", fuel: 0 });
-    expect(300 / RAIN_FIRE_DRAIN_MULT).toBe(100);
     expect(wet.warmth).toBeLessThan(95);
     expect(dry.warmth).toBe(100);
     expect(b.world.lights().some((l) => l.kind === "fire")).toBe(false);
   });
 
-  it("the campfire burns out after 60 s, always", () => {
+  it("the campfire burns at half rate by day and full rate at night; its ring shrinks and stops repelling below 20 %", () => {
     const b = new Bench([["a"]]);
     b.place("a", -12, -12, 0);
     const team = b.state.teams[0]!;
     team.fireFuel = FIRE_START_FUEL_TICKS;
-    const before = b.run(FIRE_START_FUEL_TICKS - 1);
+    const before = b.run(2 * FIRE_START_FUEL_TICKS - 2);
     expect(b.of("fireFuel", before)).toHaveLength(0);
     expect(team.fireFuel).toBe(1);
-    const out = b.tick();
+    const out = b.run(2);
     expect(team.fireFuel).toBe(0);
     expect(b.of("fireFuel", out)).toHaveLength(1);
+
+    const n = new Bench([["a"]]);
+    n.state.teams[0]!.flare = true;
+    n.setClock(1, "night");
+    n.place("a", -12, -12, 0);
+    const t = n.state.teams[0]!;
+    t.fireFuel = FIRE_FUEL_MAX_TICKS;
+    n.run(SEC);
+    expect(t.fireFuel).toBe(FIRE_FUEL_MAX_TICKS - SEC);
+    const ring = (): number => n.world.lights().find((l) => l.kind === "fire")?.r ?? 0;
+    expect(ring()).toBeCloseTo(fireLightRadius(t.fireFuel), 2);
+    expect(ring()).toBeGreaterThan(5.9);
+    t.fireFuel = Math.ceil(FIRE_REPEL_MIN_FRACTION * FIRE_FUEL_MAX_TICKS) + 2;
+    n.world.lightsChanged();
+    expect(ring()).toBeCloseTo(FIRE_LIGHT_RADIUS_MIN, 0);
+    n.run(5);
+    expect(n.world.lights().some((l) => l.kind === "fire")).toBe(false); // below 20 %: no ring for the monsters
+    expect(fireLightRadius(0)).toBe(0);
+    expect(fireRepels(t.fireFuel)).toBe(false);
+  });
+
+  it("the fire only heals the fed and watered", () => {
+    const b = new Bench([["a"], ["b"]]);
+    b.state.teams[0]!.fireFuel = FIRE_FUEL_MAX_TICKS;
+    const fed = atCamp(b, "a");
+    const starving = b.place("b", b.island.sites[0]!.campfire.x + 1.5, b.island.sites[0]!.campfire.z, 0);
+    fed.hp = 50;
+    starving.hp = 50;
+    b.run(5 * SEC, () => {
+      starving.hunger = 0;
+    });
+    expect(fed.hp).toBeGreaterThanOrEqual(54);
+    expect(starving.hp).toBeLessThan(50);
   });
 
   it("a jellyfish in hand stings, a puffer in hand blows up after its fuse", () => {

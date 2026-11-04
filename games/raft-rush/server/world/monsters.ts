@@ -2,7 +2,8 @@
 // Owner: server-world-life. Signatures by the architect (RaftWorld calls them); keep them.
 //
 // Spawning: night waves planned at night start (nightWave × difficulty × biome × full moon; flare skips one night;
-// nightmare boss on night 2), released over MONSTER_SPAWN_WINDOW of the night from shore cells weighted to the far
+// Captain Crab from DifficultyDef.bossFromNight on, every night until killed, hp bossHpFor; spawnLaunchWave at the
+// push-off), released over MONSTER_SPAWN_WINDOW of the night from shore cells weighted to the far
 // side of the camp, MONSTER_CAP alive. AI (think every MONSTER_THINK_TICKS, move every tick): see
 // docs/ARCHITECTURE.md §2.10 (light rings, target priority, bait, gnawing, fences, boss), §2.14 (monkeys / gull).
 // Movement: walk on the heightfield (crabs stay on land + shallows, never deep water except emerging / fleeing),
@@ -14,7 +15,17 @@
 // spawn / despawn), life/brain.ts (server-only memory). Credits: flips and kills add stats.kills + MVP_POINTS.kill
 // here; RaftWorld credits the hit itself (stats.hits, MVP_POINTS.hit) when it detects the contact.
 
-import { BAIT_RADIUS, BIOMES, MONSTER_CAP, MONSTER_EMERGE_TICKS, MONSTER_THINK_TICKS, MONSTERS } from "../../shared/constants.js";
+import {
+  BAIT_RADIUS,
+  BIOMES,
+  bossHpFor,
+  LAUNCH_BOSS_HP_MULT,
+  LAUNCH_WAVE_WINDOW_TICKS,
+  MONSTER_CAP,
+  MONSTER_EMERGE_TICKS,
+  MONSTER_THINK_TICKS,
+  MONSTERS,
+} from "../../shared/constants.js";
 import { ITEMS } from "../../shared/items.js";
 import { clockAt, type ClockInfo } from "../../shared/rules/schedule.js";
 import { yawFromDir } from "../../shared/sim/math.js";
@@ -22,11 +33,11 @@ import type { MonsterKind, MonsterMode, Vec3Like } from "../../shared/types.js";
 import type { MonsterState, PlayerState, ProjectileEntity, WorldContext } from "./context.js";
 import { ClockRewind } from "./life/clock.js";
 import { LifeEnv } from "./life/env.js";
-import { damageNight, flipCrab, isNightKind, scareCrab, shove, stepNight } from "./life/night.js";
+import { damageNight, flipCrab, isNightKind, scareCrab, shove, stepNight, teamOf as teamOfMonster } from "./life/night.js";
 import { CRAB_KNOCK_MULT, SEPARATION_RATE } from "./life/tuning.js";
 import { d2 } from "./life/util.js";
 import { dismissVisitor, hitVisitor, spawnGull, spawnMonkeys, stepVisitor } from "./life/visitors.js";
-import { pickShoreCell, planWave, scheduleWave, type WavePlan, type WaveSpawn } from "./life/waves.js";
+import { pickShoreCell, planLaunchWave, planWave, scheduleWave, type WavePlan, type WaveSpawn } from "./life/waves.js";
 
 /** MonsterSystem.spawnMonster options (defaults: team 0, night 1, mode "hunt"). */
 export interface SpawnMonsterOptions {
@@ -44,16 +55,25 @@ interface WaveQueue {
   start: number;
   spawns: WaveSpawn[];
   next: number;
+  /** Captain Crab's hp for this wave (bossHpFor; the launch wave's fresh boss × LAUNCH_BOSS_HP_MULT). */
+  bossHp: number;
 }
 
 export class MonsterSystem {
   private env: LifeEnv;
   private waves: WaveQueue[] = [];
+  /** Push-off launch waves (kept across dusk / dawn until spawned). */
+  private launchWaves: WaveQueue[] = [];
   private plans = new Map<number, WavePlan>();
   private rewind = new ClockRewind();
   private plannedNight = 0;
   private dawnDay = 0;
   private duskDay = 0;
+  /**
+   * Captain Crab's hp when he fled at dawn, per team: his wounds carry over to the next night (he comes back
+   * hurt, not fresh), so a team can wear him down over several nights instead of needing one perfect fight.
+   */
+  private bossHpLeft = new Map<number, number>();
   /** Same-tick dedupe between a puffer's direct hit and its blast (a monster takes the puffer damage once). */
   private pufferHits = new Map<string, number>();
   private blastHits = new Map<string, number>();
@@ -94,6 +114,7 @@ export class MonsterSystem {
     }
     this.pufferHits.clear();
     this.blastHits.clear();
+    this.bossHpLeft.clear();
   }
 
   /**
@@ -191,6 +212,12 @@ export class MonsterSystem {
     }
   }
 
+  /** Monster `id` is a crab going for the raft or its guard (walks through torch light; tests / debug). */
+  isRaftBound(id: string): boolean {
+    const m = this.ctx.state.monsters.get(id);
+    return !!m && m.kind === "crab" && (m.mode === "hunt" || m.mode === "bite") && !!this.env.brains.get(id)?.raftBound;
+  }
+
   /** Monsters alive (HUD / drums). */
   aliveCount(): number {
     return this.ctx.state.monsters.size;
@@ -201,6 +228,7 @@ export class MonsterSystem {
     this.ctx.state.monsters.clear();
     this.env.brains.clear();
     this.waves = [];
+    this.launchWaves = [];
     this.plans.clear();
     this.resetMarks();
     this.rewind.reset();
@@ -225,6 +253,7 @@ export class MonsterSystem {
   queued(): number {
     let n = 0;
     for (const w of this.waves) n += w.spawns.length - w.next;
+    for (const w of this.launchWaves) n += w.spawns.length - w.next;
     return n;
   }
 
@@ -269,19 +298,22 @@ export class MonsterSystem {
         biome: BIOMES[this.ctx.island.biome],
         fullMoon: this.ctx.state.weather === "fullmoon",
         flare: team.flare,
+        bossDown: team.bossDown,
       });
       if (team.flare) team.flare = false;
       this.plans.set(t, plan);
       if (plan.skipped) continue;
-      this.waves.push({ team: t, night, start: this.ctx.tick() - elapsed, spawns: scheduleWave(plan, this.ctx.timings.night, this.ctx.rng), next: 0 });
+      const fullHp = bossHpFor(team.seats, this.ctx.difficulty.bossHp);
+      const bossHp = Math.max(1, Math.min(fullHp, this.bossHpLeft.get(t) ?? fullHp));
+      this.waves.push({ team: t, night, start: this.ctx.tick() - elapsed, spawns: scheduleWave(plan, this.ctx.timings.night, this.ctx.rng), next: 0, bossHp });
     }
   }
 
   /** Release due spawns while there is room under MONSTER_CAP. */
   private release(): void {
-    if (this.waves.length === 0) return;
+    if (this.waves.length === 0 && this.launchWaves.length === 0) return;
     const now = this.ctx.tick();
-    for (const w of this.waves) {
+    for (const w of [...this.launchWaves, ...this.waves]) {
       while (w.next < w.spawns.length) {
         const s = w.spawns[w.next]!;
         if (now - w.start < s.at || this.ctx.state.monsters.size >= MONSTER_CAP) break;
@@ -289,6 +321,7 @@ export class MonsterSystem {
         w.next++;
       }
     }
+    if (this.launchWaves.length > 0) this.launchWaves = this.launchWaves.filter((w) => w.next < w.spawns.length);
   }
 
   private spawnNight(kind: MonsterKind, w: WaveQueue): void {
@@ -301,7 +334,22 @@ export class MonsterSystem {
     });
     if (!cell) return;
     const yaw = yawFromDir(site.campfire.x - cell.x, site.campfire.z - cell.z);
-    this.env.spawn(kind, cell.x, cell.z, { night: w.night, team: w.team, mode: "emerge", modeTicks: MONSTER_EMERGE_TICKS, yaw });
+    const hp = kind === "boss" ? w.bossHp : undefined;
+    this.env.spawn(kind, cell.x, cell.z, { night: w.night, team: w.team, mode: "emerge", modeTicks: MONSTER_EMERGE_TICKS, yaw, ...(hp !== undefined ? { hp } : {}) });
+  }
+
+  /**
+   * The push-off began for team `team` (RaftSystem): the launch wave (Long Tide §3.4) comes for the raft —
+   * round(LAUNCH_WAVE_CRAB_FRACTION × the last night's crabs), LAUNCH_WAVE_PUFFERS puffers and Captain Crab (a
+   * fresh one with LAUNCH_BOSS_HP_MULT × hp when he is already down), spread over LAUNCH_WAVE_WINDOW_TICKS.
+   */
+  spawnLaunchWave(team: number): WavePlan {
+    const t = this.ctx.team(team);
+    const plan = planLaunchWave({ seats: t.seats, difficulty: this.ctx.difficulty, biome: BIOMES[this.ctx.island.biome], lastNight: this.ctx.timings.days });
+    const bossHp = Math.round(bossHpFor(t.seats, this.ctx.difficulty.bossHp) * (t.bossDown ? LAUNCH_BOSS_HP_MULT : 1));
+    const window = Math.max(1, Math.min(LAUNCH_WAVE_WINDOW_TICKS, Math.floor(this.ctx.timings.launchWait / 2)));
+    this.launchWaves.push({ team, night: this.ctx.timings.days, start: this.ctx.tick(), spawns: scheduleWave(plan, 0, this.ctx.rng, window), next: 0, bossHp });
+    return plan;
   }
 
   /** Dawn: tonight's queue is dropped, every night monster heads back to the sea (flipped crabs once they're up). */
@@ -311,6 +359,7 @@ export class MonsterSystem {
       if (!isNightKind(m.kind)) continue;
       const b = this.env.brain(m);
       if (b.visit) continue;
+      if (m.kind === "boss" && m.hp > 0) this.bossHpLeft.set(teamOfMonster(m), m.hp);
       b.dawn = true;
       b.fenceId = "";
       b.windup = 0;

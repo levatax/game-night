@@ -13,6 +13,7 @@ import type {
   Difficulty,
   EmoteId,
   FishLoot,
+  ItemKind,
   MarkerKind,
   TitleId,
   Weather,
@@ -227,8 +228,8 @@ export const COCONUT_DROP_HEIGHT = 5;
 export const BAR_MAX = 100;
 export const MAX_HP = 100;
 /** Per minute of game time (× difficulty BAR_MULT). */
-export const HUNGER_PER_MIN = 25;
-export const THIRST_PER_MIN = 33;
+export const HUNGER_PER_MIN = 12;
+export const THIRST_PER_MIN = 16;
 export const SPRINT_HUNGER_MULT = 1.5;
 export const HEATWAVE_THIRST_MULT = 2;
 /** Warmth drops at night, in rain and in water when farther than FIRE_WARM_RADIUS from a lit fire. */
@@ -237,10 +238,12 @@ export const WARMTH_LOSS_PER_SEC = 2;
 export const TORCH_WARMTH_LOSS_PER_SEC = 1;
 export const WARMTH_GAIN_FIRE_PER_SEC = 5;
 export const FIRE_WARM_RADIUS = 3;
-/** Every empty bar costs this much hp per second. */
-export const EMPTY_BAR_DAMAGE_PER_SEC = 2;
-/** Standing near a lit campfire heals (the only passive heal). */
-export const FIRE_HEAL_PER_SEC = 3;
+/** An empty hunger / thirst bar costs this much hp per second (each). */
+export const EMPTY_BAR_DAMAGE_PER_SEC = 3;
+/** Warmth at 0 costs this much hp per second (Long Tide §6). */
+export const COLD_DAMAGE_PER_SEC = 1.5;
+/** Standing near a lit campfire heals (the only passive heal) — only while hunger > 0 and thirst > 0. */
+export const FIRE_HEAL_PER_SEC = 1;
 /** Eating any food heals this much. */
 export const EAT_HEAL = 10;
 /** Bars below this fraction flash on the HUD and trigger one feed line. */
@@ -262,16 +265,32 @@ export const SHADE_RADIUS = 2.5;
 
 /* ============================================================ gathering */
 
-/** Hold-E channel kinds (PlayerSimFields.channel). */
-export const CHANNEL = { NONE: 0, GATHER: 1, REVIVE: 2 } as const;
-/** Hold times for one unit (§21). */
-export const GATHER_SEC = { wood: 2.5, woodAxe: 1, rope: 1.5, stone: 2, berry: 1 } as const;
-/** Initial amount per node kind (§6). Bushes with yield "none" have 0. */
-export const NODE_AMOUNT = { tree: 3, palm: 2, rock: 2, bush: 2 } as const;
+/**
+ * Hold-E channel kinds (PlayerSimFields.channel). BUILD = raft assembly (channelTarget = team index; no fixed
+ * length: the raft accumulates work while it is held), SALVAGE = scrap from the wreck (needs a hammer).
+ */
+export const CHANNEL = { NONE: 0, GATHER: 1, REVIVE: 2, BUILD: 3, SALVAGE: 4 } as const;
+/**
+ * Hold times for one unit (Long Tide §4.1): wood 4 s by hand, 1.5 s with an axe in any slot (the character's
+ * CharacterDef.chopSec overrides the axe time), rope 1.5, stone 2.5, berries 1; one scrap from the wreck 3 s
+ * (CharacterDef.salvageSec overrides it).
+ */
+export const GATHER_SEC = { wood: 4, woodAxe: 1.5, rope: 1.5, stone: 2.5, berry: 1, salvage: 3 } as const;
+/** Initial amount per node kind (§6). Bushes with yield "none" have 0. Trees: taking the last unit with an axe fells it (a log). */
+export const NODE_AMOUNT = { tree: 4, palm: 2, rock: 2, bush: 2 } as const;
 /** Palms regrow their coconuts (to full) this long after being emptied. */
-export const PALM_REGROW_TICKS = secToTicks(60);
-/** Berry bushes regrow (rope bushes don't). */
+export const PALM_REGROW_TICKS = secToTicks(90);
+/** Berry bushes regrow this long after being emptied. */
 export const BERRY_REGROW_TICKS = secToTicks(90);
+/** Rope bushes regrow this long after being emptied (trees and rocks never do). */
+export const ROPE_REGROW_TICKS = secToTicks(150);
+/** The spring holds SPRING_BASE_CHARGES + SPRING_CHARGES_PER_SEAT × seats charges (its cap); one comes back every SPRING_RECHARGE_TICKS. A gourd or a drink uses one. */
+export const SPRING_BASE_CHARGES = 4;
+export const SPRING_CHARGES_PER_SEAT = 2;
+export const SPRING_RECHARGE_TICKS = secToTicks(20);
+/** The wreck holds WRECK_SCRAP_BASE + seats scrap at the start and gains WRECK_SCRAP_PER_DAWN at every dawn from day 2. */
+export const WRECK_SCRAP_BASE = 2;
+export const WRECK_SCRAP_PER_DAWN = 1;
 /** Base node counts for a solo island, × BIOMES[b].counts (§9). */
 export const BASE_NODE_COUNTS = { tree: 120, palm: 30, rock: 60, bush: 80 } as const;
 /** Node collider radii / heights (trunks and boulders; bushes don't collide). */
@@ -289,25 +308,52 @@ export const PALM_THROW_DROPS = 1;
 
 /* ============================================== campfire, light & stations */
 
-/** The campfire starts with 60 s of fuel; wood +30 s; cap FIRE_FUEL_MAX (§7, cap: interpretation). */
-export const FIRE_START_FUEL_TICKS = secToTicks(60);
-export const FIRE_WOOD_FUEL_TICKS = secToTicks(30);
-export const FIRE_FUEL_MAX_TICKS = secToTicks(180);
+/** The campfire starts with 120 s of fuel; wood +40 s; cap 300 s (Long Tide §6). */
+export const FIRE_START_FUEL_TICKS = secToTicks(120);
+export const FIRE_WOOD_FUEL_TICKS = secToTicks(40);
+export const FIRE_FUEL_MAX_TICKS = secToTicks(300);
 export const FUEL_CAN_TICKS = secToTicks(120);
 export const JELLYFISH_FUEL_TICKS = secToTicks(60);
-/** Rain drains the fire this many times faster (interpretation of "ateş söner": goes out quickly, can be fed). */
-export const RAIN_FIRE_DRAIN_MULT = 3;
+/** Rain drains the fire this many times faster (unless a hut of the team stands by it). */
+export const RAIN_FIRE_DRAIN_MULT = 2;
+/** By day the fire burns at this rate (×1 at dusk and night). */
+export const FIRE_DAY_BURN_MULT = 0.5;
 /** Banner for everyone when the fire drops below this fraction of FIRE_START_FUEL_TICKS. */
 export const FIRE_LOW_FRACTION = 0.2;
-/** Monsters never enter these light rings (boss excepted: it only slows down). */
+/**
+ * Monsters never enter these light rings (boss excepted: it only slows down). The campfire's ring shrinks as it
+ * burns (fireLightRadius: FIRE_LIGHT_BASE + FIRE_LIGHT_PER_FUEL × fuel / max, clamped FIRE_LIGHT_RADIUS_MIN..
+ * FIRE_LIGHT_RADIUS_MAX) and stops repelling below FIRE_REPEL_MIN_FRACTION of the max fuel (fireRepels).
+ * Raft-targeting crabs ignore torch rings (only the campfire keeps them off). FIRE_LIGHT_RADIUS is the reference
+ * ring the island generator keeps clear around the camp (unchanged so islands stay the same).
+ */
 export const FIRE_LIGHT_RADIUS = 5;
+export const FIRE_LIGHT_RADIUS_MAX = 6;
+export const FIRE_LIGHT_RADIUS_MIN = 3;
+export const FIRE_LIGHT_BASE = 2.5;
+export const FIRE_LIGHT_PER_FUEL = 3.5;
+export const FIRE_REPEL_MIN_FRACTION = 0.2;
 export const TORCH_LIGHT_RADIUS = 4;
+
+/** Light ring radius of a campfire with `fuel` ticks left (0 when out). */
+export function fireLightRadius(fuel: number): number {
+  if (fuel <= 0) return 0;
+  const r = FIRE_LIGHT_BASE + (FIRE_LIGHT_PER_FUEL * fuel) / FIRE_FUEL_MAX_TICKS;
+  return Math.max(FIRE_LIGHT_RADIUS_MIN, Math.min(FIRE_LIGHT_RADIUS_MAX, r));
+}
+
+/** The campfire's ring still keeps monsters out (fuel ≥ FIRE_REPEL_MIN_FRACTION of the max). */
+export function fireRepels(fuel: number): boolean {
+  return fuel > 0 && fuel >= FIRE_REPEL_MIN_FRACTION * FIRE_FUEL_MAX_TICKS;
+}
 export const TORCH_BURN_TICKS = secToTicks(90);
 /** Ranges from the site centers (server allows +0.5 m slack for latency). */
 export const CRAFT_RANGE = 3.5;
 export const CHEST_RANGE = 3;
 export const RAFT_RANGE = 4.5;
 export const SPRING_RANGE = 2.6;
+/** Salvage reach from the wreck's center. */
+export const WRECK_RANGE = 3.2;
 export const COLLECTOR_RANGE = 2.2;
 export const SECRET_CHEST_RANGE = 2.4;
 export const REVIVE_RANGE = 2.2;
@@ -320,27 +366,146 @@ export const MAX_STRUCTURES = 24;
 
 /* ================================================================== raft */
 
-/** Requirements by seat count (§7 table). Index with raftCost(seats) in items.ts. */
-export const RAFT_COSTS: Readonly<Record<number, { hullWood: number; mastWood: number; mastRope: number; food: number; water: number }>> = {
-  2: { hullWood: 10, mastWood: 4, mastRope: 4, food: 2, water: 2 },
-  3: { hullWood: 13, mastWood: 4, mastRope: 5, food: 3, water: 3 },
-  4: { hullWood: 16, mastWood: 4, mastRope: 6, food: 4, water: 4 },
-  5: { hullWood: 20, mastWood: 4, mastRope: 7, food: 5, water: 5 },
-  6: { hullWood: 24, mastWood: 4, mastRope: 8, food: 6, water: 6 },
-};
-/** The wreck counts as one free raft part toward the hull (§6). */
-export const WRECK_HULL_WOOD = 3;
-/** A raft part counts as this much wood (Kaptan's count +1). */
-export const RAFT_PART_WOOD = 3;
-/** Crabs gnaw 1 hull wood per this many ticks when nobody guards the raft (§7). */
+/**
+ * One raft requirement slot: what it accepts (`kinds`, delivered cheapest-food-first when several) and how many
+ * by seat count (`bySeats[seats - 2]`, seats clamped 2..6), × the difficulty raftCostMult, rounded up, ≥ 1.
+ */
+export interface RaftReqDef {
+  /** Primary kind (icon / prompt / HUD row). */
+  item: ItemKind;
+  /** Kinds that fill the slot (`item` first). */
+  kinds: ReadonlyArray<ItemKind>;
+  bySeats: readonly [number, number, number, number, number];
+}
+
+/** A raft stage (Long Tide §3): its materials are delivered, then assembled (CHANNEL.BUILD) to complete it. */
+export interface RaftStageDef {
+  /** i18n `hud.raftStage_<index>`; English fallback. */
+  name: string;
+  /** Materials are accepted only from this day on (the clock's day ≥ minDay). */
+  minDay: number;
+  /** Up to 3 requirement slots. */
+  req: ReadonlyArray<RaftReqDef>;
+  /** Hammer-seconds of assembly work (one holder with a hammer). */
+  assemblySec: number;
+  /** Assembly only advances while at least this many players hold E (the mast: 2). */
+  minHolders: number;
+}
+
+/** The six build stages, in order (Long Tide §3.2). Stage RAFT_LAUNCH_STAGE (= their count) is the launch. */
+export const RAFT_STAGES: ReadonlyArray<RaftStageDef> = [
+  {
+    name: "Keel",
+    minDay: 1,
+    req: [
+      { item: "log", kinds: ["log"], bySeats: [2, 2, 3, 3, 4] },
+      { item: "rope", kinds: ["rope"], bySeats: [3, 4, 5, 6, 7] },
+    ],
+    assemblySec: 25,
+    minHolders: 1,
+  },
+  {
+    name: "Deck",
+    minDay: 2,
+    req: [
+      { item: "raft_part", kinds: ["raft_part"], bySeats: [9, 12, 15, 18, 21] },
+      { item: "rope", kinds: ["rope"], bySeats: [3, 4, 4, 5, 6] },
+    ],
+    assemblySec: 35,
+    minHolders: 1,
+  },
+  {
+    name: "Mast",
+    minDay: 3,
+    req: [
+      { item: "log", kinds: ["log"], bySeats: [1, 1, 1, 1, 1] },
+      { item: "nails", kinds: ["nails"], bySeats: [3, 4, 5, 6, 7] },
+      { item: "rope", kinds: ["rope"], bySeats: [4, 5, 6, 7, 8] },
+    ],
+    assemblySec: 30,
+    minHolders: 2,
+  },
+  {
+    name: "Sail",
+    minDay: 4,
+    req: [
+      { item: "cloth", kinds: ["cloth"], bySeats: [3, 4, 5, 6, 7] },
+      { item: "rope", kinds: ["rope"], bySeats: [2, 2, 3, 3, 4] },
+    ],
+    assemblySec: 30,
+    minHolders: 1,
+  },
+  {
+    name: "Rudder",
+    minDay: 5,
+    req: [
+      { item: "raft_part", kinds: ["raft_part"], bySeats: [3, 4, 5, 6, 7] },
+      { item: "nails", kinds: ["nails"], bySeats: [3, 4, 5, 6, 7] },
+      { item: "compass", kinds: ["compass"], bySeats: [1, 1, 1, 1, 1] },
+    ],
+    assemblySec: 35,
+    minHolders: 1,
+  },
+  {
+    name: "Provisions",
+    minDay: 6,
+    req: [
+      { item: "fish_cooked", kinds: ["fish_cooked", "crab_cooked", "fish_golden"], bySeats: [4, 5, 7, 8, 10] },
+      { item: "barrel", kinds: ["barrel"], bySeats: [2, 2, 3, 3, 4] },
+    ],
+    assemblySec: 10,
+    minHolders: 1,
+  },
+];
+/** team.stage once every build stage is assembled: the launch (board → push-off). */
+export const RAFT_LAUNCH_STAGE = RAFT_STAGES.length;
+/** Requirement slots per stage (schema raftHave / raftNeed length). */
+export const RAFT_REQ_SLOTS = 3;
+/** Stage the compass slot belongs to (a compass is "never destroyed": it goes back to the chest). */
+export const COMPASS_STAGE = 4;
+/** Fast mode (Timings.cheapRaft): every requirement 1, every stage open on day 1, assembly 1 s. */
+export const CHEAP_ASSEMBLY_SEC = 1;
+
+/** Assembly work per holder per second: with a hammer in any slot / bare-handed (× CharacterDef.assemblyMult). */
+export const ASSEMBLY_HAMMER_RATE = 1;
+export const ASSEMBLY_HAND_RATE = 0.5;
+/** Team multiplier by holders counted (index = holders, capped at ASSEMBLY_MAX_HOLDERS). */
+export const ASSEMBLY_GROUP_MULT: ReadonlyArray<number> = [0, 1, 1.2, 1.4, 1.4];
+export const ASSEMBLY_MAX_HOLDERS = 4;
+/** MVP: one assemble point per this many ticks held while the raft advances. */
+export const ASSEMBLY_POINT_TICKS = secToTicks(2);
+
+/** Raft integrity (team.raftHp) exists once the keel is assembled. */
+export const RAFT_HP_MAX = 100;
+/** Boarding (the push-off) needs at least this much. */
+export const RAFT_HP_BOARD = 50;
+/** At 0 the highest assembled stage loses its assembly and the hp comes back to this. */
+export const RAFT_HP_AFTER_LOSS = 40;
+/** Repair with a hammer: 1 plank → +RAFT_REPAIR_PLANK_HP (+CharacterDef.repairBonus), or 2 wood → +RAFT_REPAIR_WOOD_HP. */
+export const RAFT_REPAIR_PLANK_HP = 20;
+export const RAFT_REPAIR_WOOD_HP = 10;
+export const RAFT_REPAIR_WOOD_COST = 2;
+/** Crabs gnaw the raft every this many ticks when nobody guards it (§7). Amounts: server/world/life/tuning.ts. */
 export const RAFT_GNAW_TICKS = secToTicks(4);
 export const RAFT_GUARD_RADIUS = 6;
-/** Once the first player boards a ready raft, the rest have this long; then it leaves anyway. */
-export const LAUNCH_WAIT_TICKS = secToTicks(20);
+/** The first boarding starts the push-off: the raft leaves after this long with whoever is aboard… */
+export const LAUNCH_WAIT_TICKS = secToTicks(60);
+/** …or earlier, once every living participant is aboard and at least this long has passed. */
+export const LAUNCH_MIN_TICKS = secToTicks(30);
+/** A teammate (bot included) within this of a heavy carrier escorts it (faster carry; MVP_POINTS.escort on delivery). */
+export const ESCORT_RADIUS = 3;
+/**
+ * Heavy carry (Long Tide T1): PlayerState.loadMult (walk speed %, no sprint / throw while < 100) while a log or a
+ * barrel is in any slot: CharacterDef.carryAlone alone, carryEscort with a living teammate within ESCORT_RADIUS.
+ */
+export const HEAVY_CARRY_ALONE = 55;
+export const HEAVY_CARRY_ESCORT = 85;
+/** Heavy items a player can carry at once (a second one: reject "tooHeavy"). */
+export const HEAVY_MAX = 1;
 
 /* ======================================================= downed & revive */
 
-export const DOWNED_TICKS = secToTicks(10);
+export const DOWNED_TICKS = secToTicks(25);
 export const REVIVE_TICKS = secToTicks(3);
 export const REVIVE_HP = 50;
 
@@ -405,20 +570,37 @@ export const MONSTER_AGGRO_RADIUS = 10;
 /** Crabs gnaw through a fence in 4 s; the boss smashes it at once. */
 export const FENCE_GNAW_TICKS = secToTicks(4);
 /** At most this many monsters alive; the rest of a night's wave queues. */
-export const MONSTER_CAP = 16;
+export const MONSTER_CAP = 24;
 /** AI decisions every N ticks (movement every tick). */
 export const MONSTER_THINK_TICKS = 5;
 /** Night waves spawn spread over the first fraction of the night. */
-export const MONSTER_SPAWN_WINDOW = 0.6;
+export const MONSTER_SPAWN_WINDOW = 0.7;
 /** Spawns prefer shore cells on the far side of the camp (weight ∝ distance^this). */
 export const MONSTER_SPAWN_FAR_BIAS = 2;
 
-/** Monsters per night (§21): crabs, puffers, boss. `seats` = players incl. bots. */
+/**
+ * Monsters per night before difficulty / biome / moon (Long Tide §6): crabs round((2 + 1.2 n) × (0.7 + 0.3 s)),
+ * puffers min(5, n − 1). The boss is not part of it: Captain Crab comes from DifficultyDef.bossFromNight on, every
+ * night until he is killed (life/waves.ts planWave). `seats` = players incl. bots (team.seats, 2..6).
+ */
 export function nightWave(night: number, seats: number): { crabs: number; puffers: number; boss: number } {
-  if (night <= 1) return { crabs: 3 + seats, puffers: 0, boss: 0 };
-  if (night === 2) return { crabs: Math.round(5 + seats * 1.5), puffers: 2, boss: 0 };
-  return { crabs: 6 + seats * 2, puffers: 3, boss: 1 };
+  const n = Math.max(1, night);
+  return { crabs: Math.round((2 + 1.2 * n) * (0.7 + 0.3 * seats)), puffers: Math.min(5, Math.max(0, n - 1)), boss: 0 };
 }
+
+/** Captain Crab's hp: round((4 + 2 × seats) × DifficultyDef.bossHp) (10 at 3 seats on Normal); wounds carry over between nights (monsters.ts). */
+export function bossHpFor(seats: number, bossHpMult: number): number {
+  return Math.max(1, Math.round((4 + 2 * seats) * bossHpMult));
+}
+/** The push-off's launch wave: this fraction of the last night's crabs, LAUNCH_WAVE_PUFFERS puffers and the boss. */
+export const LAUNCH_WAVE_CRAB_FRACTION = 0.6;
+export const LAUNCH_WAVE_PUFFERS = 3;
+/** The launch wave's spawns are spread over this many ticks (at most half the push-off): a crew that boards fast leaves before the tail arrives. */
+export const LAUNCH_WAVE_WINDOW_TICKS = secToTicks(30);
+/** A launch-wave boss when Captain Crab is already down: a fresh one with this × hp. */
+export const LAUNCH_BOSS_HP_MULT = 1.3;
+/** Captain Crab killed: he drops the compass and this much scrap (resting pickups). */
+export const BOSS_DROP_SCRAP = 3;
 
 /** Duel balancing hook (§13): night pressure on a camp. */
 export function monsterPressure(base: number, playersAway: number, torches: number): number {
@@ -432,14 +614,20 @@ export interface DifficultyDef {
   monsters: number;
   /** Bar drain ×. */
   bars: number;
-  /** The boss also comes on night 2. */
-  bossNight2: boolean;
+  /** Raft requirement counts × (rounded up, ≥ 1). */
+  raftCostMult: number;
+  /** Captain Crab's hp ×. */
+  bossHp: number;
+  /** Captain Crab comes from this night on (every night until he is killed). */
+  bossFromNight: number;
+  /** Boarding (the launch window) opens at the dawn of this day (fast timings: day 1). */
+  launchDay: number;
 }
 
 export const DIFFICULTIES: Readonly<Record<Difficulty, DifficultyDef>> = {
-  vacation: { monsters: 0.6, bars: 0.7, bossNight2: false },
-  normal: { monsters: 1, bars: 1, bossNight2: false },
-  nightmare: { monsters: 1.5, bars: 1.3, bossNight2: true },
+  vacation: { monsters: 0.6, bars: 0.7, raftCostMult: 0.75, bossHp: 0.7, bossFromNight: 3, launchDay: 6 },
+  normal: { monsters: 1, bars: 1, raftCostMult: 1, bossHp: 1, bossFromNight: 3, launchDay: 7 },
+  nightmare: { monsters: 1.5, bars: 1.3, raftCostMult: 1.25, bossHp: 1.4, bossFromNight: 2, launchDay: 7 },
 };
 export const DIFFICULTY_IDS: ReadonlyArray<Difficulty> = ["vacation", "normal", "nightmare"];
 export const DEFAULT_DIFFICULTY: Difficulty = "normal";
@@ -449,23 +637,25 @@ export const DEFAULT_DIFFICULTY: Difficulty = "normal";
 export const LANDING_SEC = 10;
 /** First seconds of the landing: input locked (wake-up camera). */
 export const LANDING_LOCK_SEC = 3;
-export const DAY_SEC = 95;
-export const DUSK_SEC = 10;
-export const NIGHT_SEC = 50;
-export const DAYS = 3;
-/** Lose cinematic after night 3 / win cinematic after the launch. */
+/** Long Tide: 8 × (165 + 15 + 80) s = 34:40 (Timings.days; fast timings 3 days). */
+export const DAY_SEC = 165;
+export const DUSK_SEC = 15;
+export const NIGHT_SEC = 80;
+export const NORMAL_DAYS = 8;
+export const FAST_DAYS = 3;
+/** Lose cinematic after the last night / win cinematic after the launch. */
 export const STORM_SEC = 12;
 export const LAUNCH_SEC = 8;
-/** "FIRTINA!" warning this long before night 3 ends (banner + music). */
+/** "FIRTINA!" warning this long before the last night ends (banner + music). */
 export const STORM_WARN_SEC = 30;
-/** The raft only leaves this close to the end of night 3: no departure before the storm window (§7). */
-export const DEPARTURE_GATE_TICKS = 150;
 export const MATCH_END_LOBBY_SEC = 60;
 /** Rematch is accepted after this long on the podium. */
 export const MATCH_END_MIN_SEC = 3;
 
 /** Phase lengths in ticks. `FAST_TIMINGS` replaces them when the server runs RAFT_TEST=1 with fast: true. */
 export interface Timings {
+  /** Days in a match (the storm comes at the end of night `days`). */
+  days: number;
   landing: number;
   landingLock: number;
   day: number;
@@ -473,16 +663,20 @@ export interface Timings {
   night: number;
   storm: number;
   launch: number;
+  /** Push-off length: the raft leaves this long after the first boarding with whoever is aboard. */
   launchWait: number;
+  /** Everyone aboard leaves early, but not before this much of the push-off has passed. */
+  launchMin: number;
   matchEndLobby: number;
   matchEndMin: number;
   /** Bar drain multiplier on top of difficulty. */
   barMult: number;
-  /** Raft costs collapse to 1 of everything. */
+  /** Raft costs collapse to 1 of everything, every stage opens on day 1, the launch window too, assembly 1 s. */
   cheapRaft: boolean;
 }
 
 export const NORMAL_TIMINGS: Readonly<Timings> = {
+  days: NORMAL_DAYS,
   landing: secToTicks(LANDING_SEC),
   landingLock: secToTicks(LANDING_LOCK_SEC),
   day: secToTicks(DAY_SEC),
@@ -491,14 +685,16 @@ export const NORMAL_TIMINGS: Readonly<Timings> = {
   storm: secToTicks(STORM_SEC),
   launch: secToTicks(LAUNCH_SEC),
   launchWait: LAUNCH_WAIT_TICKS,
+  launchMin: LAUNCH_MIN_TICKS,
   matchEndLobby: secToTicks(MATCH_END_LOBBY_SEC),
   matchEndMin: secToTicks(MATCH_END_MIN_SEC),
   barMult: 1,
   cheapRaft: false,
 };
 
-/** RAFT_TEST=1 + create option fast: day 4 s, bars ×20, raft costs 1 (§19). */
+/** RAFT_TEST=1 + create option fast: 3 days of 4 s, bars ×20, raft costs 1, no day locks, 1 s assembly (§19). */
 export const FAST_TIMINGS: Readonly<Timings> = {
+  days: FAST_DAYS,
   landing: secToTicks(1),
   landingLock: 0,
   day: secToTicks(4),
@@ -507,6 +703,7 @@ export const FAST_TIMINGS: Readonly<Timings> = {
   storm: secToTicks(1),
   launch: secToTicks(1),
   launchWait: secToTicks(2),
+  launchMin: secToTicks(1),
   matchEndLobby: secToTicks(5),
   matchEndMin: 0,
   barMult: 20,
@@ -528,8 +725,10 @@ export const WEATHER_START_FRACTION = 0.5;
 export const FOG_WEATHER_DISTANCE = 25;
 /** Full moon: monsters ×1.5, but the night is almost as bright as day. */
 export const FULLMOON_MONSTER_MULT = 1.5;
-/** One random daytime mini-event per day at this fraction of the day. */
-export const DAY_EVENT_FRACTION = 0.3;
+/** Daytime mini-events: one at each of these fractions of the day (Long Tide §6: two per day). */
+export const DAY_EVENT_FRACTIONS: ReadonlyArray<number> = [0.25, 0.65];
+/** The first of DAY_EVENT_FRACTIONS (kept for older callers). */
+export const DAY_EVENT_FRACTION = 0.25;
 export const DAY_EVENT_IDS: ReadonlyArray<DayEventKind> = ["gull", "monkeys", "waveGift"];
 /** Şükrü the gull circles this many times before dropping the stolen fish. */
 export const GULL_CIRCLES = 3;
@@ -548,10 +747,30 @@ export const MVP_POINTS = {
   golden: 25,
   raid: 8,
   firstAboard: 5,
+  /** Per ASSEMBLY_POINT_TICKS held while the raft advanced. */
+  assemble: 1,
+  /** Per heavy unit (log / barrel) delivered to the raft, on top of `deliver`. */
+  heavy: 4,
+  /** Escorting a heavy delivery (the escort, within the escort radius at delivery). */
+  escort: 2,
+  /** Per scrap salvaged from the wreck. */
+  salvage: 2,
+  /** Per raft repair. */
+  repair: 3,
+  /** Per processed craft (plank, cloth, nails, barrel, hammer, workbench / anvil). */
+  craftProcessed: 1,
 } as const;
-/** Team score on a successful launch: bonus + per second left before the storm (early launch = higher). */
+/**
+ * Team score (on top of Σ MVP points). Win: LAUNCH_BONUS + WIN_SURVIVOR_BONUS × survivors aboard +
+ * WIN_RAFT_HP_BONUS × raft hp + WIN_BOSS_BONUS when Captain Crab is down − LEFT_BEHIND_PENALTY × each living
+ * participant left on the island. Loss: LOSS_STAGE_BONUS × stages assembled.
+ */
 export const LAUNCH_BONUS = 500;
-export const LAUNCH_BONUS_PER_SEC = 2;
+export const WIN_SURVIVOR_BONUS = 200;
+export const WIN_RAFT_HP_BONUS = 5;
+export const WIN_BOSS_BONUS = 100;
+export const LEFT_BEHIND_PENALTY = 150;
+export const LOSS_STAGE_BONUS = 40;
 export const TITLE_IDS: ReadonlyArray<TitleId> = [
   "mvp",
   "crabSlayer",
@@ -638,8 +857,23 @@ export interface CharacterDef {
   waterChill: boolean;
   /** Extra hunger from cooked food eaten (Şef). */
   cookedBonus: number;
-  /** Extra hull/mast wood per raft part delivered (Kaptan). */
-  raftPartBonus: number;
+  /** Cooked units per raw unit cooked (Şef 2). */
+  cookOut: number;
+  /** Raft assembly work × (Kaptan 1.5). */
+  assemblyMult: number;
+  /** Extra hp per plank repair (Kaptan +10). */
+  repairBonus: number;
+  /** Seconds per wood with an axe (GATHER_SEC.woodAxe; Amca 1.1). */
+  chopSec: number;
+  /** Seconds per scrap from the wreck (GATHER_SEC.salvage; Fenomen 2). */
+  salvageSec: number;
+  /** Heavy carry speed % alone / escorted (HEAVY_CARRY_ALONE / ESCORT; Çocuk 75 / 95). */
+  carryAlone: number;
+  carryEscort: number;
+  /** Carry speed % with a log, alone (Amca 70; else carryAlone). */
+  logCarryAlone: number;
+  /** Fishing bite wait × (Gelin 0.7). */
+  biteWaitMult: number;
   /** Formant voice base pitch (Hz) for the gibberish voice. */
   voiceHz: number;
 }
@@ -648,7 +882,7 @@ export const CHARACTER_IDS: ReadonlyArray<CharacterId> = ["kaptan", "fenomen", "
 export const DEFAULT_CHARACTER: CharacterId = "kaptan";
 
 export const CHARACTERS: Readonly<Record<CharacterId, CharacterDef>> = {
-  /** White uniform, cap, pipe. "The ship didn't sink, it anchored." Raft parts count +1 wood. */
+  /** White uniform, cap, pipe. "The ship didn't sink, it anchored." Shipwright: assembly ×1.5, repairs +10. */
   kaptan: {
     id: "kaptan",
     name: "The Captain",
@@ -658,10 +892,18 @@ export const CHARACTERS: Readonly<Record<CharacterId, CharacterDef>> = {
     swimMult: 1,
     waterChill: true,
     cookedBonus: 0,
-    raftPartBonus: 1,
+    cookOut: 1,
+    assemblyMult: 1.5,
+    repairBonus: 10,
+    chopSec: GATHER_SEC.woodAxe,
+    salvageSec: GATHER_SEC.salvage,
+    carryAlone: HEAVY_CARRY_ALONE,
+    carryEscort: HEAVY_CARRY_ESCORT,
+    logCarryAlone: HEAVY_CARRY_ALONE,
+    biteWaitMult: 1,
     voiceHz: 110,
   },
-  /** Selfie stick, sunglasses, ring light. Selfie emote; monkeys go for her stick first. */
+  /** Selfie stick, sunglasses, ring light. Selfie emote; monkeys go for her stick first. Scavenger: salvage 2 s. */
   fenomen: {
     id: "fenomen",
     name: "The Influencer",
@@ -671,10 +913,18 @@ export const CHARACTERS: Readonly<Record<CharacterId, CharacterDef>> = {
     swimMult: 1,
     waterChill: true,
     cookedBonus: 0,
-    raftPartBonus: 0,
+    cookOut: 1,
+    assemblyMult: 1,
+    repairBonus: 0,
+    chopSec: GATHER_SEC.woodAxe,
+    salvageSec: 2,
+    carryAlone: HEAVY_CARRY_ALONE,
+    carryEscort: HEAVY_CARRY_ESCORT,
+    logCarryAlone: HEAVY_CARRY_ALONE,
+    biteWaitMult: 1,
     voiceHz: 260,
   },
-  /** Hawaiian shirt, transistor radio: the island's music plays from his radio. */
+  /** Hawaiian shirt, transistor radio: the island's music plays from his radio. Lumberjack: 1.1 s per wood with an axe, carries a log alone at 70 %. */
   amca: {
     id: "amca",
     name: "Retired Uncle",
@@ -684,10 +934,18 @@ export const CHARACTERS: Readonly<Record<CharacterId, CharacterDef>> = {
     swimMult: 1,
     waterChill: true,
     cookedBonus: 0,
-    raftPartBonus: 0,
+    cookOut: 1,
+    assemblyMult: 1,
+    repairBonus: 0,
+    chopSec: 1.1,
+    salvageSec: GATHER_SEC.salvage,
+    carryAlone: HEAVY_CARRY_ALONE,
+    carryEscort: HEAVY_CARRY_ESCORT,
+    logCarryAlone: 70,
+    biteWaitMult: 1,
     voiceHz: 95,
   },
-  /** Veil + flippers + snorkel: the fastest swimmer. */
+  /** Veil + flippers + snorkel: the fastest swimmer. Fisher: bite wait ×0.7. */
   gelin: {
     id: "gelin",
     name: "Honeymoon Bride",
@@ -697,10 +955,18 @@ export const CHARACTERS: Readonly<Record<CharacterId, CharacterDef>> = {
     swimMult: 1.6,
     waterChill: true,
     cookedBonus: 0,
-    raftPartBonus: 0,
+    cookOut: 1,
+    assemblyMult: 1,
+    repairBonus: 0,
+    chopSec: GATHER_SEC.woodAxe,
+    salvageSec: GATHER_SEC.salvage,
+    carryAlone: HEAVY_CARRY_ALONE,
+    carryEscort: HEAVY_CARRY_ESCORT,
+    logCarryAlone: HEAVY_CARRY_ALONE,
+    biteWaitMult: 0.7,
     voiceHz: 240,
   },
-  /** Apron and ladle: cooked food +5 hunger. */
+  /** Apron and ladle: cooked food +5 hunger; cooking gives 2 from 1 raw. */
   sef: {
     id: "sef",
     name: "The Chef",
@@ -710,10 +976,18 @@ export const CHARACTERS: Readonly<Record<CharacterId, CharacterDef>> = {
     swimMult: 1,
     waterChill: true,
     cookedBonus: 5,
-    raftPartBonus: 0,
+    cookOut: 2,
+    assemblyMult: 1,
+    repairBonus: 0,
+    chopSec: GATHER_SEC.woodAxe,
+    salvageSec: GATHER_SEC.salvage,
+    carryAlone: HEAVY_CARRY_ALONE,
+    carryEscort: HEAVY_CARRY_ESCORT,
+    logCarryAlone: HEAVY_CARRY_ALONE,
+    biteWaitMult: 1,
     voiceHz: 130,
   },
-  /** Inflatable armbands and a duck ring: no warmth loss in water, smallest hitbox. */
+  /** Inflatable armbands and a duck ring: no warmth loss in water, smallest hitbox. Porter: heavy carry 75 % / 95 %. */
   cocuk: {
     id: "cocuk",
     name: "Floatie Kid",
@@ -723,7 +997,15 @@ export const CHARACTERS: Readonly<Record<CharacterId, CharacterDef>> = {
     swimMult: 1.15,
     waterChill: false,
     cookedBonus: 0,
-    raftPartBonus: 0,
+    cookOut: 1,
+    assemblyMult: 1,
+    repairBonus: 0,
+    chopSec: GATHER_SEC.woodAxe,
+    salvageSec: GATHER_SEC.salvage,
+    carryAlone: 75,
+    carryEscort: 95,
+    logCarryAlone: 75,
+    biteWaitMult: 1,
     voiceHz: 320,
   },
 };
@@ -741,8 +1023,10 @@ export interface BiomeDef {
   pufferMult: number;
   /** Permanent fog distance (m), 0 = none. */
   fog: number;
-  /** Warmth drops at night (volcanic ground stays warm). */
+  /** Warmth drops at night. */
   nightChill: boolean;
+  /** × the night warmth loss (volcanic ground: 0.5, Long Tide §6). */
+  nightChillMult: number;
   /** Extra fish spots on top of FISH_SPOTS_MIN..MAX. */
   extraFishSpots: number;
   /** Fishing loot weight multipliers. */
@@ -765,6 +1049,7 @@ export const BIOMES: Readonly<Record<Biome, BiomeDef>> = {
     pufferMult: 1,
     fog: 0,
     nightChill: true,
+    nightChillMult: 1,
     extraFishSpots: 0,
     loot: {},
     rugged: 0.25,
@@ -788,6 +1073,7 @@ export const BIOMES: Readonly<Record<Biome, BiomeDef>> = {
     pufferMult: 1,
     fog: 0,
     nightChill: true,
+    nightChillMult: 1,
     extraFishSpots: 2,
     loot: { treasure: 1.5 },
     rugged: 0.85,
@@ -811,6 +1097,7 @@ export const BIOMES: Readonly<Record<Biome, BiomeDef>> = {
     pufferMult: 1,
     fog: 30,
     nightChill: true,
+    nightChillMult: 1,
     extraFishSpots: 0,
     loot: { jellyfish: 2 },
     rugged: 0.15,
@@ -833,7 +1120,8 @@ export const BIOMES: Readonly<Record<Biome, BiomeDef>> = {
     crabMult: 1,
     pufferMult: 2,
     fog: 0,
-    nightChill: false,
+    nightChill: true,
+    nightChillMult: 0.5,
     extraFishSpots: 0,
     loot: {},
     rugged: 0.6,

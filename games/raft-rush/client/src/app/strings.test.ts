@@ -16,7 +16,7 @@ const SECTIONS: Record<string, Section> = { banner, feed, prompt };
 
 const CAUSES: HurtCause[] = ["crab", "puffer", "boss", "hunger", "thirst", "cold", "drown", "jellyfish", "blast", "friendly"];
 const TREASURES: TreasureId[] = ["flare", "old_sail", "pirate_hat", "spyglass", "fuel_can"];
-const INTERACTS: InteractKind[] = ["revive", "collectCrab", "pickup", "board", "deliver", "craft", "chest", "spring", "collector", "secretChest", "gather"];
+const INTERACTS: InteractKind[] = ["revive", "collectCrab", "pickup", "board", "deliver", "assemble", "repair", "craft", "chest", "spring", "collector", "secretChest", "salvage", "gather"];
 const MONSTER_KINDS: MonsterKind[] = ["crab", "puffer", "boss", "monkey", "gull"];
 
 /** Every key the app's code builds, as "section.key". */
@@ -30,7 +30,7 @@ function usedKeys(): string[] {
   for (const w of WEATHER_IDS) add(`banner.weather_${w}`), add(`banner.weather_${w}Sub`), add(`feed.weather_${w}`);
   for (const d of DAY_EVENT_IDS) add(`banner.dayEvent_${d}`), add(`banner.dayEvent_${d}Sub`), add(`feed.dayEvent_${d}`);
   for (const k of ["stormWarning", "stormWarningSub", "storm", "stormSub", "raftReady", "raftReadySub", "boarding", "boardingSub", "launch", "launchSub", "launchLeft", "launchLeftSub"]) add(`banner.${k}`);
-  for (const k of ["fireLow", "fireLowSub", "fireOut", "fireOutSub", "raftStage1", "raftStage1Sub", "raftStage2", "raftStage2Sub", "boss", "bossSub", "bossDown", "respawn", "respawnSub", "golden", "goldenSub"]) add(`banner.${k}`);
+  for (const k of ["fireLow", "fireLowSub", "fireOut", "fireOutSub", "stageDone", "stageDoneSub", "stageLost", "boss", "bossSub", "bossDown", "respawn", "respawnSub", "golden", "goldenSub"]) add(`banner.${k}`);
   for (const t of TREASURES) add(`banner.treasure_${t}`), add(`banner.treasure_${t}Sub`);
   // feed
   for (const c of CAUSES) add(`feed.downed_${c}`);
@@ -38,7 +38,7 @@ function usedKeys(): string[] {
   for (const m of MARKER_KINDS) add(`feed.marker_${m}`), add(`feed.marker_${m}_kaptan`), add(`prompt.mark_${m}`);
   for (const r of ["late", "early"]) add(`feed.fishMiss_${r}`);
   for (const n of [1, 2, 3]) add(`feed.captainLine${n}`);
-  for (const s of [1, 2]) add(`feed.raftStage${s}`);
+  for (const k of ["stageDone", "stageLost", "materialsIn", "logFelled"]) add(`feed.${k}`);
   for (const tip of COACH_TIPS) add(`feed.tip_${tip}`);
   for (const k of [
     "pop_bonk",

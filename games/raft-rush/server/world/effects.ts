@@ -3,6 +3,9 @@
 // the reel ends; RaftWorld exposes them as WorldContext.applyTreasure / applyBottle.
 
 import { FUEL_CAN_TICKS, PIRATE_HAT_SCORE, SPYGLASS_TICKS } from "../../shared/constants.js";
+
+/** The old-sail treasure puts this much sailcloth into the team chest (Long Tide §3.2). */
+export const OLD_SAIL_CLOTH = 2;
 import type { BottleEffect, TreasureId } from "../../shared/types.js";
 import type { PlayerState } from "./context.js";
 import type { WorldCore } from "./core.js";
@@ -11,8 +14,8 @@ export class EffectSystem {
   constructor(private readonly core: WorldCore) {}
 
   /**
-   * Treasure for the finder's team: flare (the next night spawns no monsters), old sail (the mast stage completes
-   * now, or as soon as the hull does), pirate hat (cosmetic + PIRATE_HAT_SCORE), spyglass (every resource on the
+   * Treasure for the finder's team: flare (the next night spawns no monsters), old sail (OLD_SAIL_CLOTH sailcloth
+   * into the team chest), pirate hat (cosmetic + PIRATE_HAT_SCORE), spyglass (every resource on the
    * compass for SPYGLASS_TICKS), fuel can (+FUEL_CAN_TICKS fire, relights it).
    */
   applyTreasure(p: PlayerState, treasure: TreasureId): void {
@@ -24,7 +27,7 @@ export class EffectSystem {
         team.flare = true;
         break;
       case "old_sail":
-        core.raft.applySail(teamIdx);
+        core.returnToChest(teamIdx, "cloth", OLD_SAIL_CLOTH);
         break;
       case "pirate_hat":
         p.cosmetic = "pirate_hat";

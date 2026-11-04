@@ -595,9 +595,9 @@ describe("performance", () => {
  * server/client pair built before and after it disagrees on the island: bump it only on purpose.
  */
 const GOLDEN: [string, number, number][] = [
-  ["swamp", 3564759874, 4110123305],
-  ["swamp", 330088526, 2163635778],
-  ["rocky", 152634470, 3787840388],
-  ["volcanic", 3274731, 2937176930],
-  ["rocky", 471476578, 3565104903],
+  ["swamp", 3564759874, 1849935829],
+  ["swamp", 330088526, 1788469798],
+  ["rocky", 152634470, 1540110296],
+  ["volcanic", 3274731, 3042361994],
+  ["rocky", 471476578, 200819455],
 ];

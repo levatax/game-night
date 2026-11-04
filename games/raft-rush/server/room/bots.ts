@@ -27,7 +27,7 @@
 // blocks are pruned on every think, monster tracks and bosses seen are dropped once their monster is gone, and
 // everything is cleared on reset() / when the last seat leaves.
 
-import { BOT_THINK_MAX_SEC, BOT_THINK_MIN_SEC, CHANNEL, DT, NORMAL_TIMINGS, PITCH_LIMIT, secToTicks } from "../../shared/constants.js";
+import { BOT_THINK_MAX_SEC, BOT_THINK_MIN_SEC, CHANNEL, DT, NORMAL_TIMINGS, PITCH_LIMIT, RAFT_LAUNCH_STAGE, secToTicks } from "../../shared/constants.js";
 import { BTN, BUTTON_MASK, type ChestMsg, type EmoteMsg, type InputCmd, type MarkerMsg } from "../../shared/protocol.js";
 import { emptyInteraction, resolveInteraction, type InteractWorld } from "../../shared/rules/interact.js";
 import { slotKind } from "../../shared/rules/inventory.js";
@@ -275,6 +275,12 @@ export class BotDesk {
     return s && s.motor && s.motor.status === "running" ? s.key : "";
   }
 
+  /** Why the seat's last goal failed ("" when it is running or finished fine): the balance harness trace. */
+  failureOf(id: string): string {
+    const s = this.seats.get(id);
+    return s && s.motor && s.motor.status === "failed" ? `${s.key}:${s.motor.reason}` : "";
+  }
+
   /** New match: forget plans and memory, keep seats (seqs keep increasing). */
   reset(): void {
     this.tracks.clear();
@@ -467,7 +473,7 @@ export class BotDesk {
     for (const s of this.seats.values()) {
       if (s.id === id || !s.goal || !s.motor || s.motor.status !== "running") continue;
       const g = s.goal;
-      if (g.kind === "gather" || g.kind === "shake") nodes.add(g.node);
+      if (g.kind === "gather" || g.kind === "shake" || g.kind === "fell") nodes.add(g.node);
       else if (g.kind === "pickup") items.add(g.projectileId);
       else if (g.kind === "collectCrab") crabs.add(g.monsterId);
       else if (g.kind === "fish") spots.add(g.spot);
@@ -519,7 +525,7 @@ export class BotDesk {
       h.marker(seat.id, { kind: "danger", pos: { x: m.x, y: m.y, z: m.z } });
       this.chatter(seat.id, "panic", 0.5);
     });
-    if (stage === 3 && !this.cheeredRaft) {
+    if (stage >= RAFT_LAUNCH_STAGE && !this.cheeredRaft) {
       this.cheeredRaft = true;
       this.chatter(seat.id, h.rng() < 0.5 ? "dance" : "clap", 0.7);
     }

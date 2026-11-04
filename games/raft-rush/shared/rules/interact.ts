@@ -5,21 +5,31 @@
 // (INTERACT_CONE_COS on the horizontal look direction; 360° for the big site targets when within 1.2 m of their
 // body, and for anything closer than 0.6 m), the best candidate by:
 //   1. ok before !ok (a greyed-out candidate never hides one that would work),
-//   2. kind priority: revive > collectCrab > pickup > board > deliver > craft > chest > spring > collector >
-//      secretChest > gather,
+//   2. kind priority: revive > collectCrab > pickup > board > deliver > assemble > repair > craft > chest > spring >
+//      collector > secretChest > salvage > gather,
 //   3. the smallest view angle, then the nearest.
 // Reaches: REVIVE_RANGE, INTERACT_RANGE (+ crab radius), PICKUP_RANGE, RAFT_RANGE, CRAFT_RANGE (campfire),
 // CHEST_RANGE, SPRING_RANGE, COLLECTOR_RANGE, SECRET_CHEST_RANGE (only when team.secretRevealed &&
-// !secretOpened), INTERACT_RANGE + node.radius (gather: tree / rock / bush with amount > 0; palms are LMB).
+// !secretOpened), WRECK_RANGE (salvage), INTERACT_RANGE + node.radius (gather: tree / rock / bush with amount > 0;
+// palms are LMB).
+// The raft offers ONE candidate (raftInteraction): board (launch stage, launch day, raft hp ≥ RAFT_HP_BOARD or
+// the push-off already counting), deliver (the current stage is open on this day and the pockets hold something
+// it still needs), assemble (every material is in: hold E, CHANNEL.BUILD), repair (a hammer + a plank or 2 wood,
+// raft hp below max, keel assembled), else a greyed-out board / deliver saying why ("seaRough", "raftWeak",
+// "stageLocked", "wrongStage", "nothingToDeliver").
 // Candidates that apply but can't be done now are still returned with ok=false and a `reason` (an i18n key
 // under `reject.`), so the prompt can say why ("inventory full", "the raft doesn't need that"). `craft` is
 // always ok (the panel can still feed a dead fire); its reason is "fireOut" as a hint while the fire is out.
 //
-// The raft helpers below (stage, remaining needs, delivery plan) are the single source of truth for delivery:
+// The raft helpers below (stage defs, remaining needs, delivery plan) are the single source of truth for delivery:
 // the server executes exactly the plan planRaftDelivery() returns, and the client / bots use the same functions
 // for prompts and the HUD (game4.md §7, docs/ARCHITECTURE.md §2.4).
 
 import {
+  ASSEMBLY_GROUP_MULT,
+  ASSEMBLY_HAMMER_RATE,
+  ASSEMBLY_HAND_RATE,
+  ASSEMBLY_MAX_HOLDERS,
   CHANNEL,
   CHARACTERS,
   CHEST_RANGE,
@@ -30,19 +40,28 @@ import {
   INTERACT_RANGE,
   MONSTERS,
   PICKUP_RANGE,
-  RAFT_PART_WOOD,
+  RAFT_HP_BOARD,
+  RAFT_HP_MAX,
+  RAFT_LAUNCH_STAGE,
   RAFT_RANGE,
+  RAFT_REPAIR_WOOD_COST,
+  RAFT_REQ_SLOTS,
+  RAFT_STAGES,
   REVIVE_RANGE,
   REVIVE_TICKS,
   SECRET_CHEST_RANGE,
   SPRING_RANGE,
+  WRECK_RANGE,
   secToTicks,
+  type RaftReqDef,
+  type RaftStageDef,
 } from "../constants.js";
 import { heightAt } from "../island/heightfield.js";
 import type { IslandDef, NodeDef } from "../island/types.js";
-import { ITEMS, raftCost, type RaftCost } from "../items.js";
+import { ITEMS } from "../items.js";
 import type {
   CharacterId,
+  Difficulty,
   InteractKind,
   InvKind,
   ItemKind,
@@ -52,11 +71,15 @@ import type {
   TeamView,
   Vec3Like,
 } from "../types.js";
-import { countOf, roomFor, SLOTS, slotCount, slotKind, type Inventory } from "./inventory.js";
+import { countOf, heavyCount, roomFor, SLOTS, slotCount, slotKind, type Inventory } from "./inventory.js";
+import { launchDayFor, stageDayLock } from "./schedule.js";
 
 export interface Interaction {
   kind: InteractKind;
-  /** Hold E: the server starts a channel (CHANNEL.GATHER / CHANNEL.REVIVE) that completes after `ticks`. */
+  /**
+   * Hold E: the server starts a channel (CHANNEL.GATHER / REVIVE / SALVAGE) that completes after `ticks`; BUILD has
+   * no fixed end (`ticks` = the stage's remaining work at one hammer holder's rate, a progress hint).
+   */
   hold: boolean;
   channel: number;
   ticks: number;
@@ -74,16 +97,26 @@ export interface Interaction {
   pos: Vec3Like;
   /** False = shown greyed out with `reason`; the server won't act on it. */
   ok: boolean;
-  /** i18n key under `reject.` when !ok: "full", "fireOut", "wrongStage", "nothingToDeliver", "notReady", "empty"… */
+  /**
+   * i18n key under `reject.` when !ok: "full", "fireOut", "wrongStage", "nothingToDeliver", "notReady", "empty",
+   * "stageLocked" (day: stageDayLock), "seaRough" (day: launchDayFor), "raftWeak", "springDry", "needHammer",
+   * "wreckEmpty", "tooHeavy" (a second log / barrel)…
+   */
   reason: string;
 }
 
 /** The state an interaction reads (RaftState on the server, the decoded state on the client). */
 export interface InteractWorld {
   island: IslandDef;
-  /** `fast` (optional) selects the RAFT_TEST one-of-everything raft costs; a full RaftStateView carries it. */
+  /**
+   * `fast` (RAFT_TEST: no day locks), `day` (absent = no day lock), `difficulty` (launch day) and
+   * `launchTicksLeft` (push-off running) are optional; a full RaftStateView carries them all.
+   */
   state: Pick<RaftStateView, "players" | "projectiles" | "monsters" | "structures" | "nodes" | "teams" | "phase"> & {
     fast?: boolean;
+    day?: number;
+    difficulty?: Difficulty;
+    launchTicksLeft?: number;
   };
 }
 
@@ -94,11 +127,14 @@ export const INTERACT_PRIORITY: ReadonlyArray<InteractKind> = [
   "pickup",
   "board",
   "deliver",
+  "assemble",
+  "repair",
   "craft",
   "chest",
   "spring",
   "collector",
   "secretChest",
+  "salvage",
   "gather",
 ];
 
@@ -112,17 +148,25 @@ export const CONE_FREE_DIST = 1.2;
 /** Small targets (items, crabs) are reachable from any direction this close. */
 export const CONE_FREE_SMALL = 0.6;
 /** Body radii of the site targets for the cone-free rule (cosmetic sizes of the props). */
-export const SITE_BODY = { raft: 1.6, campfire: 0.8, chest: 0.55, spring: 1, collector: 0.45, secretChest: 0.6, player: 0.6 } as const;
+export const SITE_BODY = { raft: 1.6, campfire: 0.8, chest: 0.55, spring: 1, collector: 0.45, secretChest: 0.6, player: 0.6, wreck: 1.8 } as const;
 /** Ground items are reachable from this far below to this far above the feet (spears stuck in trunks). */
 const PICKUP_MIN_DY = -1.5;
 const PICKUP_MAX_DY = 3;
 
-/** Ticks one gather unit takes (wood: 2.5 s, 1 s with an axe in ANY slot; rope 1.5; stone 2; berries 1). */
-export function gatherTicksFor(node: NodeDef, hasAxe: boolean): number {
-  if (node.kind === "tree") return secToTicks(hasAxe ? GATHER_SEC.woodAxe : GATHER_SEC.wood);
+/**
+ * Ticks one gather unit takes (wood: 4 s by hand, 1.5 s with an axe in ANY slot — CharacterDef.chopSec; rope 1.5;
+ * stone 2.5; berries 1). `character` defaults to the base times.
+ */
+export function gatherTicksFor(node: NodeDef, hasAxe: boolean, character?: CharacterId): number {
+  if (node.kind === "tree") return secToTicks(hasAxe ? (character ? CHARACTERS[character].chopSec : GATHER_SEC.woodAxe) : GATHER_SEC.wood);
   if (node.kind === "rock") return secToTicks(GATHER_SEC.stone);
   if (node.kind === "bush") return secToTicks(node.yield === "berry" ? GATHER_SEC.berry : GATHER_SEC.rope);
   return secToTicks(GATHER_SEC.wood);
+}
+
+/** Ticks one scrap takes at the wreck (GATHER_SEC.salvage; CharacterDef.salvageSec). */
+export function salvageTicksFor(character?: CharacterId): number {
+  return secToTicks(character ? CHARACTERS[character].salvageSec : GATHER_SEC.salvage);
 }
 
 /** Item a node yields per unit ("berry" is eaten on the spot; null = nothing). */
@@ -134,180 +178,209 @@ export function gatherYield(node: NodeDef): ItemKind | "berry" | null {
   return null;
 }
 
-/** Required channel ticks for a channel kind (gather needs the node). */
-export function channelTicksFor(channel: number, node: NodeDef | null, hasAxe: boolean): number {
+/** Required channel ticks for a channel kind (gather needs the node). BUILD has no fixed length (0). */
+export function channelTicksFor(channel: number, node: NodeDef | null, hasAxe: boolean, character?: CharacterId): number {
   if (channel === CHANNEL.REVIVE) return REVIVE_TICKS;
-  if (channel === CHANNEL.GATHER && node) return gatherTicksFor(node, hasAxe);
+  if (channel === CHANNEL.GATHER && node) return gatherTicksFor(node, hasAxe, character);
+  if (channel === CHANNEL.SALVAGE) return salvageTicksFor(character);
   return 0;
 }
 
 /* ================================================================== raft */
 
 /** The raft part of a team (TeamView / TeamState satisfy it). */
-export type RaftProgress = Pick<TeamView, "stage" | "hullWood" | "mastWood" | "mastRope" | "food" | "water" | "seats">;
+export type RaftProgress = Pick<TeamView, "stage" | "raftHave" | "raftNeed" | "raftWork" | "raftWorkNeed" | "raftHp">;
 
-/** What each requirement still needs (0 when complete). */
-export interface RaftRemaining {
-  hullWood: number;
-  mastWood: number;
-  mastRope: number;
-  food: number;
-  water: number;
+/** The definition of raft stage `stage` (null for the launch stage and beyond). */
+export function raftStageDef(stage: RaftStage): RaftStageDef | null {
+  return RAFT_STAGES[stage] ?? null;
 }
 
-/** Raft costs for a team (`cheap` = RAFT_TEST fast timings). */
-export function teamRaftCost(team: Pick<TeamView, "seats">, cheap = false): RaftCost {
-  return raftCost(team.seats, cheap);
+/** Requirement slot `slot` of stage `stage` (null when unused). */
+export function raftReq(stage: RaftStage, slot: number): RaftReqDef | null {
+  return RAFT_STAGES[stage]?.req[slot] ?? null;
 }
 
-/** Remaining needs of every requirement. */
-export function raftRemaining(team: RaftProgress, cost: RaftCost, out?: RaftRemaining): RaftRemaining {
-  const r = out ?? { hullWood: 0, mastWood: 0, mastRope: 0, food: 0, water: 0 };
-  r.hullWood = Math.max(0, cost.hullWood - team.hullWood);
-  r.mastWood = Math.max(0, cost.mastWood - team.mastWood);
-  r.mastRope = Math.max(0, cost.mastRope - team.mastRope);
-  r.food = Math.max(0, cost.food - team.food);
-  r.water = Math.max(0, cost.water - team.water);
-  return r;
+/** Every build stage is assembled: the raft can be boarded (launch window and hp permitting). */
+export function raftFinished(team: Pick<TeamView, "stage">): boolean {
+  return team.stage >= RAFT_LAUNCH_STAGE;
 }
 
-/** Stage from the counts: the first incomplete stage (0 hull, 1 mast + sail, 2 provisions), 3 = ready. */
-export function raftStageFor(team: RaftProgress, cost: RaftCost): RaftStage {
-  if (team.hullWood < cost.hullWood) return 0;
-  if (team.mastWood < cost.mastWood || team.mastRope < cost.mastRope) return 1;
-  if (team.food < cost.food || team.water < cost.water) return 2;
-  return 3;
+/** Units slot `slot` of the current stage still needs (0 when complete or unused). */
+export function raftSlotRemaining(team: RaftProgress, slot: number): number {
+  return Math.max(0, (team.raftNeed[slot] ?? 0) - (team.raftHave[slot] ?? 0));
 }
 
-/** Wood a raft part counts for when `character` delivers it (Kaptan +1). */
-export function raftPartValue(character: CharacterId): number {
-  return RAFT_PART_WOOD + CHARACTERS[character].raftPartBonus;
+/** Every material of the current stage is in (assembly may start). False on the launch stage. */
+export function raftMaterialsDone(team: RaftProgress): boolean {
+  if (raftFinished(team)) return false;
+  for (let i = 0; i < RAFT_REQ_SLOTS; i++) if (raftSlotRemaining(team, i) > 0) return false;
+  return true;
 }
 
-/** Food provisions are delivered cheapest first so the good food stays in your pockets. */
-export const FOOD_DELIVERY_ORDER: ReadonlyArray<ItemKind> = (Object.keys(ITEMS) as ItemKind[])
-  .filter((k) => ITEMS[k].provision === "food")
-  .sort((a, b) => ITEMS[a].food - ITEMS[b].food);
-
-export interface WoodPlan {
-  /** Raft parts and wood units taken. */
-  parts: number;
-  wood: number;
-  /** Wood credited (never more than `need`). */
-  credited: number;
+/** Slot of the current stage that accepts `kind` (-1 none). */
+export function raftSlotFor(stage: RaftStage, kind: InvKind): number {
+  if (kind === "") return -1;
+  const def = RAFT_STAGES[stage];
+  if (!def) return -1;
+  for (let i = 0; i < def.req.length; i++) if (def.req[i]!.kinds.includes(kind)) return i;
+  return -1;
 }
 
-/**
- * How a wood requirement of `need` is filled from `parts` raft parts and `wood` loose wood: whole raft parts
- * while they fit, then wood one by one, then one more raft part when wood ran out (its overshoot is lost: the
- * requirement just completes). Nothing is taken once the need is met (surplus stays with the player).
- */
-export function planWood(need: number, parts: number, wood: number, partValue: number, out?: WoodPlan): WoodPlan {
-  const plan = out ?? { parts: 0, wood: 0, credited: 0 };
-  let left = Math.max(0, need);
-  let p = 0;
-  let w = 0;
-  while (left >= partValue && p < parts) {
-    p++;
-    left -= partValue;
-  }
-  while (left > 0 && w < wood) {
-    w++;
-    left--;
-  }
-  if (left > 0 && p < parts) {
-    p++;
-    left = 0;
-  }
-  plan.parts = p;
-  plan.wood = w;
-  plan.credited = Math.max(0, need) - left;
-  return plan;
-}
+/** Kinds some raft stage accepts (carriesRaftGoods / prompts). */
+export const RAFT_GOODS: ReadonlySet<ItemKind> = new Set(RAFT_STAGES.flatMap((d) => d.req.flatMap((r) => [...r.kinds])));
 
-/** One stage's worth of a delivery: what leaves the inventory and what it credits. */
+/** One delivery to the current stage: what leaves the inventory and what it credits per slot. */
 export interface RaftDeliveryPlan {
   /** Stage the items go to (the current one). */
   stage: RaftStage;
   /** Item units taken from the inventory, by kind (only kinds with count > 0). */
   items: { kind: ItemKind; count: number }[];
-  /** Credits per requirement. */
-  hullWood: number;
-  mastWood: number;
-  mastRope: number;
-  food: number;
-  water: number;
-  /** Item units taken (Σ items.count). */
+  /** Units credited per requirement slot (length RAFT_REQ_SLOTS). */
+  slots: number[];
+  /** Item units taken (Σ items.count) = units credited: stats.delivered / MVP points. */
   units: number;
-  /** Requirement units credited (a raft part counts its wood): stats.delivered / MVP points. */
-  credited: number;
+  /** Heavy units among them (logs, barrels): MVP_POINTS.heavy. */
+  heavy: number;
 }
 
 /**
- * What E at the raft would deliver to the CURRENT stage right now (null when nothing it needs is in the
- * inventory, or the raft is ready). Wood / raft parts go to the hull (stage 0) or the mast wood (stage 1), rope
- * to the mast (stage 1), provisions (ITEMS[k].provision) to stage 2. The server applies the plan, recomputes the
- * stage and, when the stage completed, plans again for the next one (a single press may fill several stages).
+ * What E at the raft would deliver to the CURRENT stage right now (null when nothing it still needs is in the
+ * inventory, or the raft is finished). Every slot takes up to its remaining need; a slot accepting several kinds
+ * (cooked food) takes them in RaftReqDef.kinds order. Surplus stays with the player. The day lock is the
+ * caller's (raftStageOpen).
  */
-export function planRaftDelivery(inv: Inventory, team: RaftProgress, cost: RaftCost, partValue: number): RaftDeliveryPlan | null {
+export function planRaftDelivery(inv: Inventory, team: RaftProgress): RaftDeliveryPlan | null {
   const stage = team.stage;
-  if (stage >= 3) return null;
-  const rem = raftRemaining(team, cost);
-  const plan: RaftDeliveryPlan = { stage, items: [], hullWood: 0, mastWood: 0, mastRope: 0, food: 0, water: 0, units: 0, credited: 0 };
-  const take = (kind: ItemKind, count: number): void => {
-    if (count <= 0) return;
-    plan.items.push({ kind, count });
-    plan.units += count;
-  };
-  if (stage === 0 || stage === 1) {
-    const need = stage === 0 ? rem.hullWood : rem.mastWood;
-    const w = planWood(need, countOf(inv, "raft_part"), countOf(inv, "wood"), partValue);
-    take("raft_part", w.parts);
-    take("wood", w.wood);
-    if (stage === 0) plan.hullWood = w.credited;
-    else plan.mastWood = w.credited;
-    plan.credited += w.credited;
-  }
-  if (stage === 1) {
-    const rope = Math.min(rem.mastRope, countOf(inv, "rope"));
-    take("rope", rope);
-    plan.mastRope = rope;
-    plan.credited += rope;
-  }
-  if (stage === 2) {
-    let food = rem.food;
-    for (const kind of FOOD_DELIVERY_ORDER) {
-      if (food <= 0) break;
-      const n = Math.min(food, countOf(inv, kind));
-      take(kind, n);
-      food -= n;
+  const def = RAFT_STAGES[stage];
+  if (!def) return null;
+  const plan: RaftDeliveryPlan = { stage, items: [], slots: [], units: 0, heavy: 0 };
+  for (let i = 0; i < RAFT_REQ_SLOTS; i++) plan.slots.push(0);
+  def.req.forEach((r, i) => {
+    let left = raftSlotRemaining(team, i);
+    for (const kind of r.kinds) {
+      if (left <= 0) break;
+      const n = Math.min(left, countOf(inv, kind));
+      if (n <= 0) continue;
+      plan.items.push({ kind, count: n });
+      plan.units += n;
+      if (ITEMS[kind].heavy) plan.heavy += n;
+      plan.slots[i]! += n;
+      left -= n;
     }
-    plan.food = rem.food - food;
-    const water = Math.min(rem.water, countOf(inv, "water"));
-    take("water", water);
-    plan.water = water;
-    plan.credited += plan.food + water;
-  }
+  });
   return plan.units > 0 ? plan : null;
 }
 
-/** Carries something the raft takes at SOME stage (wood, raft parts, rope, provisions). */
+/** The current stage accepts materials on `day` (absent = no day lock; 0, the lobby / landing, counts as day 1). */
+export function raftStageOpen(team: Pick<TeamView, "stage">, day: number | undefined, cheap: boolean): boolean {
+  if (raftFinished(team)) return false;
+  return day === undefined || Math.max(1, day) >= stageDayLock(team.stage, { cheapRaft: cheap });
+}
+
+/** Carries something the raft takes at SOME stage. */
 export function carriesRaftGoods(inv: Inventory): boolean {
   for (let s = 0; s < SLOTS; s++) {
     const k = slotKind(inv, s);
     if (k === "" || slotCount(inv, s) <= 0) continue;
-    if (k === "wood" || k === "raft_part" || k === "rope" || ITEMS[k].provision !== null) return true;
+    if (RAFT_GOODS.has(k)) return true;
   }
   return false;
 }
 
-/** The item the current stage still wants most (prompt / HUD hint), "" when ready. */
-export function raftWantedItem(team: RaftProgress, cost: RaftCost): InvKind {
-  const rem = raftRemaining(team, cost);
-  if (team.stage === 0) return "wood";
-  if (team.stage === 1) return rem.mastWood > 0 ? "wood" : "rope";
-  if (team.stage === 2) return rem.food > 0 ? "coconut" : "water";
+/** The item the current stage still wants most (prompt / HUD hint): the first incomplete slot's item, "" when none. */
+export function raftWantedItem(team: RaftProgress): InvKind {
+  const def = RAFT_STAGES[team.stage];
+  if (!def) return "";
+  for (let i = 0; i < def.req.length; i++) if (raftSlotRemaining(team, i) > 0) return def.req[i]!.item;
   return "";
+}
+
+/** What a repair would spend: one plank (preferred) or RAFT_REPAIR_WOOD_COST wood. */
+export interface RaftRepairPlan {
+  kind: ItemKind;
+  count: number;
+}
+
+/**
+ * A repair `inv` could do now: a hammer in any slot, the keel assembled (stage ≥ 1), raft hp below RAFT_HP_MAX,
+ * and a plank or RAFT_REPAIR_WOOD_COST wood. Null otherwise.
+ */
+export function planRaftRepair(inv: Inventory, team: Pick<TeamView, "stage" | "raftHp">): RaftRepairPlan | null {
+  if (team.stage < 1 || team.raftHp >= RAFT_HP_MAX || countOf(inv, "hammer") <= 0) return null;
+  if (countOf(inv, "raft_part") > 0) return { kind: "raft_part", count: 1 };
+  if (countOf(inv, "wood") >= RAFT_REPAIR_WOOD_COST) return { kind: "wood", count: RAFT_REPAIR_WOOD_COST };
+  return null;
+}
+
+/** One assembly holder: a hammer in any slot and the character (assemblyMult). */
+export interface AssemblyHolder {
+  hammer: boolean;
+  character: CharacterId;
+}
+
+/** Work per second of one holder (ASSEMBLY_HAMMER_RATE / ASSEMBLY_HAND_RATE × CharacterDef.assemblyMult). */
+export function holderRate(h: AssemblyHolder): number {
+  return (h.hammer ? ASSEMBLY_HAMMER_RATE : ASSEMBLY_HAND_RATE) * CHARACTERS[h.character].assemblyMult;
+}
+
+/**
+ * Team assembly work per tick (work ticks) from these holders: the best ASSEMBLY_MAX_HOLDERS count, their rates
+ * summed × ASSEMBLY_GROUP_MULT[count]; 0 below `minHolders`.
+ */
+export function assemblyWorkPerTick(holders: ReadonlyArray<AssemblyHolder>, minHolders = 1): number {
+  if (holders.length < Math.max(1, minHolders)) return 0;
+  const rates = holders.map(holderRate).sort((a, b) => b - a).slice(0, ASSEMBLY_MAX_HOLDERS);
+  let sum = 0;
+  for (const r of rates) sum += r;
+  return sum * (ASSEMBLY_GROUP_MULT[rates.length] ?? ASSEMBLY_GROUP_MULT[ASSEMBLY_GROUP_MULT.length - 1]!);
+}
+
+/** The finished raft can be boarded on `day` (launch window) with this hp (or while the push-off counts). */
+export function raftBoardable(
+  team: Pick<TeamView, "stage" | "raftHp">,
+  day: number | undefined,
+  difficulty: Difficulty,
+  cheap: boolean,
+  pushOff: boolean,
+): { ok: boolean; reason: string } {
+  if (!raftFinished(team)) return { ok: false, reason: "notReady" };
+  if (pushOff) return { ok: true, reason: "" };
+  if (day !== undefined && Math.max(1, day) < launchDayFor(difficulty, { cheapRaft: cheap })) return { ok: false, reason: "seaRough" };
+  if (team.raftHp < RAFT_HP_BOARD) return { ok: false, reason: "raftWeak" };
+  return { ok: true, reason: "" };
+}
+
+/** What E at the raft does for `player` (one candidate; see the file header). */
+export interface RaftAction {
+  kind: "board" | "deliver" | "assemble" | "repair";
+  ok: boolean;
+  reason: string;
+  /** Prompt item. */
+  item: InvKind;
+}
+
+export function raftInteraction(
+  inv: Inventory,
+  team: RaftProgress,
+  day: number | undefined,
+  difficulty: Difficulty,
+  cheap: boolean,
+  pushOff: boolean,
+): RaftAction {
+  const repair = planRaftRepair(inv, team);
+  if (raftFinished(team)) {
+    const b = raftBoardable(team, day, difficulty, cheap, pushOff);
+    if (b.ok) return { kind: "board", ok: true, reason: "", item: "" };
+    if (repair) return { kind: "repair", ok: true, reason: "", item: repair.kind };
+    return { kind: "board", ok: false, reason: b.reason, item: "" };
+  }
+  const open = raftStageOpen(team, day, cheap);
+  if (open && planRaftDelivery(inv, team)) return { kind: "deliver", ok: true, reason: "", item: raftWantedItem(team) };
+  if (open && raftMaterialsDone(team)) return { kind: "assemble", ok: true, reason: "", item: "" };
+  if (repair) return { kind: "repair", ok: true, reason: "", item: repair.kind };
+  const reason = !open ? "stageLocked" : carriesRaftGoods(inv) ? "wrongStage" : "nothingToDeliver";
+  return { kind: "deliver", ok: false, reason, item: raftWantedItem(team) };
 }
 
 /* ============================================================== resolver */
@@ -393,7 +466,7 @@ export function resolveInteraction(w: InteractWorld, player: PlayerView, out?: I
     if (!better("pickup", b.x, b.z, PICKUP_RANGE, b.radius + CONE_FREE_SMALL, ok)) return;
     res.projectileId = b.id;
     res.item = b.kind;
-    res.reason = ok ? "" : "full";
+    res.reason = ok ? "" : ITEMS[b.kind].heavy && heavyCount(player) > 0 ? "tooHeavy" : "full";
     setPos(res.pos, b.x, b.y, b.z);
   });
 
@@ -402,16 +475,15 @@ export function resolveInteraction(w: InteractWorld, player: PlayerView, out?: I
   const team = state.teams[player.team] ?? state.teams[0];
   if (site && team) {
     const teamIdx = site.team;
-    const cost = teamRaftCost(team, state.fast === true);
-    // raft: board when ready, otherwise deliver
-    if (team.stage >= 3) {
-      if (better("board", site.raft.x, site.raft.z, RAFT_RANGE, SITE_BODY.raft + CONE_FREE_DIST, true)) fillSite(res, island, site.raft, teamIdx, "");
-    } else {
-      const plan = planRaftDelivery(player, team, cost, raftPartValue(player.character));
-      const ok = plan !== null;
-      if (better("deliver", site.raft.x, site.raft.z, RAFT_RANGE, SITE_BODY.raft + CONE_FREE_DIST, ok)) {
-        fillSite(res, island, site.raft, teamIdx, raftWantedItem(team, cost));
-        if (!ok) res.reason = carriesRaftGoods(player) ? "wrongStage" : "nothingToDeliver";
+    // raft: one candidate (board / deliver / assemble / repair, or a greyed-out reason)
+    const ra = raftInteraction(player, team, state.day, state.difficulty ?? "normal", state.fast === true, (state.launchTicksLeft ?? 0) > 0);
+    if (better(ra.kind, site.raft.x, site.raft.z, RAFT_RANGE, SITE_BODY.raft + CONE_FREE_DIST, ra.ok)) {
+      fillSite(res, island, site.raft, teamIdx, ra.item);
+      res.reason = ra.reason;
+      if (ra.kind === "assemble") {
+        res.hold = true;
+        res.channel = CHANNEL.BUILD;
+        res.ticks = Math.max(1, team.raftWorkNeed - team.raftWork);
       }
     }
     // campfire workbench (always opens; the panel greys out recipes)
@@ -422,11 +494,25 @@ export function resolveInteraction(w: InteractWorld, player: PlayerView, out?: I
     if (better("chest", site.chest.x, site.chest.z, CHEST_RANGE, SITE_BODY.chest + CONE_FREE_DIST, true)) {
       fillSite(res, island, site.chest, teamIdx, "");
     }
-    // spring: a water gourd, or a drink when the pockets are full
-    const springOk = roomFor(player, "water") > 0 || player.thirst < 100;
+    // spring: a water gourd, or a drink when the pockets are full (one charge either way)
+    const springWants = roomFor(player, "water") > 0 || player.thirst < 100;
+    const springOk = springWants && team.springCharges > 0;
     if (better("spring", site.spring.x, site.spring.z, SPRING_RANGE, SITE_BODY.spring + CONE_FREE_DIST, springOk)) {
       fillSite(res, island, site.spring, teamIdx, "water");
-      if (!springOk) res.reason = "full";
+      if (!springOk) res.reason = springWants ? "springDry" : "full";
+    }
+    // wreck: salvage scrap with a hammer (hold E)
+    const hasHammer = countOf(player, "hammer") > 0;
+    const salvageOk = hasHammer && team.wreckScrap > 0;
+    if (better("salvage", site.wreck.x, site.wreck.z, WRECK_RANGE, SITE_BODY.wreck + CONE_FREE_DIST, salvageOk)) {
+      fillSite(res, island, site.wreck, teamIdx, "scrap");
+      if (salvageOk) {
+        res.hold = true;
+        res.channel = CHANNEL.SALVAGE;
+        res.ticks = salvageTicksFor(player.character);
+      } else {
+        res.reason = hasHammer ? "wreckEmpty" : "needHammer";
+      }
     }
     if (team.secretRevealed && !team.secretOpened) {
       if (better("secretChest", site.secretChest.x, site.secretChest.z, SECRET_CHEST_RANGE, SITE_BODY.secretChest + CONE_FREE_DIST, true)) {
@@ -464,7 +550,7 @@ export function resolveInteraction(w: InteractWorld, player: PlayerView, out?: I
     if (!better("gather", n.x, n.z, reach, n.radius + CONE_FREE_SMALL, true)) continue;
     res.hold = true;
     res.channel = CHANNEL.GATHER;
-    res.ticks = gatherTicksFor(n, hasAxe);
+    res.ticks = gatherTicksFor(n, hasAxe, player.character);
     res.node = i;
     res.item = yieldKind;
     setPos(res.pos, n.x, n.y + (n.kind === "tree" ? 1.2 : 0.5), n.z);

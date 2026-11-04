@@ -4,7 +4,7 @@
 // the rule systems of this folder, so each system can reach its siblings without importing World.ts at runtime
 // (type-only imports, no cycles). Every system is a small class holding a WorldCore:
 //   bag (inventory ops + item timers) · projectiles · nodes (gathering, palms, regrow) · structures ·
-//   raft (delivery, stages, boarding, launch) · survival (bars, fire, downed / washed / respawn) ·
+//   raft (delivery, assembly, raft hp, boarding, push-off) · camp (spring charges, wreck salvage) · survival (bars, fire, downed / washed / respawn) ·
 //   crafting (recipes, the camp chest) · effects (treasures, bottles) · actions (stepPlayer results)
 // plus the life systems monsters / fishing / weather (server-world-life).
 
@@ -13,6 +13,7 @@ import type { ClockInfo } from "../../shared/rules/schedule.js";
 import type { InteractKind } from "../../shared/types.js";
 import type { ActionSystem } from "./actions.js";
 import type { Bag } from "./bag.js";
+import type { CampSystem } from "./camp.js";
 import type { PlayerState, WorldContext } from "./context.js";
 import type { CraftSystem } from "./crafting.js";
 import type { EffectSystem } from "./effects.js";
@@ -33,6 +34,7 @@ export interface WorldCore extends WorldContext {
   readonly nodes: NodeSystem;
   readonly structures: StructureSystem;
   readonly raft: RaftSystem;
+  readonly camp: CampSystem;
   readonly survival: SurvivalSystem;
   readonly crafting: CraftSystem;
   readonly effects: EffectSystem;

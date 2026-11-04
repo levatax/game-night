@@ -119,17 +119,28 @@ Items marked **drift** depart from game4.md; MAINTAINING.md §3 lists all nine w
    "late"; LMB while CAST (before the bite) → miss "early"; walking `FISH_CANCEL_DIST` away / switching slot →
    miss "moved". Loot: `fishLootFor(biome.loot)` with a ±20% per-match jitter from the seed, pity after
    `FISH_PITY` junk catches. A bottle / treasure applies when the reel ends.
-10. **Monsters** never enter light rings (lit campfire `FIRE_LIGHT_RADIUS`, held lit torch / planted torch
-    `TORCH_LIGHT_RADIUS`); the boss walks in at `BOSS_LIGHT_SLOW`. Target priority: player within
-    `MONSTER_AGGRO_RADIUS` > bait fish (`BAIT_RADIUS`, the boss for `BOSS_BAIT_TICKS`) > raft > chest > fence in
-    the way. Players inside a light ring are safe from crabs (crabs circle the edge). At dawn they flee to the
-    nearest shore cell and despawn. Waves spawn over the first 60% of the night from shore cells, weighted to the
-    far side of the camp. Gnawing: a crab at the raft (within 2.5 m of the raft center) removes 1 hull wood every
-    `RAFT_GNAW_TICKS` unless a player is within `RAFT_GUARD_RADIUS` (then it targets that player). A crab at the
-    chest steals nothing (monkeys do, by day).
-11. **Downed / washed**: hp 0 → downed (`DOWNED_TICKS` crawl); teammate holds E `REVIVE_TICKS` → hp
-    `REVIVE_HP`. Timer out → washed (alive=false, inventory lost, `PlayerWashedEvent.willRespawn` = not night 3)
-    → at the next dawn respawn at the wreck with `RESPAWN_BARS`. Bars at 0 deal `EMPTY_BAR_DAMAGE_PER_SEC` each.
+10. **Monsters** never enter light rings (lit campfire `fireLightRadius(fuel)` 3–6 m, none below
+    `FIRE_REPEL_MIN_FRACTION` of the max fuel; held lit torch / planted torch `TORCH_LIGHT_RADIUS`); the boss walks in
+    at `BOSS_LIGHT_SLOW`. Long Tide: crabs going for the raft (or the player guarding it) ignore torch rings — only
+    the campfire keeps them off, a torch swing still scares them. Target priority: player within
+    `MONSTER_AGGRO_RADIUS` > bait fish (`BAIT_RADIUS`, the boss for `BOSS_BAIT_TICKS`) > (two crabs in five: the
+    dark chest, else the camp's light edge) > raft > chest > fence in the way. Players inside a light ring are safe
+    from crabs (crabs circle the edge). At dawn they flee to the nearest shore cell and despawn (Captain Crab too:
+    he comes back at full hp every night from `bossFromNight` until killed — then `team.bossDown`, the compass and
+    `BOSS_DROP_SCRAP` scrap drop; a boss that stops closing on the raft resurfaces at the shore cell nearest it).
+    Waves (`nightWave`) spawn over the first 70% of the night from shore cells, weighted to the far side of the
+    camp; the push-off adds `planLaunchWave`. Gnawing: a crab at the raft (within 2.5 m of the raft center) removes
+    `CRAB_RAFT_GNAW` raft hp every `RAFT_GNAW_TICKS` (boss `BOSS_RAFT_GNAW`, a puffer `PUFFER_RAFT_DAMAGE` and pops)
+    unless a player is within `RAFT_GUARD_RADIUS` (then it targets that player). A crab at the dark chest destroys one
+    material / food unit every `CHEST_RAID_TICKS` (never the compass; monkeys steal 2 items by day).
+11. **Downed / washed**: hp 0 → downed (`DOWNED_TICKS` 25 s crawl; a carried compass goes to the chest); teammate
+    holds E `REVIVE_TICKS` → hp `REVIVE_HP`. Timer out → washed (alive=false, inventory lost,
+    `PlayerWashedEvent.willRespawn` = not the last night and a teammate alive) → at the next dawn respawn at the
+    wreck with `RESPAWN_BARS`, only while a teammate is alive; every participant washed = `teamWiped` on any day.
+    Hunger / thirst at 0 deal `EMPTY_BAR_DAMAGE_PER_SEC` each, warmth at 0 `COLD_DAMAGE_PER_SEC`.
+    **Heavy cargo** (log, barrel; one at a time): `PlayerState.loadMult` (server, every tick) = CharacterDef
+    carryAlone / logCarryAlone, carryEscort with a living teammate within `ESCORT_RADIUS`; the sim walks at
+    loadMult % with no sprint and no throw, and DROP sets the cargo down at the feet.
 12. **Coop friendly fire**: no damage, knockback × FRIENDLY_KNOCK_MULT, 0.3 s stun. Caught projectiles (RMB
     window, any thrower) go to the inventory (or bounce off when full). A coconut/stone hitting a palm trunk
     drops a coconut.
@@ -275,9 +286,10 @@ bots never shift loot.
 1. **Clock transitions** (compare with the previous clock): playing start / dawn (day > 1): monsters `flee`,
    washed players respawn at the wreck (`playerRespawn`), roll today's weather (day 1: `DAY1_WEATHER_CHANCE`) and
    day event; mid-day (`WEATHER_START_FRACTION`): weather starts (`weather` event; state.weather); event time
-   (`DAY_EVENT_FRACTION`): spawn the day event (`dayEvent`); dusk: nothing (room banner); night start: plan the
-   wave (`nightWave(night, seats)` × difficulty × biome × full moon; skipped with `team.flare`, which is then
-   cleared; nightmare adds the boss on night 2); weather "clear" at the next dawn.
+   (`DAY_EVENT_FRACTIONS` 0.25 and 0.65): spawn a day event (`dayEvent`, two a day); dusk: nothing (room banner);
+   night start: plan the wave (`nightWave(night, seats)` × difficulty × biome × full moon, Captain Crab from
+   `bossFromNight` until `bossDown`; skipped with `team.flare`, which is then cleared); weather "clear" at the next
+   dawn.
 2. **Players**: for each alive player pop one input (inputs.ts rules), `stepPlayer(p, cmd, ctx)` with ctx =
    `{terrain, cover, bounds, character, dt: DT, locked}`; then act on the result:
    `interactPressed` → `resolveInteraction` → execute (tap kinds) or start a channel (`hold`: set `channel`,
@@ -306,9 +318,9 @@ bots never shift loot.
    × difficulty × timings.barMult (sprint, heat wave / shade), warmth (night & biome nightChill, rain unless
    sheltered (cave), in water unless Çocuk; near a lit fire +5/s; held lit torch slows the loss), empty bars → hp
    damage, near fire heal, drowning, jellyfish active item, puffer fuse (explodes in hand → `blast inHand`),
-   torch burn (`torchTicks`), fire fuel (rain ×3) + `fireFuel` "out" event, `lowBar` events once per dip,
+   torch burn (`torchTicks`), fire fuel (×0.5 by day, rain ×2) + `fireFuel` "out" event, `lowBar` events once per dip,
    spyglass countdown.
-7. **Downed / wash**: `downedTicks` countdown → `playerWashed`; all washed on night 3 → `teamWiped`.
+7. **Downed / wash**: `downedTicks` countdown → `playerWashed`; all washed (any night) → `teamWiped`.
 8. **Boarding**: `launchTicksLeft` countdown; launch condition → `launchRequest`.
 
 **Events** go through `server/world/eventBuffer.ts` until the room drains them, because craft / chest messages and
@@ -346,20 +358,26 @@ the chest. Output: `addItem`, overflow dropped at the feet (`dropped`). `fuel`: 
 ### 4.6 Bots (server-bots)
 
 `BotDesk` per §12: think delay BOT_THINK_MIN..MAX_SEC (sooner when something happens: a finished goal, damage, a
-puffer in the pocket, a monster closing in, dusk), roles: **hamal** (wood / stone / rope → raft parts →
-deliver), **balikci** (crafts a rod, fishes, cooks, stocks the chest), **bekci** (stocks coconuts by day, at
-night guards the raft: torch, throws at crabs), **asci** (water + food runs, feeds the fire, cooks, eats /
-tosses food to teammates with low bars). Every role: eat / drink when low, go to the fire at dusk / night,
-revive downed teammates, board when the raft is ready, flee monsters when low hp. Pure functions in
-`botBrain.ts`: `chooseGoal(view) → Goal` (puffer in the pocket → flee → revive → board → attack / self-care
-(self-care first when starving) → pass food → wait at the ready raft → evening (fire, guard torch) → deliver →
-craft → housekeeping → nearby pickups → work (gather / fish / water / ammo by team needs × role affinity, by day) →
-crabs / pickups → camp or night post; at night the work tiers only run where it is lit), `steer(world, pos, target,
-memory) → {moveX, moveZ, yaw, jump}` (1.5 m forward probe, ±30/60/90/135° sweep, 10-tick hysteresis, stuck
-detector → jump + random dir; fallback BFS on a 2 m walkability grid), `aimAt(origin, target, kind, noiseDeg, rng)
-→ {yaw, pitch, charge}` (solveBallistic + personality noise). Raft pacing (`botNeeds.ts`): far ahead of the
-schedule the bots stock the chest instead of the raft so the nights still happen. Bots craft through `host.craft`
-/ `host.chest` (same validation). Desk clock = Σ ticks, never Date.now.
+puffer in the pocket, a monster closing in, dusk), roles (Long Tide §7): **hamal** (axe + hammer: fells trees for
+logs, salvages the wreck, crafts the plan's benches / planks / nails / sailcloth / barrels, repairs the raft),
+**balikci** (rod: fishes, cooks, keeps the fire when there is no Aşçı), **bekci** (spear + axe: ammo, logs; the
+first raft guard at night), **asci** (rod: water + food runs, feeds the fire, cooks, tosses food to teammates with
+low bars). Every role: eat / drink when low, go to the fire at dusk / night, revive downed teammates (not into a
+pack or next to Captain Crab), keep away from Captain Crab, assemble the stage whose materials are in, walk beside
+a teammate carrying a log / barrel, flee monsters when low hp, board only during the push-off a human started (a
+bot-only team, or the storm < 90 s away, starts it itself). Pure functions in `botBrain.ts`: `chooseGoal(view) →
+Goal` (puffer in the pocket → flee (Captain Crab at any hp) → revive → board → attack / self-care (self-care first
+when starving) → pass food → evening (fire, torches) → deliver → assemble → repair → craft → housekeeping → escort →
+nearby pickups → work (gather / fell / salvage / fish / water / ammo by the team plan × role affinity, by day) →
+crabs / pickups → camp or night post: the guard and a second guard at the raft with a lit torch once the keel
+exists — the motor swings it at close crabs, throws at scared ones, picks up flipped ones and kites the boss around
+the raft), `steer(world, pos, target, memory) → {moveX, moveZ, yaw, jump}` (1.5 m forward probe, ±30/60/90/135°
+sweep, 10-tick hysteresis, stuck detector → jump + random dir; fallback BFS on a 2 m walkability grid),
+`aimAt(origin, target, kind, noiseDeg, rng) → {yaw, pitch, charge}` (solveBallistic + personality noise). The
+economy (`botNeeds.ts` `teamPlan`): a bill of materials over RECIPES — the current stage's missing rows, the next
+stage's rows (chest prestock while the day lock holds), role tools, fuel, a larder and repair planks, matched
+against everyone's pockets + the chest → crafts (with the bench tiers they need) and raw wants; the day locks pace
+the raft. Bots craft through `host.craft` / `host.chest` (same validation). Desk clock = Σ ticks, never Date.now.
 
 **Stand-ins** (`add(id, role, { standIn: true })`) are enforced on three levels: the goal comes from
 `chooseStandInGoal` filtered by `STAND_IN_GOALS` (idle, crawl, flee, revive, board, warm, camp, wait, follow); the

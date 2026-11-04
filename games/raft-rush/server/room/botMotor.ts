@@ -25,25 +25,30 @@ import {
   PLACE_DISTANCE,
   PLAYER_HEIGHT,
   PLAYER_RADIUS,
+  ESCORT_RADIUS,
+  RAFT_HP_MAX,
   RAFT_RANGE,
+  RAFT_REPAIR_WOOD_COST,
   REVIVE_RANGE,
   SPRING_RANGE,
+  TORCH_SWING_RANGE,
   WATER_Y,
+  WRECK_RANGE,
   secToTicks,
   type Timings,
 } from "../../shared/constants.js";
 import { heightAt } from "../../shared/island/heightfield.js";
 import type { IslandDef, XZ } from "../../shared/island/types.js";
 import { BTN, type ChestMsg } from "../../shared/protocol.js";
-import { emptyInteraction, resolveInteraction, type Interaction } from "../../shared/rules/interact.js";
-import { countOf, roomFor, slotCount, slotKind } from "../../shared/rules/inventory.js";
+import { emptyInteraction, raftMaterialsDone, resolveInteraction, type Interaction } from "../../shared/rules/interact.js";
+import { countOf, heavyCount, roomFor, slotCount, slotKind } from "../../shared/rules/inventory.js";
 import { angleDelta, clamp, wrapAngle, yawFromDir } from "../../shared/sim/math.js";
 import { throwOrigin } from "../../shared/sim/throw.js";
 import type { BotRole, InteractKind, ItemKind, RecipeId } from "../../shared/types.js";
 import type { PlayerState, RaftState } from "../schema.js";
 import { aimFromPlayer, aimVelocity, applyAimNoise, shotClear, type AimSolution, type ShotObstacle } from "./botAim.js";
 import { aimNoiseFor } from "./botBrain.js";
-import { palmHandSlot } from "./botNeeds.js";
+import { palmHandSlot, RAFT_REPAIR_TARGET } from "./botNeeds.js";
 import { moveFor, resetSteerMemory, steer, type SteerMemory, type SteerWorld } from "./botSteer.js";
 import type { BotSlot, Goal } from "./botTypes.js";
 
@@ -76,6 +81,21 @@ const ASIDE_LOOKS = [0, 0.3, -0.3, 0.6, -0.6, 1, -1, 1.5, -1.5, 2.1, -2.1, 2.7, 
 const ASIDE_SPOTS = [0.6, -0.6];
 /** Longest walk to such a spot. */
 const ASIDE_WALK_TICKS = secToTicks(2);
+/** Longest a bot holds E at the raft for one stage (a mast waiting for its second holder, a slow hand assembly). */
+const ASSEMBLE_HOLD_LIMIT = secToTicks(120);
+/** A guard picks up a flipped crab this close, and throws at a scared-off crab this close. */
+const GUARD_COLLECT_REACH = 6;
+const GUARD_THROW_RANGE = 9;
+/** A posted guard steps away from Captain Crab when he comes this close. */
+const GUARD_BOSS_KITE = 5.5;
+/** A guard swings its torch at a crab this close (TORCH_SWING_RANGE ahead + the crab's body + a step). */
+const GUARD_SWING_REACH = TORCH_SWING_RANGE + 1.1;
+/** A repair goes on (one plank / 2 wood per press) up to this hp. */
+const REPAIR_GOAL_HP = RAFT_REPAIR_TARGET;
+
+function carriesHeavy(p: PlayerState): boolean {
+  return heavyCount(p) > 0;
+}
 
 /** What the motor may read and do. */
 export interface MotorCtx {
@@ -174,6 +194,14 @@ export class Motor {
   private putIndex = 0;
   private putCount = 0;
   private signature = 0;
+  /** guard: a sub-task ("throw" a stone at / "collect" a flipped crab), its monster and the ammo slot. */
+  private guardSub: "" | "throw" | "collect" = "";
+  private guardTarget = "";
+  private guardSlot = 0;
+  /** fell: the tree is down; the log to pick up and when it fell. */
+  private felled = false;
+  private felledAt = 0;
+  private logId = "";
   private awayMode = false;
   private wanderTimer = 0;
   private wanderX = 0;
@@ -220,6 +248,8 @@ export class Motor {
         this.wanderAround(ctx, p, g.at, out);
         return;
       case "guard":
+        this.guard(ctx, p, g.at, out);
+        return;
       case "wait":
         this.hangAround(ctx, p, g.at, out);
         return;
@@ -240,6 +270,21 @@ export class Motor {
         return;
       case "deliver":
         this.deliver(ctx, p, out);
+        return;
+      case "assemble":
+        this.assemble(ctx, p, out);
+        return;
+      case "repair":
+        this.repair(ctx, p, out);
+        return;
+      case "salvage":
+        this.salvage(ctx, p, out);
+        return;
+      case "fell":
+        this.fell(ctx, p, g.node, out);
+        return;
+      case "escort":
+        this.escort(ctx, p, g.playerId, out);
         return;
       case "spring":
         this.spring(ctx, p, g.uses, out);
@@ -387,6 +432,108 @@ export class Motor {
     this.hangAround(ctx, p, { x: at.x + this.wanderX, z: at.z + this.wanderZ }, out);
   }
 
+  /**
+   * Night watch at the raft (Long Tide §3.3): hold a lit torch and swing it at any crab that comes close (a swing
+   * scares every crab around for TORCH_SWING_SCARE_TICKS — crabs going for the raft walk through torch light, so
+   * this is how a guard keeps them off it and off itself).
+   */
+  private guard(ctx: MotorCtx, p: PlayerState, at: XZ, out: MotorFrame): void {
+    // A sub-task in progress (a stone at a crab, picking up a flipped crab): run it to its end, then back on watch.
+    if (this.guardSub !== "") {
+      if (this.guardSub === "throw") this.throwFlow(ctx, p, this.guardSlot, out, () => this.monsterPoint(ctx, this.guardTarget), { maxRange: GUARD_THROW_RANGE, stay: true, checkShot: true });
+      else this.collectCrab(ctx, p, this.guardTarget, out);
+      if (this.status !== "running") {
+        this.status = "running";
+        this.reason = "";
+        this.guardSub = "";
+        this.guardTarget = "";
+        this.plan = null;
+        this.next(0);
+      }
+      return;
+    }
+    const torch = [0, 1, 2, 3].find((i) => slotKind(p, i) === "torch");
+    let crab: XZ | null = null;
+    let best = GUARD_SWING_REACH;
+    let near = false;
+    let boss: XZ | null = null;
+    let flipped = "";
+    let flippedD = GUARD_COLLECT_REACH;
+    let shot = "";
+    let shotD = GUARD_THROW_RANGE;
+    let threats = 0;
+    let bossFar = "";
+    ctx.state.monsters.forEach((m) => {
+      const d = Math.hypot(m.x - p.x, m.z - p.z);
+      if (m.kind === "crab" && m.mode === "flipped") {
+        if (d < flippedD) {
+          flippedD = d;
+          flipped = m.id;
+        }
+        return;
+      }
+      if (m.mode === "flee" || m.mode === "emerge") return;
+      if (m.kind === "boss" && d < GUARD_BOSS_KITE) boss = m;
+      else if (m.kind === "boss" && d < GUARD_THROW_RANGE + 4) bossFar = m.id;
+      if (m.kind !== "crab") return;
+      if (d < 8) near = true;
+      if (d < 4) threats++;
+      if (d < best) {
+        best = d;
+        crab = m;
+      }
+      // Scared-off crabs (backing away, slow to turn) are the easy throws: two stones flip one.
+      if (m.mode === "stunned" && d > 2.2 && d < shotD) {
+        shotD = d;
+        shot = m.id;
+      }
+    });
+    // The torch only burns in hand: light it for the night, or when a crab comes.
+    if (torch !== undefined && p.activeSlot !== torch && (ctx.state.dayPhase === "night" || near)) this.select(p, torch, out);
+    const b = boss as XZ | null;
+    if (b) {
+      // Captain Crab goes for the guard: keep the raft between us (in the torch light he is slowed to half).
+      const raft = this.site(ctx, p).raft;
+      const ax = raft.x - b.x;
+      const az = raft.z - b.z;
+      const al = Math.hypot(ax, az) || 1;
+      this.walk(ctx, p, raft.x + (ax / al) * 4.5, raft.z + (az / al) * 4.5, 0.6, out, true);
+      return;
+    }
+    const c = crab as XZ | null;
+    if (c && torch !== undefined && p.activeSlot === torch && p.torchTicks > 0) {
+      const yaw = yawFromDir(c.x - p.x, c.z - p.z);
+      this.face(p, yaw, -0.2, out);
+      if (p.throwTicks === 0 && Math.abs(angleDelta(out.yaw, yaw)) < 0.5) out.buttons |= BTN.USE_PRESS;
+      return;
+    }
+    // Nothing at arm's length: finish the job — a flipped crab picked up is one crab less tonight.
+    if (flipped !== "" && threats === 0 && roomFor(p, "crab_raw") > 0) {
+      this.guardSub = "collect";
+      this.guardTarget = flipped;
+      this.next(0);
+      return;
+    }
+    const stone = [0, 1, 2, 3].find((i) => slotKind(p, i) === "spear") ?? [0, 1, 2, 3].find((i) => slotKind(p, i) === "stone");
+    // Captain Crab still out of reach (slowed in our light): a stone or the spear at him — the compass is his.
+    if (bossFar !== "" && stone !== undefined && threats === 0) {
+      this.guardSub = "throw";
+      this.guardTarget = bossFar;
+      this.guardSlot = stone;
+      this.next(0);
+      return;
+    }
+    if (shot !== "" && stone !== undefined && threats === 0) {
+      this.guardSub = "throw";
+      this.guardTarget = shot;
+      this.guardSlot = stone;
+      this.next(0);
+      return;
+    }
+    this.hangAround(ctx, p, at, out);
+  }
+
+
   /** Keep within a couple of meters of a teammate (their position is re-read every tick: they move). */
   private follow(ctx: MotorCtx, p: PlayerState, id: string, out: MotorFrame): void {
     const m = ctx.state.players.get(id);
@@ -456,6 +603,8 @@ export class Motor {
       keep?: () => boolean;
       after?: () => "again" | "done" | "wait";
       sprint?: boolean;
+      /** Longest a hold may last before the goal fails (default ACT_TIMEOUT × 3; assembly holds much longer). */
+      holdLimit?: number;
     },
   ): void {
     if (!target) {
@@ -540,7 +689,7 @@ export class Motor {
             return;
           }
           out.buttons |= BTN.INTERACT;
-          this.timeout(ACT_TIMEOUT * 3);
+          this.timeout(o.holdLimit ?? ACT_TIMEOUT * 3);
           return;
         }
         if (this.stageTicks < 4) return;
@@ -642,14 +791,181 @@ export class Motor {
   }
 
   /** Walk to the raft's land-side stand point first, then run the E flow against the raft center. */
-  private raftFlow(ctx: MotorCtx, p: PlayerState, out: MotorFrame, want: InteractKind, after: () => "again" | "done" | "wait"): void {
+  private raftFlow(
+    ctx: MotorCtx,
+    p: PlayerState,
+    out: MotorFrame,
+    want: InteractKind,
+    after: () => "again" | "done" | "wait",
+    hold?: { keep: () => boolean; limit: number },
+  ): void {
     const { stand, center } = this.raftTarget(ctx, p);
     if (this.stage === 0 && dist(p, stand) > 0.8) {
+      if (hold && !hold.keep()) {
+        this.finish();
+        return;
+      }
       if (!this.walk(ctx, p, stand.x, stand.z, 0.8, out, true)) this.timeout(WALK_TIMEOUT, "unreachable");
       return;
     }
     if (this.stage === 0) this.next(1);
-    this.flowE(ctx, p, out, center, { stand: 2.4, reach: RAFT_RANGE, hold: false, want: (it) => it.kind === want, after });
+    this.flowE(ctx, p, out, center, {
+      stand: 2.4,
+      reach: RAFT_RANGE,
+      hold: !!hold,
+      want: (it) => it.kind === want,
+      after,
+      ...(hold ? { keep: hold.keep, holdLimit: hold.limit } : {}),
+    });
+  }
+
+  /** Hold E at the raft (CHANNEL.BUILD) until the stage is assembled (or its materials / the day lock change). */
+  private assemble(ctx: MotorCtx, p: PlayerState, out: MotorFrame): void {
+    const team = ctx.state.teams[p.team] ?? ctx.state.teams[0];
+    if (!team) {
+      this.fail("gone");
+      return;
+    }
+    if (this.ticks === 1) this.signature = team.stage;
+    const keep = () => team.stage === this.signature && raftMaterialsDone(team);
+    this.raftFlow(ctx, p, out, "assemble", () => (keep() ? "again" : "done"), { keep, limit: ASSEMBLE_HOLD_LIMIT });
+  }
+
+  /** E at the raft with a hammer: a plank (or 2 wood) per press while the hp is low and there is something to spend. */
+  private repair(ctx: MotorCtx, p: PlayerState, out: MotorFrame): void {
+    const team = ctx.state.teams[p.team] ?? ctx.state.teams[0];
+    if (!team) {
+      this.fail("gone");
+      return;
+    }
+    const can = () => team.raftHp < RAFT_HP_MAX && (countOf(p, "raft_part") > 0 || countOf(p, "wood") >= RAFT_REPAIR_WOOD_COST);
+    if (this.ticks === 1) {
+      this.signature = team.raftHp;
+      if (!can()) {
+        this.fail("nothing");
+        return;
+      }
+    }
+    this.raftFlow(ctx, p, out, "repair", () => {
+      if (team.raftHp > this.signature) {
+        this.signature = team.raftHp;
+        return can() && team.raftHp < REPAIR_GOAL_HP ? "again" : "done";
+      }
+      if (this.presses < 3) return "again";
+      this.fail("notRepaired");
+      return "wait";
+    });
+  }
+
+  /** Hold E at the wreck with a hammer for scrap while it has some and there is room. */
+  private salvage(ctx: MotorCtx, p: PlayerState, out: MotorFrame): void {
+    const site = this.site(ctx, p);
+    const team = ctx.state.teams[p.team] ?? ctx.state.teams[0];
+    const w = site.wreck;
+    const keep = (): boolean => !!team && team.wreckScrap > 0 && countOf(p, "hammer") > 0 && roomFor(p, "scrap") > 0;
+    // Stand just outside the hull's collider (WRECK_RADIUS 1.8), within WRECK_RANGE of its center.
+    this.flowE(ctx, p, out, { x: w.x, y: heightAt(ctx.island.grid, w.x, w.z) + 0.6, z: w.z }, {
+      stand: WRECK_RANGE - 0.4,
+      reach: WRECK_RANGE,
+      hold: true,
+      want: (it) => it.kind === "salvage",
+      keep,
+      after: () => (keep() ? "again" : "done"),
+    });
+  }
+
+  /**
+   * Chop tree `node` with the axe to its last unit (it falls and drops a log: Long Tide §4.1), then pick the log up
+   * once it lies still at the foot of the tree.
+   */
+  private fell(ctx: MotorCtx, p: PlayerState, node: number, out: MotorFrame): void {
+    const n = ctx.island.nodes[node];
+    if (!n) {
+      this.fail("gone");
+      return;
+    }
+    if (!this.felled && (ctx.state.nodes[node] ?? 0) <= 0) {
+      // Down (by us or someone else): now the log.
+      this.felled = true;
+      this.felledAt = this.ticks;
+      this.presses = 0;
+      this.next(0);
+    }
+    if (!this.felled) {
+      if (countOf(p, "axe") <= 0) {
+        this.fail("noAxe");
+        return;
+      }
+      this.flowE(ctx, p, out, { x: n.x, y: n.y + 1, z: n.z }, {
+        stand: n.radius + 0.95,
+        reach: INTERACT_RANGE + n.radius,
+        hold: true,
+        want: (it) => it.kind === "gather" && it.node === node,
+        after: () => "again",
+      });
+      // The channel ends when the tree falls: that is not the end of this goal.
+      if (this.status === "done") {
+        this.status = "running";
+        this.felled = (ctx.state.nodes[node] ?? 0) <= 0;
+        this.felledAt = this.ticks;
+        this.presses = 0;
+        this.next(0);
+      }
+      return;
+    }
+    if (this.logId === "" || !ctx.state.projectiles.has(this.logId)) {
+      this.logId = "";
+      let best = 4.5;
+      ctx.state.projectiles.forEach((pr) => {
+        if (pr.kind !== "log") return;
+        const d = Math.hypot(pr.x - n.x, pr.z - n.z);
+        if (d < best) {
+          best = d;
+          this.logId = pr.id;
+        }
+      });
+      if (this.logId === "") {
+        if (this.ticks - this.felledAt > 20) this.finish();
+        return;
+      }
+    }
+    const pr = ctx.state.projectiles.get(this.logId)!;
+    if (pr.state !== "rest" && pr.state !== "stuck") {
+      // Still rolling: wait beside it.
+      this.walk(ctx, p, pr.x, pr.z, 1.2, out, false);
+      if (this.ticks - this.felledAt > secToTicks(6)) this.finish();
+      return;
+    }
+    if (roomFor(p, "log") <= 0) {
+      this.fail("full");
+      return;
+    }
+    this.pickup(ctx, p, this.logId, out);
+  }
+
+  /** Walk beside a teammate while they carry heavy cargo (within ESCORT_RADIUS they carry it faster). */
+  private escort(ctx: MotorCtx, p: PlayerState, id: string, out: MotorFrame): void {
+    const m = ctx.state.players.get(id);
+    if (!m || !m.alive || m.downed || m.boarded || !carriesHeavy(m)) {
+      this.finish();
+      return;
+    }
+    if (this.ticks > secToTicks(60)) {
+      this.finish();
+      return;
+    }
+    // Walk to a spot just beside them (on our side), keep there.
+    const dx = p.x - m.x;
+    const dz = p.z - m.z;
+    const d = Math.hypot(dx, dz) || 1;
+    const at = { x: m.x + (dx / d) * 1.3, z: m.z + (dz / d) * 1.3 };
+    if (d <= ESCORT_RADIUS - 1) {
+      // Close enough: match their walk (no sprinting past them), look about.
+      if (!this.walk(ctx, p, at.x, at.z, 0.4, out, false)) out.buttons &= ~BTN.SPRINT;
+      else this.idleLook(ctx, p, out);
+      return;
+    }
+    this.walk(ctx, p, at.x, at.z, 0.4, out, true);
   }
 
   private board(ctx: MotorCtx, p: PlayerState, out: MotorFrame): void {

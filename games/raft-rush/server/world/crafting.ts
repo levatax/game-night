@@ -2,24 +2,30 @@
 // server-world.
 //
 // craft(p, recipe): within CRAFT_RANGE (+RANGE_SLACK) of the team fire, the fire lit (fuel > 0) except for the
-// "fuel" recipe itself, not locked (coconut_ball needs team.ballRecipe), not duel-only in coop. Ingredients come
-// from the inventory first, then the chest; the exact counts are consumed. Output: into the inventory, overflow
-// dropped at the feet (`dropped`). fuel: +FIRE_WOOD_FUEL_TICKS; cook_kraken: every teammate +KRAKEN_TEAM_FOOD
-// hunger. Rejects (`reject` action "craft"): missing, fireOut, tooFar, locked, full (fire already full), dead.
+// "fuel" recipe itself, not locked (coconut_ball needs team.ballRecipe), not duel-only in coop, the camp bench at
+// least RecipeDef.bench (team.benchTier: 1 workbench, 2 anvil), the day at least RecipeDef.minDay (RAFT_TEST fast:
+// no day locks). Ingredients come from the inventory first, then the chest; the exact counts are consumed.
+// Output: into the inventory, overflow dropped at the feet (`dropped`); cooking gives CharacterDef.cookOut cooked
+// per raw (Şef 2). fuel: +FIRE_WOOD_FUEL_TICKS; cook_kraken: every teammate +KRAKEN_TEAM_FOOD hunger; bench:
+// team.benchTier = RecipeDef.tier. Processed crafts (isProcessedRecipe) earn MVP_POINTS.craftProcessed.
+// Rejects (`reject` action "craft"): missing, fireOut, tooFar, locked, full (fire already full), dead, needBench,
+// tooEarly, built (that bench is already up).
 // chest(p, msg): ChestMsg put (the active slot, or `slot` — then a given `kind` must still be in it) / take /
 // putAll within CHEST_RANGE (+RANGE_SLACK); `chestChanged` events. Rejects (action "chest"): tooFar, empty, full,
 // dead. A malformed message (bad op, out-of-range slot) is ignored. Monkeys use steal / restock (WorldContext).
 
 import {
+  CHARACTERS,
   CHEST_RANGE,
   CRAFT_RANGE,
   FIRE_FUEL_MAX_TICKS,
   FIRE_WOOD_FUEL_TICKS,
   KRAKEN_TEAM_FOOD,
+  MVP_POINTS,
   SHELTER_RADIUS,
 } from "../../shared/constants.js";
 import { heightAt } from "../../shared/island/heightfield.js";
-import { isItemKind, ITEMS, RECIPES, type RecipeDef } from "../../shared/items.js";
+import { isCookRecipe, isItemKind, isProcessedRecipe, ITEMS, RECIPES, type RecipeDef } from "../../shared/items.js";
 import type { ChestMsg } from "../../shared/protocol.js";
 import { countOf, roomFor, slotCount, slotKind, SLOTS } from "../../shared/rules/inventory.js";
 import { canAct } from "../../shared/sim/player.js";
@@ -50,6 +56,9 @@ export class CraftSystem {
     const team = core.team(teamIdx);
     if (recipe.duelOnly && core.state.layout !== "duel") return this.fail(p, "locked");
     if (recipe.locked && !team.ballRecipe) return this.fail(p, "locked");
+    if (recipe.bench > team.benchTier) return this.fail(p, "needBench");
+    if (!core.timings.cheapRaft && recipe.minDay > Math.max(1, core.dayClock?.day ?? core.state.day)) return this.fail(p, "tooEarly");
+    if (recipe.effect === "bench" && team.benchTier >= recipe.tier) return this.fail(p, "built");
     const reach = CRAFT_RANGE + RANGE_SLACK;
     if (dist2(p.x, p.z, site.campfire.x, site.campfire.z) > reach * reach) return this.fail(p, "tooFar");
     if (recipe.effect === "fuel") {
@@ -69,12 +78,16 @@ export class CraftSystem {
         const gained = core.survival.feed(q, KRAKEN_TEAM_FOOD, 0, 0);
         core.emit({ type: "eat", tick: core.tick(), playerId: q.id, kind: "kraken", hunger: gained.hunger, thirst: 0, pos: posOf(q) });
       }
+    } else if (recipe.effect === "bench") {
+      team.benchTier = Math.max(team.benchTier, recipe.tier);
     } else if (recipe.id === "hut" || recipe.id === "canoe") {
       dropped = !this.buildDuelStructure(p, team, recipe.id);
     } else if (recipe.out) {
-      dropped = core.bag.give(p, recipe.out, recipe.outCount).added < recipe.outCount;
+      const count = isCookRecipe(recipe.id) ? recipe.outCount * Math.max(1, CHARACTERS[p.character].cookOut) : recipe.outCount;
+      dropped = core.bag.give(p, recipe.out, count).added < count;
     }
     p.stats.crafted = Math.min(65535, p.stats.crafted + 1);
+    if (isProcessedRecipe(recipe)) core.addScore(p, MVP_POINTS.craftProcessed);
     core.emit({ type: "crafted", tick: core.tick(), playerId: p.id, recipe: recipe.id, item: recipe.out, dropped, pos: posOf(p) });
     return true;
   }
@@ -189,7 +202,8 @@ export class CraftSystem {
     } else {
       const stocked: ItemKind[] = [];
       team.chest.forEach((n, k) => {
-        if (n > 0 && isItemKind(k)) stocked.push(k);
+        // The compass is never lost (Long Tide §4.2): thieves leave it.
+        if (n > 0 && isItemKind(k) && k !== "compass") stocked.push(k);
       });
       stocked.sort();
       if (stocked.length > 0) pick = stocked[Math.min(stocked.length - 1, Math.floor(core.rng() * stocked.length))]!;

@@ -2,7 +2,7 @@
 // weather / dayEvent, stormWarning / storm, raftReady / board / raftLaunch, matchEnd, notice). The camera and
 // music react to the phase itself (cinematics.ts, soundscape.ts). Owner: client-app.
 
-import { DAYS, TICK_RATE } from "../../../shared/constants";
+import { TICK_RATE } from "../../../shared/constants";
 import type {
   BoardEvent,
   DayEventEvent,
@@ -62,7 +62,7 @@ export class FlowFeedback {
     const storm = matchTicks(this.ctx.net.timings) / TICK_RATE;
     audio.play("dayStart");
     bannerLine(this.ctx, "day", "info", {
-      params: { n: 1, days: DAYS },
+      params: { n: 1, days: this.ctx.net.timings.days },
       sub: "daySubFirst",
       subParams: { time: clockText(storm), biome: biomeName(ev.biome) },
       duration: LONG_BANNER_SEC,
@@ -74,12 +74,12 @@ export class FlowFeedback {
     const { audio } = this.ctx;
     const state = this.ctx.net.state;
     const timings = this.ctx.net.timings;
-    const last = ev.day >= DAYS;
+    const last = ev.day >= timings.days;
     if (ev.dayPhase === "day") {
       if (ev.day <= 1) return; // the landing banner already said "Day 1"
       audio.play("dayStart");
       const stormLeft = state ? clockAt(state.clockTicks, timings).stormLeft / TICK_RATE : 0;
-      bannerLine(this.ctx, "day", "good", { params: { n: ev.day, days: DAYS }, sub: last ? "daySubLast" : "daySub", subParams: { time: clockText(stormLeft) } });
+      bannerLine(this.ctx, "day", "good", { params: { n: ev.day, days: timings.days }, sub: last ? "daySubLast" : "daySub", subParams: { time: clockText(stormLeft) } });
       feedLine(this.ctx, "dawn", "🌅", "good", { n: ev.day });
       return;
     }

@@ -2,26 +2,35 @@
 // Owner: server-world-life.
 //
 // Think (every MONSTER_THINK_TICKS, staggered, or forced) picks the target by priority:
-//   crab:   reachable player within MONSTER_AGGRO_RADIUS > bait fish (BAIT_RADIUS) > raft (its guard when one is
-//           within RAFT_GUARD_RADIUS of it) > chest (only when not lit) > a lit player (wait at the ring edge,
-//           "red eyes in the dark") > prowl the camp's light edge.
+//   crab:   reachable player within MONSTER_AGGRO_RADIUS > bait fish (BAIT_RADIUS) > (camp raiders, two in five:
+//           the chest when it is dark, else the camp's light edge) > raft (its guard when one is within
+//           RAFT_GUARD_RADIUS of it) > chest (only when not lit) > a lit player (wait at the ring edge, "red eyes in
+//           the dark") > prowl the camp's light edge. Crabs going for the raft / its guard are raft-bound: torch
+//           rings don't stop them (Long Tide §3.3), only the campfire's.
 //   puffer: reachable player within PUFFER_AGGRO_RADIUS > raft (or its guard) > lit player edge > camp edge.
-//   boss:   bait (at most BOSS_BAIT_TICKS per fish) > player within BOSS_PLAYER_AGGRO > raft (or its guard) > chest.
+//   boss:   bait (at most BOSS_BAIT_TICKS per fish) > player within BOSS_PLAYER_AGGRO > raft (or its guard) > chest;
+//           stuck on the way to the raft for BOSS_STUCK_TICKS → resurfaces at the shore cell nearest it.
 // Players inside a light ring are safe from crabs and puffers (no bites); the boss walks in, slowed.
 // Act (every tick): move (steer.walk), then bite players (wind-up, cooldown, ctx.damagePlayer + knockPlayer),
-// gnaw the unguarded raft (RAFT_GNAW_TICKS per wood), rummage at the chest, gnaw / snag on / smash fences.
+// gnaw the unguarded raft (CRAB_RAFT_GNAW / BOSS_RAFT_GNAW raft hp per RAFT_GNAW_TICKS; a puffer pops on it), raid
+// the dark chest (one material / food unit per CHEST_RAID_TICKS), gnaw / snag on / smash fences.
 // Modes: emerge → hunt / lured / bite; flipped (crabs, CRAB_FLIP_TICKS, then back up); stunned (torch scare,
-// hit stagger, puffer snagged on a fence); flee (dawn: nearest shore cell, then despawn).
+// hit stagger, puffer snagged on a fence); flee (dawn: nearest shore cell, then despawn). Captain Crab killed:
+// bossDefeated (team.bossDown, the compass + scrap).
 
 import {
   BAIT_RADIUS,
   BOSS_BAIT_TICKS,
+  BOSS_DROP_SCRAP,
+  COMPASS_STAGE,
+  WATER_Y,
   BOSS_LIGHT_SLOW,
   CRAB_FLIP_TICKS,
   FENCE_GNAW_TICKS,
   FENCE_HP,
   HIT_STUN_TICKS,
   MONSTER_AGGRO_RADIUS,
+  MONSTER_EMERGE_TICKS,
   MONSTERS,
   RAFT_GNAW_TICKS,
   RAFT_GUARD_RADIUS,
@@ -29,7 +38,8 @@ import {
 import type { XZ } from "../../../shared/island/types.js";
 import { playerRadius } from "../../../shared/sim/player.js";
 import type { MonsterAttackEvent } from "../../../shared/protocol.js";
-import type { MonsterKind, Vec3Like } from "../../../shared/types.js";
+import { isItemKind, ITEMS } from "../../../shared/items.js";
+import type { ItemKind, MonsterKind, Vec3Like } from "../../../shared/types.js";
 import type { StructureState } from "../../schema.js";
 import type { MonsterState, PlayerState, ProjectileEntity } from "../context.js";
 import type { MonsterBrain } from "./brain.js";
@@ -44,6 +54,10 @@ import {
   BOSS_KNOCK_MULT,
   BOSS_PLAYER_AGGRO,
   BOSS_RAFT_GNAW,
+  CRAB_RAFT_GNAW,
+  BOSS_STUCK_GAIN,
+  BOSS_STUCK_TICKS,
+  CHEST_RAID_TICKS,
   CHEST_REACH,
   CRAB_KNOCK_MULT,
   EDGE_SPREAD,
@@ -95,9 +109,10 @@ export function stepNight(env: LifeEnv, m: MonsterState, b: MonsterBrain, think:
 /** Pick the target (sets brain.goal, m.targetId, m.mode hunt / lured). */
 export function thinkNight(env: LifeEnv, m: MonsterState, b: MonsterBrain): void {
   b.forceThink = false;
+  b.raftBound = false;
   const team = teamOf(m);
   const site = env.ctx.site(team);
-  const hull = env.ctx.team(team).hullWood;
+  const hull = env.ctx.team(team).raftHp;
   const kind = m.kind as NightKind;
 
   if (kind === "boss") {
@@ -126,8 +141,19 @@ export function thinkNight(env: LifeEnv, m: MonsterState, b: MonsterBrain): void
     const bait = nearestBait(env, m, () => true);
     if (bait) return setGoal(m, b, "bait", bait.id, "lured");
   }
+  // Two crabs in five are camp raiders (Long Tide T3: guarding the raft AND the camp): the chest whenever it is
+  // dark, else they prowl the edge of the camp's light for anyone who steps out.
+  const chestDark = kind === "crab" && !env.lit(site.chest.x, site.chest.z);
+  if (kind === "crab" && isChestRaider(b)) {
+    if (chestDark && chestHasLoot(env, team)) return setGoal(m, b, "chest", "chest", "hunt");
+    const lit = nearestPlayer(env, m, aggro, () => true);
+    if (lit) return setGoal(m, b, "player", lit.id, "hunt");
+    b.gx = site.campfire.x;
+    b.gz = site.campfire.z;
+    return setGoal(m, b, "camp", "", "hunt");
+  }
   if (hull > 0) return raftOrGuard(env, m, b, site.raft, team);
-  if (kind === "crab" && !env.lit(site.chest.x, site.chest.z)) return setGoal(m, b, "chest", "chest", "hunt");
+  if (chestDark) return setGoal(m, b, "chest", "chest", "hunt");
   const lit = nearestPlayer(env, m, aggro, () => true);
   if (lit) return setGoal(m, b, "player", lit.id, "hunt");
   b.gx = site.campfire.x;
@@ -136,6 +162,8 @@ export function thinkNight(env: LifeEnv, m: MonsterState, b: MonsterBrain): void
 }
 
 function raftOrGuard(env: LifeEnv, m: MonsterState, b: MonsterBrain, raft: XZ, team: number): void {
+  // Crabs going for the raft (or whoever guards it) walk through torch light: guarding the raft is a fight.
+  if (m.kind === "crab") b.raftBound = true;
   if (dist2(m.x, m.z, raft.x, raft.z) <= RAFT_GUARD_RADIUS + 3) {
     const guard = raftGuard(env, raft, team);
     if (guard) return setGoal(m, b, "player", guard.id, "hunt");
@@ -212,7 +240,10 @@ function spec(m: MonsterState, speedMult: number, env: LifeEnv): WalkSpec {
   const def = MONSTERS[m.kind];
   const boss = m.kind === "boss";
   const slow = boss && env.lit(m.x, m.z) ? BOSS_LIGHT_SLOW : 1;
-  return { radius: def.radius, height: def.height, speed: def.speed * speedMult * slow, avoidLight: !boss, minY: MONSTER_MIN_Y, pushFences: true };
+  // A raft-bound crab only ignores torch light while it goes for the raft / its guard (not fleeing or scared off).
+  const b = env.brains.get(m.id);
+  const fireOnly = !!b?.raftBound && (m.mode === "hunt" || m.mode === "bite");
+  return { radius: def.radius, height: def.height, speed: def.speed * speedMult * slow, avoidLight: !boss, minY: MONSTER_MIN_Y, pushFences: true, fireOnly };
 }
 
 function pursue(env: LifeEnv, m: MonsterState, b: MonsterBrain): void {
@@ -236,7 +267,7 @@ function pursue(env: LifeEnv, m: MonsterState, b: MonsterBrain): void {
       }
       player = p;
       const reach = def.radius + playerRadius(p.character) + BITE_REACH;
-      if (!boss && env.lit(p.x, p.z)) {
+      if (!boss && env.lit(p.x, p.z, b.raftBound)) {
         const e = edgePoint(env, m, b, p.x, p.z);
         gx = e.x;
         gz = e.z;
@@ -277,7 +308,7 @@ function pursue(env: LifeEnv, m: MonsterState, b: MonsterBrain): void {
       const o = spreadOffset(b, boss ? RAFT_SPREAD * 0.8 : RAFT_SPREAD);
       gx = site.raft.x + o.x;
       gz = site.raft.z + o.z;
-      if (!boss && env.lit(gx, gz)) {
+      if (!boss && env.lit(gx, gz, b.raftBound)) {
         const e = edgePoint(env, m, b, gx, gz);
         gx = e.x;
         gz = e.z;
@@ -318,8 +349,11 @@ function pursue(env: LifeEnv, m: MonsterState, b: MonsterBrain): void {
     else bite(env, m, b, player);
     return;
   }
-  if (b.goal === "raft") raftWork(env, m, b, site.raft, team);
-  else if (b.goal === "chest") chestWork(env, m, b, site.chest);
+  if (b.goal === "raft") {
+    if (boss) unstickBoss(env, m, b, site.raft, team);
+    raftWork(env, m, b, site.raft, team);
+  }
+  else if (b.goal === "chest") chestWork(env, m, b, site.chest, team);
   else if (m.mode === "bite") m.mode = "hunt";
 }
 
@@ -328,7 +362,7 @@ function bite(env: LifeEnv, m: MonsterState, b: MonsterBrain, p: PlayerState): v
   const def = MONSTERS[m.kind];
   const reach = def.radius + playerRadius(p.character) + BITE_REACH;
   const d = dist2(m.x, m.z, p.x, p.z);
-  const safe = m.kind !== "boss" && env.lit(p.x, p.z);
+  const safe = m.kind !== "boss" && env.lit(p.x, p.z, b.raftBound);
   const inReach = d <= reach && Math.abs(p.y - m.y) < BITE_DY && !safe;
   if (b.windup > 0) {
     face(m, p.x, p.z);
@@ -376,6 +410,36 @@ function landHit(env: LifeEnv, m: MonsterState, p: PlayerState): void {
   env.ctx.knockPlayer(p, { x: (dx / dl) * def.knockH, y: def.knockUp, z: (dz / dl) * def.knockH });
 }
 
+/** A boss going for the raft that has stopped getting closer dives and surfaces at the shore cell nearest the raft. */
+function unstickBoss(env: LifeEnv, m: MonsterState, b: MonsterBrain, raft: XZ, team: number): void {
+  const d = dist2(m.x, m.z, raft.x, raft.z);
+  const now = env.tick();
+  if (d < b.raftBest - BOSS_STUCK_GAIN || d <= RAFT_GNAW_REACH + 1) {
+    b.raftBest = d;
+    b.raftBestTick = now;
+    return;
+  }
+  if (now - b.raftBestTick < BOSS_STUCK_TICKS) return;
+  let cell: XZ | null = null;
+  let best = Infinity;
+  for (const c of env.ctx.site(team).shore) {
+    const cd = d2(c.x, c.z, raft.x, raft.z);
+    if (cd < best && cd > 9) {
+      best = cd;
+      cell = c;
+    }
+  }
+  b.raftBest = Infinity;
+  b.raftBestTick = now;
+  if (!cell) return;
+  m.x = cell.x;
+  m.z = cell.z;
+  m.y = env.ground(cell.x, cell.z);
+  m.mode = "emerge";
+  m.modeTicks = MONSTER_EMERGE_TICKS;
+  face(m, raft.x, raft.z);
+}
+
 /** At the raft: gnaw it (unless someone guards it: then that player is the target). Puffers pop on it. */
 function raftWork(env: LifeEnv, m: MonsterState, b: MonsterBrain, raft: XZ, team: number): void {
   if (dist2(m.x, m.z, raft.x, raft.z) > RAFT_GNAW_REACH) {
@@ -391,7 +455,7 @@ function raftWork(env: LifeEnv, m: MonsterState, b: MonsterBrain, raft: XZ, team
     return;
   }
   const t = env.ctx.team(team);
-  if (t.hullWood <= 0) {
+  if (t.raftHp <= 0) {
     b.gnaw = 0;
     b.forceThink = true;
     return;
@@ -409,23 +473,62 @@ function raftWork(env: LifeEnv, m: MonsterState, b: MonsterBrain, raft: XZ, team
   m.modeTicks = Math.max(0, RAFT_GNAW_TICKS - b.gnaw);
   if (b.gnaw < RAFT_GNAW_TICKS) return;
   b.gnaw = 0;
-  const amount = Math.min(t.hullWood, m.kind === "boss" ? BOSS_RAFT_GNAW : 1);
+  const amount = Math.min(t.raftHp, m.kind === "boss" ? BOSS_RAFT_GNAW : CRAB_RAFT_GNAW);
   attackEvent(env, m, "raft", "raft", amount);
   env.ctx.damageRaft(team, amount, m.id, pos);
 }
 
-/** At the chest: rummage (a harmless clack every cooldown — crabs don't steal, monkeys do). */
-function chestWork(env: LifeEnv, m: MonsterState, b: MonsterBrain, chest: XZ): void {
+/**
+ * At the (unlit) chest: rummage (a clack every bite cooldown) and every CHEST_RAID_TICKS destroy one random
+ * material or food unit (Long Tide T3; never a tool, the compass or a barrel).
+ */
+function chestWork(env: LifeEnv, m: MonsterState, b: MonsterBrain, chest: XZ, team: number): void {
   if (dist2(m.x, m.z, chest.x, chest.z) > CHEST_REACH) {
     if (m.mode === "bite") m.mode = "hunt";
+    b.raid = 0;
     return;
   }
   face(m, chest.x, chest.z);
   m.mode = "bite";
   m.modeTicks = b.cooldown;
+  if (++b.raid >= CHEST_RAID_TICKS) {
+    b.raid = 0;
+    const kind = raidPick(env, team);
+    if (kind) {
+      attackEvent(env, m, "chest", "chest", 1);
+      env.ctx.stealFromChest(team, kind);
+      return;
+    }
+  }
   if (b.cooldown > 0) return;
   b.cooldown = MONSTERS[m.kind].biteCooldownTicks;
   attackEvent(env, m, "chest", "chest", 0);
+}
+
+/** Two crabs in five (by stagger phase) are camp raiders: the dark chest, else the camp's light edge — never the raft. */
+function isChestRaider(b: MonsterBrain): boolean {
+  return b.phase === 0 || b.phase === 3;
+}
+
+function chestHasLoot(env: LifeEnv, team: number): boolean {
+  let any = false;
+  env.ctx.team(team).chest.forEach((n) => {
+    if (n > 0) any = true;
+  });
+  return any;
+}
+
+/** A random material / food kind in the team chest (what a raiding crab spoils), null when there is none. */
+function raidPick(env: LifeEnv, team: number): ItemKind | null {
+  const kinds: ItemKind[] = [];
+  env.ctx.team(team).chest.forEach((n, k) => {
+    if (n <= 0 || !isItemKind(k)) return;
+    const cat = ITEMS[k].category;
+    if (cat === "material" || cat === "food") kinds.push(k);
+  });
+  if (kinds.length === 0) return null;
+  kinds.sort();
+  return kinds[Math.min(kinds.length - 1, Math.floor(env.ctx.rng() * kinds.length))]!;
 }
 
 /**
@@ -615,6 +718,7 @@ export function damageNight(env: LifeEnv, m: MonsterState, b: MonsterBrain, dama
   if (kind === "boss") {
     shove(b, knock, BOSS_KNOCK_MULT);
     if (m.hp > 0) return false;
+    bossDefeated(env, m);
     env.remove(m, byId, false);
     env.creditKill(byId);
     return true;
@@ -623,6 +727,29 @@ export function damageNight(env: LifeEnv, m: MonsterState, b: MonsterBrain, dama
   if (m.hp <= 0) flipCrab(env, m, b, byId);
   else if (damage > 0 && m.mode !== "emerge" && m.mode !== "flee") stagger(m, b, knock);
   return false;
+}
+
+/**
+ * Captain Crab is down (Long Tide §6): team.bossDown (he no longer comes back at night) and, the first time, his
+ * drops at his feet as resting pickups: the compass (only while the rudder still needs it) and BOSS_DROP_SCRAP scrap.
+ */
+export function bossDefeated(env: LifeEnv, m: MonsterState): void {
+  const teamIdx = teamOf(m);
+  const team = env.ctx.team(teamIdx);
+  if (team.bossDown) return;
+  team.bossDown = true;
+  const drops: ItemKind[] = [];
+  if (team.stage <= COMPASS_STAGE) drops.push("compass");
+  for (let k = 0; k < BOSS_DROP_SCRAP; k++) drops.push("scrap");
+  const ground = Math.max(WATER_Y, env.ground(m.x, m.z));
+  drops.forEach((kind, k) => {
+    const a = k * 2.39996 + m.yaw;
+    const d = k === 0 ? 0 : 0.5 + 0.15 * k;
+    const x = m.x + Math.cos(a) * d;
+    const z = m.z + Math.sin(a) * d;
+    const y = Math.max(WATER_Y, env.ground(x, z), ground - 0.5) + ITEMS[kind].radius;
+    env.ctx.spawnProjectile(kind, { x, y, z }, { x: 0, y: 0, z: 0 }, { state: "rest", ownerId: "", team: teamIdx });
+  });
 }
 
 /** Torch swing: crabs back off from `pos` for `ticks`. */
@@ -652,7 +779,7 @@ export function shove(b: MonsterBrain, knock: Vec3Like, mult: number): void {
 
 /* ============================================================== helpers */
 
-function teamOf(m: MonsterState): number {
+export function teamOf(m: MonsterState): number {
   return m.team >= 0 ? m.team : 0;
 }
 
@@ -667,7 +794,7 @@ function spreadOffset(b: MonsterBrain, r: number): XZ {
  * fanned out by its stagger phase and drifting slowly (prowling eyes at the edge of the light).
  */
 function edgePoint(env: LifeEnv, m: MonsterState, b: MonsterBrain, tx: number, tz: number): XZ {
-  const ring = ringAt(env.rings, tx, tz);
+  const ring = ringAt(b.raftBound ? env.fireRings : env.rings, tx, tz);
   if (!ring) return { x: tx, z: tz };
   let ax = m.x - ring.x;
   let az = m.z - ring.z;

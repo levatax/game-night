@@ -17,6 +17,7 @@ import {
   FISH_STATE,
   FULL_CHARGE_THRESHOLD,
   MARKER_TICKS,
+  RAFT_STAGES,
   TICK_MS,
   TICK_RATE,
   TREASURE_REEL_TICKS,
@@ -56,6 +57,8 @@ import type {
   PlayerRevivedEvent,
   PlayerWashedEvent,
   RaftDamageEvent,
+  RaftRepairEvent,
+  RaftStageEvent,
   RejectEvent,
   SplashEvent,
   StealEvent,
@@ -114,6 +117,7 @@ const LOOT_SOUND = {
   treasure: "treasure",
   golden: "golden",
   kraken: "legendary",
+  scrap: "bootBonk",
 } as const;
 
 export class GameFeedback {
@@ -150,6 +154,8 @@ export class GameFeedback {
     this.on("chestChanged", (e) => this.onChestChanged(e));
     this.on("deliver", (e) => this.onDeliver(e));
     this.on("raftDamage", (e) => this.onRaftDamage(e));
+    this.on("raftStage", (e) => this.onRaftStage(e));
+    this.on("raftRepair", (e) => this.onRaftRepair(e));
     this.on("structurePlaced", (e) => this.onStructurePlaced(e));
     this.on("structureHit", (e) => this.onStructureHit(e));
     this.on("structureDestroyed", (e) => this.onStructureDestroyed(e));
@@ -463,6 +469,9 @@ export class GameFeedback {
       fx.itemPop(kind, ev.count, above(pos, 0.8));
       if (ev.dropped) feedLine(this.ctx, "pocketsFull", "🎒", "warn");
     }
+    if (ev.felled) {
+      feedLine(this.ctx, "logFelled", "🪓", "good", { name: this.name(ev.playerId) });
+    }
   }
 
   private onPalmShake(ev: PalmShakeEvent): void {
@@ -610,14 +619,38 @@ export class GameFeedback {
       const units = ev.items.reduce((s, it) => s + it.count, 0);
       fx.popText(`+${units}`, above(pos, 1.4), "good");
     }
-    if (ev.newStage > ev.stage) {
-      audio.play("raftStage", pos ? { pos } : undefined);
-      if (pos) fx.burst("confetti", above(pos, 1.2), { scale: 0.8 });
-      if (ev.newStage < 3) {
-        bannerLine(this.ctx, `raftStage${ev.newStage}`, "good", { sub: `raftStage${ev.newStage}Sub` });
-        feedLine(this.ctx, `raftStage${ev.newStage}`, "🛶", "good", { name: this.name(ev.playerId) });
-      }
+    // Every material in: the coach / prompt asks the team to hold E (assembly).
+    if (ev.materialsDone && me) feedLine(this.ctx, "materialsIn", "🔨", "good");
+  }
+
+  /** A stage was assembled (confetti, banner) or lost when the raft hp hit 0. */
+  private onRaftStage(ev: RaftStageEvent): void {
+    const { audio, fx } = this.ctx;
+    const site = this.ctx.net.island?.sites[ev.team] ?? this.ctx.net.island?.sites[0];
+    const pos = site ? point(site.raft.x, groundY(this.ctx, site.raft.x, site.raft.z) + 0.6, site.raft.z) : null;
+    const stage = t(`hud.raftStage_${ev.stage}`);
+    if (ev.lost) {
+      if (pos) fx.burst("woodChips", pos, { scale: 1.4 });
+      audio.play("raftGnaw", pos ? { pos } : undefined);
+      bannerLine(this.ctx, "stageLost", "bad", { params: { stage } });
+      feedLine(this.ctx, "stageLost", "💥", "bad", { stage });
+      return;
     }
+    audio.play("raftStage", pos ? { pos } : undefined);
+    if (pos) fx.burst("confetti", above(pos, 1.2), { scale: 0.8 });
+    feedLine(this.ctx, "stageDone", "🛶", "good", { stage });
+    if (ev.newStage < RAFT_STAGES.length) {
+      bannerLine(this.ctx, "stageDone", "good", { params: { stage }, sub: "stageDoneSub", subParams: { next: t(`hud.raftStage_${ev.newStage}`) } });
+    }
+  }
+
+  private onRaftRepair(ev: RaftRepairEvent): void {
+    const { audio, fx } = this.ctx;
+    const site = this.ctx.net.island?.sites[ev.team] ?? this.ctx.net.island?.sites[0];
+    const pos = site ? point(site.raft.x, groundY(this.ctx, site.raft.x, site.raft.z) + 0.6, site.raft.z) : null;
+    if (pos) fx.burst("woodChips", pos, { scale: 0.6 });
+    audio.play("deliver", pos ? { pos } : undefined);
+    if (this.isMe(ev.playerId) && pos) fx.popText(`+${ev.added}`, above(pos, 1.4), "good");
   }
 
   private onRaftDamage(ev: RaftDamageEvent): void {

@@ -24,6 +24,7 @@ export const RARITY_RANK: Readonly<Record<Rarity, number>> = { junk: 0, common: 
 export const LOOT_RARITY: Readonly<Record<FishLoot, Rarity>> = {
   boot: "junk",
   jellyfish: "junk",
+  scrap: "common",
   fish: "common",
   crab: "common",
   puffer: "uncommon",
@@ -51,6 +52,7 @@ const LOOT_EMOJI: Readonly<Record<FishLoot, string>> = {
   treasure: "🧰",
   golden: "🐠",
   kraken: "🦑",
+  scrap: "🔩",
 };
 
 export const TREASURE_ICON: Readonly<Record<TreasureId, string>> = {

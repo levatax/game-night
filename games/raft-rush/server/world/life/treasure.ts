@@ -3,7 +3,7 @@
 // after another (the secret chest gives two). Owner: server-world-life. Used by FishingSystem (fishing loot,
 // secret chest) and WeatherSystem (wave gifts) — each owns one instance, so neither needs the other.
 
-import { DAYS, TREASURE_REEL_TICKS } from "../../../shared/constants.js";
+import { TREASURE_REEL_TICKS } from "../../../shared/constants.js";
 import type { TreasureEvent } from "../../../shared/protocol.js";
 import type { TreasureId } from "../../../shared/types.js";
 import type { PlayerState, WorldContext } from "../context.js";
@@ -85,17 +85,17 @@ export class TreasureReels {
     this.ctx.emit({ type: "treasure", tick: this.ctx.tick(), playerId: p.id, team: p.team, treasure, reel, stopIndex, source });
   }
 
-  /** Treasures that would do nothing right now (an old sail for a finished mast, a second flare…). */
+  /** Treasures that would do nothing right now (an old sail once the sail is up, a second flare…). */
   private exclusions(p: PlayerState): Set<TreasureId> {
     const out = new Set<TreasureId>();
     const team = this.ctx.state.teams[p.team] ? this.ctx.team(p.team) : null;
     if (team) {
-      if (team.sail || team.stage >= 2) out.add("old_sail");
+      if (team.stage > 3) out.add("old_sail");
       if (team.flare) out.add("flare");
       if (team.spyglassTicks > 0) out.add("spyglass");
     }
     const st = this.ctx.state;
-    if (st.day >= DAYS && st.dayPhase === "night") out.add("flare");
+    if (st.day >= this.ctx.timings.days && st.dayPhase === "night") out.add("flare");
     const last = this.lastPick.get(p.id);
     if (last) out.add(last);
     return out;

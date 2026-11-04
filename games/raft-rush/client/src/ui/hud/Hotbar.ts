@@ -41,7 +41,13 @@ function hintKey(kind: InvKind): string {
     case "axe":
       return "hud.hint_axe";
     case "raft_part":
+    case "compass":
       return "hud.hint_raft";
+    case "log":
+    case "barrel":
+      return "hud.hint_heavy";
+    case "hammer":
+      return "hud.hint_hammer";
     case "kraken":
       return "hud.hint_kraken";
     case "coconut":
