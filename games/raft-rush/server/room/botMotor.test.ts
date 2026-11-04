@@ -6,7 +6,7 @@
 // Run: npx vitest run games/raft-rush/server/room
 
 import { describe, expect, it } from "vitest";
-import { CHARGE_FULL_TICKS, DT, MONSTERS, PLACE_DISTANCE, THROW_RECOVER_TICKS, WALK_SPEED, timingsFor } from "../../shared/constants.js";
+import { CHARGE_FULL_TICKS, DT, MONSTERS, PLACE_DISTANCE, RAFT_LAUNCH_STAGE, THROW_RECOVER_TICKS, WALK_SPEED, timingsFor } from "../../shared/constants.js";
 import { isThrowable } from "../../shared/items.js";
 import { BTN, type ChestMsg } from "../../shared/protocol.js";
 import { resolveInteraction } from "../../shared/rules/interact.js";
@@ -196,7 +196,9 @@ describe("Motor", () => {
     // side, so the bot first steps around the raft.
     for (const ahead of [1.4, 0.35]) {
       const r = rig();
-      r.state.teams[0]!.stage = 3;
+      r.state.teams[0]!.stage = RAFT_LAUNCH_STAGE;
+      r.state.teams[0]!.raftHp = 100;
+      r.state.day = 7; // the launch window (Normal)
       const { raft, campfire } = r.ctx.island.sites[0]!;
       const l = Math.hypot(campfire.x - raft.x, campfire.z - raft.z);
       const ux = (campfire.x - raft.x) / l;

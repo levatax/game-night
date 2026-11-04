@@ -2,7 +2,8 @@
 // step 2, §4.4). Owner: server-world.
 //
 // Order per player (right after stepPlayer): E press (resolveInteraction: tap kinds execute, hold kinds start a
-// channel; craft / chest are client panels) → channel completion (one gather unit / the revive) → LMB use (rod
+// channel; craft / chest are client panels) → channel completion (one gather unit / one scrap / the revive; the
+// BUILD channel only checks it may go on: RaftSystem.step adds the assembly work of every holder) → LMB use (rod
 // → FishingSystem.use, torch swing, place a structure, palm shake, punch) → throw / toss release (one unit of the
 // slot; a tossed torch is planted; a coconut ball releases 3 coconuts) → eat (F) → catch window (RMB).
 // The FishingSystem reels a line in by itself when the fisher walks away, switches slot or goes down (its
@@ -19,13 +20,14 @@ import {
   REVIVE_RANGE,
   REVIVE_TICKS,
   SPRING_WATER,
+  WRECK_RANGE,
   TORCH_SWING_RANGE,
   TORCH_SWING_SCARE_TICKS,
 } from "../../shared/constants.js";
-import { isCooked, ITEMS } from "../../shared/items.js";
+import { isCooked, isHeavy, ITEMS } from "../../shared/items.js";
 import type { InputCmd } from "../../shared/protocol.js";
-import { emptyInteraction, gatherTicksFor, resolveInteraction } from "../../shared/rules/interact.js";
-import { countOf, roomFor, slotKind } from "../../shared/rules/inventory.js";
+import { emptyInteraction, gatherTicksFor, resolveInteraction, salvageTicksFor } from "../../shared/rules/interact.js";
+import { countOf, heavyCount, roomFor, slotKind } from "../../shared/rules/inventory.js";
 import { heldKind, type StepPlayerResult, type ThrowRequest } from "../../shared/sim/player.js";
 import { computeThrowVelocities, projectileKindForThrow } from "../../shared/sim/throw.js";
 import type { Vec3Like } from "../../shared/types.js";
@@ -61,7 +63,7 @@ export class ActionSystem {
     if (!it || it.kind === "craft" || it.kind === "chest") return;
     if (!it.ok) {
       // A greyed-out raft says why under the same action raft.deliver() / board() use.
-      core.reject(p, it.kind === "deliver" || it.kind === "board" ? it.kind : "interact", it.reason, it.kind);
+      core.reject(p, it.kind === "deliver" || it.kind === "board" ? it.kind : it.kind === "repair" || it.kind === "assemble" ? "deliver" : "interact", it.reason, it.kind);
       return;
     }
     switch (it.kind) {
@@ -87,6 +89,17 @@ export class ActionSystem {
         return;
       case "deliver":
         core.raft.deliver(p);
+        return;
+      case "assemble":
+        this.startChannel(p, CHANNEL.BUILD, it.team);
+        rt.reviveTarget = "";
+        return;
+      case "repair":
+        core.raft.repair(p);
+        return;
+      case "salvage":
+        this.startChannel(p, CHANNEL.SALVAGE, it.team);
+        rt.reviveTarget = "";
         return;
       case "spring":
         this.spring(p);
@@ -127,9 +140,27 @@ export class ActionSystem {
         this.clearChannel(p, rt);
         return;
       }
-      if (p.channelTicks < gatherTicksFor(node, countOf(p, "axe") > 0)) return;
+      if (p.channelTicks < gatherTicksFor(node, countOf(p, "axe") > 0, p.character)) return;
       core.nodes.gatherUnit(p, node);
       if (core.nodes.amount(node.i) > 0) p.channelTicks = 0;
+      else this.clearChannel(p, rt);
+      return;
+    }
+    if (p.channel === CHANNEL.BUILD) {
+      if (!core.raft.canAssemble(p)) this.clearChannel(p, rt);
+      return;
+    }
+    if (p.channel === CHANNEL.SALVAGE) {
+      const site = core.site(p.team);
+      const team = core.team(site.team);
+      const reach = WRECK_RANGE + RANGE_SLACK;
+      if (team.wreckScrap <= 0 || countOf(p, "hammer") <= 0 || dist2(p.x, p.z, site.wreck.x, site.wreck.z) > reach * reach) {
+        this.clearChannel(p, rt);
+        return;
+      }
+      if (p.channelTicks < salvageTicksFor(p.character)) return;
+      core.camp.salvageUnit(p);
+      if (team.wreckScrap > 0) p.channelTicks = 0;
       else this.clearChannel(p, rt);
       return;
     }
@@ -156,7 +187,7 @@ export class ActionSystem {
     const b = core.state.projectiles.get(id);
     if (!b || (b.state !== "rest" && b.state !== "stuck")) return;
     if (core.bag.stow(p, b.kind, 1) < 1) {
-      core.reject(p, "interact", "full", "pickup");
+      core.reject(p, "interact", isHeavy(b.kind) && heavyCount(p) > 0 ? "tooHeavy" : "full", "pickup");
       return;
     }
     const pos = posOf(b);
@@ -172,15 +203,21 @@ export class ActionSystem {
     if (m) this.core.monsters.collect(m, p);
   }
 
-  /** The spring: a water gourd, or a drink when the pockets are full. */
+  /** The spring: a water gourd, or a drink when the pockets are full; either uses a charge (CampSystem). */
   private spring(p: PlayerState): void {
     const core = this.core;
-    if (roomFor(p, "water") > 0) {
-      core.giveItem(p, "water", 1, "spring");
+    const teamIdx = core.site(p.team).team;
+    const room = roomFor(p, "water") > 0;
+    if (!room && p.thirst >= BAR_MAX) {
+      core.reject(p, "interact", "full", "spring");
       return;
     }
-    if (p.thirst >= BAR_MAX) {
-      core.reject(p, "interact", "full", "spring");
+    if (!core.camp.useSpring(teamIdx)) {
+      core.reject(p, "interact", "springDry", "spring");
+      return;
+    }
+    if (room) {
+      core.giveItem(p, "water", 1, "spring");
       return;
     }
     const gained = core.survival.feed(p, 0, SPRING_WATER, 0);
@@ -245,6 +282,11 @@ export class ActionSystem {
     if (slotKind(p, req.slot) !== req.kind) return;
     if (req.toss && req.kind === "torch") {
       core.structures.plantTorch(p, req.slot);
+      return;
+    }
+    if (isHeavy(req.kind)) {
+      // Heavy cargo is never thrown: the drop key sets it down at the feet (Long Tide T1).
+      if (core.bag.takeFromSlot(p, req.slot, 1) > 0) core.bag.drop(p, req.kind, 1);
       return;
     }
     core.bag.takeFromSlot(p, req.slot, 1);

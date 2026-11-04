@@ -12,10 +12,20 @@
 //     tourist       least gathered (≥ 2 players and somebody gathered more)  "Turist"
 //     victim        most downs (≥ 1)            "Kurban"
 //     coconutAddict most eaten (≥ 1; ties → more coconuts)  "Hindistan Cevizi Bağımlısı"
-//   team score: Σ the team's MVP points, plus on a launch LAUNCH_BONUS + LAUNCH_BONUS_PER_SEC × whole seconds
-//   that were left before the storm (an early launch scores higher). Clamped to the uint16 schema field.
+//   team score: Σ the team's MVP points, plus (Long Tide §6) on a launch LAUNCH_BONUS + WIN_SURVIVOR_BONUS ×
+//   survivors aboard + WIN_RAFT_HP_BONUS × raft hp + WIN_BOSS_BONUS when Captain Crab is down −
+//   LEFT_BEHIND_PENALTY × each living participant left on the island; on a loss LOSS_STAGE_BONUS × stages
+//   assembled. No reward for launching early (the launch window is day-locked). Clamped to the uint16 field.
 
-import { LAUNCH_BONUS, LAUNCH_BONUS_PER_SEC, TICK_RATE, TITLE_IDS } from "../../shared/constants.js";
+import {
+  LAUNCH_BONUS,
+  LEFT_BEHIND_PENALTY,
+  LOSS_STAGE_BONUS,
+  TITLE_IDS,
+  WIN_BOSS_BONUS,
+  WIN_RAFT_HP_BONUS,
+  WIN_SURVIVOR_BONUS,
+} from "../../shared/constants.js";
 import type { StandingEntry } from "../../shared/protocol.js";
 import type { StatsView, TitleId } from "../../shared/types.js";
 
@@ -142,28 +152,49 @@ export function rankStandings(players: readonly ScoreInput[]): StandingEntry[] {
   }));
 }
 
-/** Launch bonus for `ticksLeft` ticks that were left before the storm (0 when the team didn't launch). */
-export function launchBonus(launched: boolean, ticksLeft: number): number {
-  if (!launched) return 0;
-  return LAUNCH_BONUS + LAUNCH_BONUS_PER_SEC * Math.floor(Math.max(0, ticksLeft) / TICK_RATE);
+/** How a team's match ended (the room fills it from the raft and the launch). */
+export interface TeamOutcome {
+  /** Participants who sailed away (on a win). */
+  survivorsAboard: number;
+  /** Living participants left on the island at the launch (alive, not washed). */
+  leftBehind: number;
+  /** Raft hp at the launch / at the end. */
+  raftHp: number;
+  /** Captain Crab was killed. */
+  bossDown: boolean;
+  /** Raft stages assembled (0..RAFT_LAUNCH_STAGE). */
+  stagesAssembled: number;
 }
 
-/** Σ MVP points of the team + the launch bonus, clamped to the schema field. */
-export function teamScore(players: readonly ScoreInput[], team: number, launched: boolean, ticksLeft: number): number {
+/** The win / loss bonus of a team (may be negative before clamping: many left behind). */
+export function outcomeBonus(launched: boolean, o: TeamOutcome | undefined): number {
+  if (!o) return launched ? LAUNCH_BONUS : 0;
+  if (!launched) return LOSS_STAGE_BONUS * Math.max(0, o.stagesAssembled);
+  return (
+    LAUNCH_BONUS +
+    WIN_SURVIVOR_BONUS * Math.max(0, o.survivorsAboard) +
+    WIN_RAFT_HP_BONUS * Math.max(0, o.raftHp) +
+    (o.bossDown ? WIN_BOSS_BONUS : 0) -
+    LEFT_BEHIND_PENALTY * Math.max(0, o.leftBehind)
+  );
+}
+
+/** Σ MVP points of the team + the win / loss bonus, clamped to the schema field. */
+export function teamScore(players: readonly ScoreInput[], team: number, launched: boolean, outcome?: TeamOutcome): number {
   let sum = 0;
   for (const p of players) if (p.team === team) sum += Math.max(0, p.score);
-  sum += launchBonus(launched, ticksLeft);
+  sum += outcomeBonus(launched, outcome);
   return Math.max(0, Math.min(MAX_TEAM_SCORE, Math.round(sum)));
 }
 
 /**
- * Score a finished match. `teams` = number of teams (coop 1); `winnerTeam` -1 = the storm won; `ticksLeft` =
- * ticks that were left before the storm at the launch (ignored on a loss).
+ * Score a finished match. `teams` = number of teams (coop 1); `winnerTeam` -1 = the storm won; `outcomes[t]` =
+ * how team t's raft ended (missing = no bonus beyond LAUNCH_BONUS on a win).
  */
-export function scoreMatch(players: readonly ScoreInput[], teams: number, winnerTeam: number, ticksLeft: number): MatchResult {
+export function scoreMatch(players: readonly ScoreInput[], teams: number, winnerTeam: number, outcomes: readonly TeamOutcome[] = []): MatchResult {
   const standings = rankStandings(players);
   const first = standings[0];
   const teamScores: number[] = [];
-  for (let t = 0; t < Math.max(1, teams); t++) teamScores.push(teamScore(players, t, winnerTeam === t, ticksLeft));
+  for (let t = 0; t < Math.max(1, teams); t++) teamScores.push(teamScore(players, t, winnerTeam === t, outcomes[t]));
   return { standings, mvpId: first && first.score > 0 ? first.id : "", teamScores };
 }

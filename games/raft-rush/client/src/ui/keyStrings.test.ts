@@ -495,7 +495,7 @@ describe("HUD widgets print the player's keys", () => {
     expect(fake(launch.el).shownText).toContain("Run to the raft and press U!");
 
     const raft = new RaftProgress();
-    const ready = { stage: 3 as const, parts: [], ready: true, aboard: 0, total: 3 };
+    const ready = { stage: 6, stages: 7, parts: [], lockDay: 0, assembly: -1, minHolders: 1, holders: 0, hp: 0.9, hpLow: false, ready: true, aboard: 0, total: 3 };
     raft.update(ready);
     expect(fake(raft.el).shownText).toContain("READY! Press U on it");
 

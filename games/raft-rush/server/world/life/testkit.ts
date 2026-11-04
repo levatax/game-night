@@ -159,7 +159,8 @@ export class FakeWorld implements WorldContext {
     const t = new TeamState();
     t.index = 0;
     t.seats = o.seats ?? 3;
-    t.hullWood = 10;
+    t.stage = 1;
+    t.raftHp = 100;
     t.fireFuel = FIRE_START_FUEL_TICKS;
     this.state.teams.push(t);
   }
@@ -270,9 +271,9 @@ export class FakeWorld implements WorldContext {
 
   damageRaft(team: number, amount: number, byMonsterId: string, pos: Vec3Like): void {
     const t = this.team(team);
-    const lost = Math.min(t.hullWood, amount);
-    t.hullWood -= lost;
-    this.emit({ type: "raftDamage", tick: this.tick(), team, amount: lost, byMonsterId, pos, hullWood: t.hullWood });
+    const lost = Math.min(t.raftHp, amount);
+    t.raftHp -= lost;
+    this.emit({ type: "raftDamage", tick: this.tick(), team, amount: lost, byMonsterId, pos, hp: t.raftHp });
   }
 
   stealFromChest(team: number, kind?: ItemKind): ItemKind | null {

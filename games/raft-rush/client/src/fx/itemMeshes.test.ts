@@ -7,8 +7,8 @@ import { ITEMS, ITEM_KINDS } from "../../../shared/items";
 import { buildBerryMesh, buildItemMesh, itemInfo, itemTriangleCount, setItemGlow } from "./itemMeshes";
 
 describe("buildItemMesh", () => {
-  it("covers all 22 item kinds", () => {
-    expect(ITEM_KINDS.length).toBe(22);
+  it("covers all 29 item kinds", () => {
+    expect(ITEM_KINDS.length).toBe(29);
     for (const kind of ITEM_KINDS) expect(() => buildItemMesh(kind)).not.toThrow();
   });
 

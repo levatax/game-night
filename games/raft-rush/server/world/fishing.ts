@@ -15,6 +15,7 @@
 // calls forget(); clear() (every match start / lobby) keeps only the RTTs of players still in the room.
 
 import {
+  CHARACTERS,
   FISH_BITE_TICKS,
   FISH_CANCEL_DIST,
   FISH_CAST_RANGE,
@@ -200,7 +201,8 @@ export class FishingSystem {
       this.reject(p, "noSpot");
       return false;
     }
-    const wait = randInt(this.ctx.rng, FISH_WAIT_MIN_TICKS, FISH_WAIT_MAX_TICKS);
+    // Gelin (the fisher, Long Tide T5) waits CharacterDef.biteWaitMult as long for a bite.
+    const wait = Math.max(1, Math.round(randInt(this.ctx.rng, FISH_WAIT_MIN_TICKS, FISH_WAIT_MAX_TICKS) * CHARACTERS[p.character].biteWaitMult));
     const now = this.ctx.tick();
     this.lines.set(p.id, { spot: aim.spot, castX: p.x, castZ: p.z, bobber: aim.bobber, biteAt: now + wait, windowEnd: 0, landAt: 0, loot: null });
     p.fishState = FISH_STATE.CAST;

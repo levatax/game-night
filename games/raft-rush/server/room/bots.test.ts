@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { CHANNEL, CHARACTER_IDS, DT, WALK_SPEED, secToTicks, timingsFor } from "../../shared/constants.js";
 import { mulberry32 } from "../../shared/island/noise.js";
 import { BTN, BUTTON_MASK, type InputCmd } from "../../shared/protocol.js";
+import { raftStageNeeds } from "../../shared/items.js";
 import { addItem, setSlot, slotsOf } from "../../shared/rules/inventory.js";
 import { buildCover } from "../../shared/sim/cover.js";
 import type { BotRole, CharacterId } from "../../shared/types.js";
@@ -59,7 +60,10 @@ function table(): Table {
   const team = new TeamState();
   team.seats = 2;
   team.fireFuel = secToTicks(60);
-  team.hullWood = 3;
+  team.stage = 0;
+  team.springCharges = 10;
+  // The keel's requirements, as RaftSystem.setup syncs them (an all-zero row would read as "materials in").
+  raftStageNeeds(0, 2).forEach((n, i) => (team.raftNeed[i] = n));
   state.teams.push(team);
   for (const n of island.nodes) state.nodes.push(n.amount);
   const throws: string[] = [];
@@ -403,10 +407,10 @@ describe("BotDesk memory stays bounded", () => {
     const p = t.state.players.get("bot-1")!;
     let most = 0;
     for (let round = 0; round < 12; round++) {
-      // A coconut at its feet, gone again the moment the bot goes for it: one more failed (blocked) goal.
+      // Wood at its feet, gone again the moment the bot goes for it: one more failed (blocked) goal.
       const c = new ProjectileEntity();
       c.id = `p${round}`;
-      c.kind = "coconut";
+      c.kind = "wood";
       c.state = "rest";
       c.x = p.x + 1;
       c.y = p.y;

@@ -12,9 +12,9 @@
  * Room phase. Flow: lobby → landing → playing → (launch | storm) → matchEnd → lobby.
  * - landing: everyone wakes up on the beach next to the wreck (input locked for LANDING_LOCK_SEC,
  *   then free; bars don't drain, no monsters; the day clock starts with `playing`).
- * - playing: 3 × (day, dusk, night) driven by `clockTicks` (see shared/rules/schedule.ts).
+ * - playing: Timings.days × (day, dusk, night) driven by `clockTicks` (see shared/rules/schedule.ts).
  * - launch: the raft sails away (win), a short cinematic, then matchEnd.
- * - storm: night 3 ended without a launch (lose), a short cinematic, then matchEnd.
+ * - storm: the last night ended without a launch (lose), a short cinematic, then matchEnd.
  */
 export type Phase = "lobby" | "landing" | "playing" | "launch" | "storm" | "matchEnd";
 
@@ -61,12 +61,19 @@ export type ItemKind =
   | "boot"
   | "jellyfish"
   | "puffer"
-  | "kraken";
+  | "kraken"
+  | "log"
+  | "cloth"
+  | "scrap"
+  | "nails"
+  | "barrel"
+  | "compass"
+  | "hammer";
 /** An inventory slot's kind; "" = empty slot. */
 export type InvKind = ItemKind | "";
 
 /** Outcome of a successful fishing catch (§8). Mapped to items/effects by the server. */
-export type FishLoot = "fish" | "crab" | "boot" | "jellyfish" | "puffer" | "bottle" | "treasure" | "golden" | "kraken";
+export type FishLoot = "fish" | "crab" | "boot" | "jellyfish" | "puffer" | "bottle" | "treasure" | "golden" | "kraken" | "scrap";
 /** Treasure-chest reel outcome (§8). All apply instantly to the finder's team. */
 export type TreasureId = "flare" | "old_sail" | "pirate_hat" | "spyglass" | "fuel_can";
 /** What a message in a bottle did. */
@@ -111,10 +118,19 @@ export type RecipeId =
   | "fuel"
   | "coconut_ball"
   | "hut"
-  | "canoe";
+  | "canoe"
+  | "bench_1"
+  | "bench_2"
+  | "hammer"
+  | "cloth"
+  | "nails"
+  | "barrel";
 
-/** 0 hull, 1 mast + sail, 2 provisions, 3 ready to board. */
-export type RaftStage = 0 | 1 | 2 | 3;
+/**
+ * Index into RAFT_STAGES (0 keel, 1 deck, 2 mast, 3 sail, 4 rudder, 5 provisions); RAFT_LAUNCH_STAGE (6) = every
+ * stage assembled: board for the push-off.
+ */
+export type RaftStage = number;
 
 export type EmoteId = "clap" | "panic" | "dance" | "tired" | "shush" | "selfie";
 /** Ping wheel (V / middle click): "Over here!", "Help!", "Need this", "Danger!". */
@@ -157,11 +173,14 @@ export type InteractKind =
   | "pickup"
   | "board"
   | "deliver"
+  | "assemble"
+  | "repair"
   | "craft"
   | "chest"
   | "spring"
   | "collector"
   | "secretChest"
+  | "salvage"
   | "gather";
 
 /** Plain vector used in messages and the shared sim (never a THREE.Vector3). */
@@ -217,7 +236,7 @@ export interface PlayerSimFields {
    */
   channel: number;
   channelTicks: number;
-  /** Node index (gather) or the downed player's seat (revive); -1 when no channel. */
+  /** Node index (gather), the downed player's seat (revive) or the team index (build / salvage); -1 when no channel. */
   channelTarget: number;
   /** Feet more than SWIM_DEPTH below the water surface: swimming (slow, no jump, floats). */
   swimming: boolean;
@@ -243,6 +262,11 @@ export interface PlayerSimFields {
   downed: boolean;
   /** On the raft (frozen in place, look only). */
   boarded: boolean;
+  /**
+   * Walk speed % from heavy cargo (Long Tide T1), set by the server every tick: 100 unloaded; while < 100 the sim
+   * scales the walk speed by loadMult / 100 and allows no sprint and no throw. Read-only for the sim.
+   */
+  loadMult: number;
 }
 
 /** Every projectile field the deterministic shared sim (`stepProjectile`) reads or writes. */
@@ -294,7 +318,7 @@ export interface ArrayView<V> {
 export interface StatsView {
   /** Resource units gathered (wood, rope, stone, coconuts, berries). */
   gathered: number;
-  /** Item units delivered to the raft (a raft part counts as its wood). */
+  /** Item units delivered to the raft. */
   delivered: number;
   /** Projectile hits on monsters. */
   hits: number;
@@ -425,21 +449,31 @@ export interface TeamView {
   index: number;
   /** Seats the raft is sized for (players incl. bots at match start, clamped 2..6). */
   seats: number;
+  /** Current raft stage (RAFT_STAGES index; RAFT_LAUNCH_STAGE = every stage assembled). */
   stage: RaftStage;
-  /** Delivered toward the current requirements (RAFT_COSTS[seats]). Hull gnawing lowers hullWood. */
-  hullWood: number;
-  mastWood: number;
-  mastRope: number;
-  food: number;
-  water: number;
+  /** Units delivered per requirement slot of the current stage (length RAFT_REQ_SLOTS; RAFT_STAGES[stage].req[i]). */
+  raftHave: ArrayView<number>;
+  /** Units needed per slot of the current stage (seats × difficulty; 0 = unused slot). */
+  raftNeed: ArrayView<number>;
+  /** Assembly work done / needed on the current stage (work ticks: one holder with a hammer adds 1 per tick). */
+  raftWork: number;
+  raftWorkNeed: number;
+  /** Raft integrity 0..RAFT_HP_MAX (0 until the keel is assembled). */
+  raftHp: number;
+  /** Camp workbench tier: 0 none, 1 workbench, 2 anvil (RecipeDef.bench). */
+  benchTier: number;
+  /** Scrap left to salvage from the wreck. */
+  wreckScrap: number;
+  /** Spring charges left (water gourds / drinks). */
+  springCharges: number;
+  /** Captain Crab was killed (he no longer returns at night). */
+  bossDown: boolean;
   /** Campfire fuel ticks left (0 = out: no warmth, no light, no crafting). */
   fireFuel: number;
   /** Shared camp chest: item kind → count. */
   chest: MapView<number>;
   /** A flare was found: the next night spawns no monsters. */
   flare: boolean;
-  /** Old sail found before the hull was finished: the mast stage completes as soon as the hull does. */
-  sail: boolean;
   /** A bottle revealed the secret chest; `secretOpened` once looted. */
   secretRevealed: boolean;
   secretOpened: boolean;
@@ -451,7 +485,7 @@ export interface TeamView {
   spyglassTicks: number;
   /** Duel: hut hp (0 = none / destroyed). */
   hutHp: number;
-  /** Team score (computed at matchEnd; MVP points summed + launch bonus). */
+  /** Team score (computed at matchEnd; MVP points summed + the win / loss bonus). */
   score: number;
 }
 
@@ -463,7 +497,7 @@ export interface RaftStateView {
   phaseTicksLeft: number;
   /** Ticks since `playing` began (frozen outside playing). Drives the day clock (schedule.ts clockAt). */
   clockTicks: number;
-  /** 1..3 in a match, 0 in the lobby. */
+  /** 1..Timings.days in a match, 0 in the lobby. */
   day: number;
   dayPhase: DayPhase;
   weather: Weather;
@@ -483,7 +517,7 @@ export interface RaftStateView {
   /** Remaining amount per resource node, indexed like IslandDef.nodes. */
   nodes: ArrayView<number>;
   teams: ArrayView<TeamView>;
-  /** Boarding countdown ticks left once someone boarded a ready raft (0 = not counting). */
+  /** Push-off countdown ticks left once someone boarded the finished raft (0 = not counting). */
   launchTicksLeft: number;
   /** Set at matchEnd: winning team (-1 = nobody, the storm won). */
   winnerTeam: number;

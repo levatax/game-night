@@ -129,6 +129,14 @@ const C = {
   metal: "#5A5A62",
   berry: "#5B2A86",
   berryLight: "#8E55C2",
+  cloth: "#F1E9D2",
+  clothDark: "#CFC3A2",
+  scrap: "#8A8F96",
+  scrapDark: "#5E636B",
+  rust: "#A0623A",
+  brass: "#D9A441",
+  barrel: "#9A6738",
+  hoop: "#4E4E56",
 } as const;
 
 /* ============================================================ recipes */
@@ -463,6 +471,95 @@ const RECIPES: Readonly<Record<ItemKind, ItemRecipe>> = {
       b.addMirrored(() => fin(0.06, 0.06, 0.01), C.fin, { p: [0.16, -0.01, 0], r: [0, 0, -0.4] });
     },
     grip: [0, 0, 0],
+  },
+  log: {
+    build(b) {
+      log(b, 0.66, 0.13, [0, 0, 0]);
+      b.add(torus(0.132, 0.012, 3, 9), C.barkDark, { p: [0.12, 0, 0], r: [0, Math.PI / 2, 0] });
+      b.add(cylinder(0.03, 0.04, 0.1, 5), C.barkDark, { p: [-0.1, 0.13, 0.02], r: [0, 0, 0.5] });
+    },
+    grip: [0, 0, 0],
+  },
+  cloth: {
+    build(b) {
+      // A folded bolt of sailcloth tied with rope.
+      b.add(box(0.26, 0.05, 0.2), C.cloth, { p: [0, -0.03, 0] });
+      b.add(box(0.25, 0.045, 0.19), C.clothDark, { p: [0.005, 0.02, 0], r: [0, 0.08, 0] });
+      b.add(box(0.03, 0.12, 0.21), C.rope, { p: [0.05, 0, 0] });
+      b.add(torus(0.02, 0.008, 3, 6), C.ropeDark, { p: [0.05, 0.06, 0.06], r: [0, Math.PI / 2, 0] });
+    },
+    grip: [0, 0, 0],
+  },
+  scrap: {
+    build(b) {
+      // Bent plates and a bolt pulled off the wreck.
+      b.add(box(0.2, 0.025, 0.14), C.scrap, { p: [0, -0.03, 0], r: [0.1, 0.3, 0.12] });
+      b.add(box(0.14, 0.022, 0.1), C.scrapDark, { p: [0.03, 0.02, 0.02], r: [-0.25, -0.4, -0.2] });
+      b.add(box(0.06, 0.02, 0.05), C.rust, { p: [-0.06, 0.0, 0.05], r: [0.2, 0.5, 0] });
+      b.add(cylinder(0.014, 0.014, 0.14, 6), C.scrapDark, { p: [-0.02, 0.04, -0.04], r: [0, 0, 1.2] });
+      b.add(cylinder(0.026, 0.026, 0.02, 6), C.scrap, { p: [0.045, 0.065, -0.04], r: [0, 0, 1.2] });
+    },
+    grip: [0, 0, 0],
+  },
+  nails: {
+    build(b) {
+      // A little bundle of nails, heads up.
+      for (let i = 0; i < 5; i++) {
+        const a = (i / 5) * Math.PI * 2;
+        const x = Math.cos(a) * 0.028;
+        const z = Math.sin(a) * 0.028;
+        b.add(cylinder(0.006, 0.004, 0.13, 4), C.scrap, { p: [x, -0.01, z], r: [z * 2, 0, -x * 2] });
+        b.add(cylinder(0.016, 0.016, 0.008, 6), C.scrapDark, { p: [x * 1.2, 0.058, z * 1.2] });
+      }
+      b.add(torus(0.036, 0.007, 3, 8), C.rope, { p: [0, 0, 0], r: [Math.PI / 2, 0, 0] });
+    },
+    grip: [0, 0, 0],
+  },
+  barrel: {
+    build(b) {
+      b.add(
+        lathe(
+          [
+            [0.001, -0.21],
+            [0.15, -0.21],
+            [0.19, -0.1],
+            [0.2, 0],
+            [0.19, 0.1],
+            [0.15, 0.21],
+            [0.001, 0.21],
+          ],
+          9,
+        ),
+        C.barrel,
+      );
+      for (const y of [-0.14, 0.14]) b.add(torus(0.18, 0.012, 3, 10), C.hoop, { p: [0, y, 0], r: [Math.PI / 2, 0, 0] });
+      b.add(cylinder(0.025, 0.025, 0.04, 6), C.cork, { p: [0, 0.22, 0.05] });
+      b.add(ellipsoid(0.035, 0.05, 0.012, 6, 4), C.water, { p: [0, 0, 0.198] });
+    },
+    grip: [0, 0, 0],
+  },
+  compass: {
+    build(b) {
+      b.add(cylinder(0.12, 0.12, 0.045, 12), C.brass);
+      b.add(cylinder(0.1, 0.1, 0.01, 12), C.white, { p: [0, 0.025, 0] });
+      b.add(cone(0.018, 0.09, 4).rotateZ(-Math.PI / 2), C.crab, { p: [0.045, 0.034, 0], s: [1, 0.4, 1] });
+      b.add(cone(0.018, 0.09, 4).rotateZ(Math.PI / 2), C.ink, { p: [-0.045, 0.034, 0], s: [1, 0.4, 1] });
+      b.add(torus(0.016, 0.006, 3, 6), C.brass, { p: [0, 0, 0.13], r: [0, 0, 0] });
+    },
+    grip: [0, 0, 0],
+    material: "golden",
+  },
+  hammer: {
+    build(b) {
+      b.add(cylinder(0.02, 0.024, 0.5, 6), C.woodMid, { p: [0, -0.03, 0] });
+      b.add(box(0.2, 0.07, 0.07), C.metal, { p: [0.02, 0.2, 0] });
+      b.add(box(0.04, 0.08, 0.08), C.stoneDark, { p: [0.11, 0.2, 0] });
+      b.add(torus(0.03, 0.009, 3, 8), C.rope, { p: [0, 0.14, 0], r: [Math.PI / 2, 0, 0] });
+      gripWrap(b, -0.18);
+    },
+    grip: [0, -0.18, 0],
+    tip: [0.12, 0.2, 0],
+    long: true,
   },
   kraken: {
     build(b) {

@@ -1,16 +1,16 @@
-// The raft on its beach slip, growing with TeamView (game4.md §7/§12 "every delivered part shows on the raft"):
-// hull logs appear with hull wood (the wreck's free part = the first logs; gnawing makes logs vanish and the raft
-// shudder), cross beams + lashings when the hull is done, the mast pole rises with mast wood, rigging ropes with
-// mast rope, the sail unfurls when the mast stage is done (the patched "old sail" treasure if team.sail),
-// provision crates and water gourds stack up, and at stage 3 a pulsing READY halo + pennant + sparkles. During
-// the launch phase the raft slides off the sand and sails away (WorldFrame.launch), bobbing and rocking.
+// The raft on its beach slip, growing with TeamView (game4.md §7/§12 "every delivered part shows on the raft"; Long
+// Tide §3: six build stages + the launch). The keel's logs appear as its materials come in and its assembly runs,
+// cross beams (the deck) once the deck is assembled, the mast pole rises with the mast's progress (yard once it is
+// up), rigging ropes with the sail stage, the sail unfurls when the sail is rigged (patched canvas once the
+// rudder is fitted), provision crates (cooked food) and water barrels stack up, and on the launch stage a pulsing
+// READY halo + pennant + sparkles. The raft shudders when it loses hp or a stage. During the launch phase the raft
+// slides off the sand and sails away (WorldFrame.launch), bobbing and rocking.
 // Owner: client-render.
 
 import * as THREE from "three";
-import { PALETTE, WATER_Y, WRECK_HULL_WOOD, type Timings } from "../../../../shared/constants";
+import { PALETTE, RAFT_LAUNCH_STAGE, WATER_Y, type Timings } from "../../../../shared/constants";
 import { heightAt } from "../../../../shared/island/heightfield";
 import type { Heightfield, IslandSite } from "../../../../shared/island/types";
-import { raftCost } from "../../../../shared/items";
 import type { TeamView } from "../../../../shared/types";
 import { Baker, composeMatrix } from "../kit/Baker";
 import type { MaterialBank } from "../kit/MaterialBank";
@@ -48,43 +48,64 @@ interface Pop {
 
 /** What the raft shows for a team view (pure; Raft.update draws it). */
 export interface RaftPieces {
-  /** Hull logs 0..8 (the wreck's free part shows the first ones). */
+  /** Keel logs 0..8. */
   logs: number;
-  /** Cross beams + lashings (hull complete). */
+  /** Cross beams + lashings (deck assembled). */
   beams: boolean;
-  /** Mast pole growth 0..1 (mast wood delivered) and the yard (mast wood complete). */
+  /** Mast pole growth 0..1 (mast stage progress) and the yard (mast assembled). */
   mast: number;
   yard: boolean;
-  /** Rigging ropes 0..4. */
+  /** Rigging ropes 0..4 (sail stage progress). */
   ropes: number;
-  /** Sail set (mast stage done), patched old sail (treasure). */
+  /** Sail set (sail stage assembled), patched canvas (rudder fitted). */
   sail: boolean;
   oldSail: boolean;
-  /** Provision crates / water gourds on deck (0..6 each). */
+  /** Provision crates / water barrels on deck (0..6 each). */
   crates: number;
   gourds: number;
-  /** Stage 3: READY halo, pennant, sparkles. */
+  /** Launch stage: READY halo, pennant, sparkles. */
   ready: boolean;
 }
 
-/** Visible raft pieces for `team` (undefined = lobby preview: just the wreck's free part). */
-export function raftPieces(team: TeamView | undefined, timings: Readonly<Timings>): RaftPieces {
-  const cost = raftCost(team ? team.seats : 2, timings.cheapRaft);
-  const stage = team ? team.stage : 0;
-  const hullFrac = stage >= 1 ? 1 : clamp01((team ? team.hullWood : WRECK_HULL_WOOD) / Math.max(1, cost.hullWood));
-  const mastWood = stage >= 2 ? 1 : team ? clamp01(team.mastWood / Math.max(1, cost.mastWood)) : 0;
-  const mastRope = stage >= 2 ? 1 : team ? clamp01(team.mastRope / Math.max(1, cost.mastRope)) : 0;
+/**
+ * Progress 0..1 of build stage `s` for `team`: 1 once assembled, 0 before it is current; the current stage counts
+ * its delivered materials (first half) and its assembly work (second half).
+ */
+export function raftStageProgress(team: TeamView, s: number): number {
+  if (team.stage > s) return 1;
+  if (team.stage < s) return 0;
+  let have = 0;
+  let need = 0;
+  for (let i = 0; i < 3; i++) {
+    const n = team.raftNeed[i] ?? 0;
+    need += n;
+    have += Math.min(n, team.raftHave[i] ?? 0);
+  }
+  const mat = need > 0 ? have / need : 0;
+  const work = team.raftWorkNeed > 0 ? team.raftWork / team.raftWorkNeed : 0;
+  return clamp01(mat * 0.5 + work * 0.5);
+}
+
+/** Visible raft pieces for `team` (undefined = lobby preview: the empty slip). `timings` kept for callers. */
+export function raftPieces(team: TeamView | undefined, _timings: Readonly<Timings>): RaftPieces {
+  if (!team) return { logs: 0, beams: false, mast: 0, yard: false, ropes: 0, sail: false, oldSail: false, crates: 0, gourds: 0, ready: false };
+  const keel = raftStageProgress(team, 0);
+  const deck = raftStageProgress(team, 1);
+  const mast = raftStageProgress(team, 2);
+  const sail = raftStageProgress(team, 3);
+  const food = team.stage > 5 ? CRATES : team.stage === 5 ? Math.min(CRATES, team.raftHave[0] ?? 0) : 0;
+  const barrels = team.stage > 5 ? GOURDS : team.stage === 5 ? Math.min(GOURDS, (team.raftHave[1] ?? 0) * 2) : 0;
   return {
-    logs: hullFrac <= 0 ? 0 : Math.max(1, Math.min(LOGS, Math.round(hullFrac * LOGS))),
-    beams: hullFrac >= 1,
-    mast: mastWood,
-    yard: mastWood >= 1,
-    ropes: Math.min(ROPES, Math.round(mastRope * ROPES)),
-    sail: stage >= 2,
-    oldSail: team ? team.sail : false,
-    crates: team ? Math.min(CRATES, Math.max(0, Math.round(team.food))) : 0,
-    gourds: team ? Math.min(GOURDS, Math.max(0, Math.round(team.water))) : 0,
-    ready: stage >= 3,
+    logs: keel <= 0 ? 0 : Math.max(1, Math.min(LOGS, Math.round(keel * LOGS))),
+    beams: deck >= 1,
+    mast,
+    yard: mast >= 1,
+    ropes: Math.min(ROPES, Math.round(sail * ROPES)),
+    sail: sail >= 1,
+    oldSail: team.stage > 4,
+    crates: food,
+    gourds: barrels,
+    ready: team.stage >= RAFT_LAUNCH_STAGE,
   };
 }
 
@@ -258,9 +279,10 @@ export class Raft {
   /** Per frame from the team view; `launch` 0..1 sails it away. */
   update(dt: number, elapsed: number, team: TeamView | undefined, timings: Readonly<Timings>, launch: number, waveAmp: number, pixelRatio: number): void {
     const pieces = raftPieces(team, timings);
-    const hullWood = team ? team.hullWood : 0;
-    if (this.primed && hullWood < this.lastHull && !pieces.beams) this.shudder = 1;
-    this.lastHull = hullWood;
+    // Shudder when the raft loses hp or a stage (gnawing, puffers, Captain Crab).
+    const health = team ? team.stage * 1000 + team.raftHp : 0;
+    if (this.primed && health < this.lastHull) this.shudder = 1;
+    this.lastHull = health;
 
     this.setCount(this.logs, pieces.logs, "logs", [this.logOutlines]);
     this.setCount(this.ropes, pieces.ropes, "ropes");

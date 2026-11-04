@@ -17,11 +17,11 @@ import type { CraftPanelModel, RecipeRowModel } from "../models";
 /** Icon for a recipe's output (fuel and the team feast have none). */
 function recipeIcon(r: RecipeRowModel): string {
   if (r.out) return itemIcon(r.out);
-  return r.id === "fuel" ? "🔥" : r.id === "cook_kraken" ? "🍲" : r.id === "hut" ? "🛖" : r.id === "canoe" ? "🛶" : "✨";
+  return r.id === "fuel" ? "🔥" : r.id === "cook_kraken" ? "🍲" : r.id === "hut" ? "🛖" : r.id === "canoe" ? "🛶" : r.id === "bench_1" ? "🪚" : r.id === "bench_2" ? "⚒️" : "✨";
 }
 
 function rowSig(r: RecipeRowModel): string {
-  return `${r.id}:${r.ok ? 1 : 0}${r.locked ? 1 : 0}:${r.cost.map((c) => `${c.kind}${c.have}/${c.need}`).join(",")}`;
+  return `${r.id}:${r.ok ? 1 : 0}${r.locked ? 1 : 0}:${r.gate ?? ""}${JSON.stringify(r.gateParams ?? {})}:${r.cost.map((c) => `${c.kind}${c.have}/${c.need}`).join(",")}`;
 }
 
 export class CraftPanel {
@@ -34,6 +34,8 @@ export class CraftPanel {
   private readonly cards = new Map<RecipeId, HTMLButtonElement>();
   private order: RecipeId[] = [];
   private readonly keysNote = el("span", "rr-modal__keys");
+  /** Camp bench tier badge (Campfire / Workbench / Anvil). */
+  private readonly bench = el("span", "rr-craft__bench");
   private sig = "";
   private model: CraftPanelModel | null = null;
 
@@ -51,7 +53,7 @@ export class CraftPanel {
     close.setAttribute("aria-label", t("overlays.close"));
     close.addEventListener("click", () => onClose());
     const fuel = el("div", "rr-craft__fuel", el("span", "rr-craft__fuel-icon", svg(ICON_FLAME)), el("span", "rr-craft__fuel-track", this.fuelFill), this.fuelText);
-    const head = el("header", "rr-modal__head", el("h2", "rr-modal__title", `🔥 ${t("panels.craftTitle")}`), fuel, close);
+    const head = el("header", "rr-modal__head", el("h2", "rr-modal__title", `🔥 ${t("panels.craftTitle")}`), this.bench, fuel, close);
     const foot = el("footer", "rr-modal__foot", el("span", "", t("panels.craftHint")), this.keysNote);
     this.fireWarn.hidden = true;
     this.panel.append(head, this.fireWarn, this.grid, foot);
@@ -71,6 +73,7 @@ export class CraftPanel {
     setText(this.fuelText, m.fireLit ? clockText(m.fuelSec) : t("hud.fireOut"));
     toggleClass(this.panel, "is-fire-out", !m.fireLit);
     setHidden(this.fireWarn, m.fireLit);
+    setText(this.bench, `🛠️ ${t(`hud.bench_${Math.max(0, Math.min(2, m.benchTier ?? 0))}`)}`);
     const sig = m.recipes.map(rowSig).join("|");
     if (sig === this.sig) return;
     this.sig = sig;
@@ -147,7 +150,8 @@ export class CraftPanel {
     card.setAttribute("aria-disabled", String(!r.ok));
     const cost = el("span", "rr-recipe__cost");
     for (const c of r.cost) cost.append(this.costChip(c.kind, c.have, c.need));
-    const desc = r.locked ? t("panels.lockedHint") : t(`panels.craftDesc_${r.id}`, keyParams());
+    // A bench / day gate says why ("Needs the Workbench", "Not before day 3", "Already built") instead of the blurb.
+    const desc = r.locked ? t("panels.lockedHint") : r.gate ? `🔒 ${t(`reject.${r.gate}`, r.gateParams)}` : t(`panels.craftDesc_${r.id}`, keyParams());
     fill(
       card,
       index < 9 ? el("span", "rr-recipe__key", String(index + 1)) : null,

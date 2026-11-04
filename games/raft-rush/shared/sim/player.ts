@@ -52,7 +52,7 @@ import {
 } from "../constants.js";
 import { heightAt, normalAt } from "../island/heightfield.js";
 import type { Heightfield } from "../island/types.js";
-import { isThrowable } from "../items.js";
+import { isHeavy, isThrowable } from "../items.js";
 import { BTN, BUTTON_MASK, hasButton, type InputCmd } from "../protocol.js";
 import type { CharacterId, InvKind, ItemKind, PlayerSimFields, Vec3Like } from "../types.js";
 import type { SimContext } from "./context.js";
@@ -98,6 +98,7 @@ export const PLAYER_SIM_KEYS = [
   "alive",
   "downed",
   "boarded",
+  "loadMult",
 ] as const satisfies ReadonlyArray<keyof PlayerSimFields>;
 
 type MissingSimKeys = Exclude<keyof PlayerSimFields, (typeof PLAYER_SIM_KEYS)[number]>;
@@ -140,6 +141,7 @@ export function createPlayerSim(): PlayerSim {
     alive: false,
     downed: false,
     boarded: false,
+    loadMult: 100,
   };
 }
 
@@ -159,6 +161,17 @@ export function invKind(p: PlayerSimFields, slot: number): InvKind {
 /** Kind in the active slot ("" = empty hand). */
 export function heldKind(p: PlayerSimFields): InvKind {
   return invKind(p, p.activeSlot);
+}
+
+/** First slot holding heavy cargo (log / barrel), -1 when none. */
+export function heavySlot(p: PlayerSimFields): number {
+  for (let s = 0; s < 4; s++) if (isHeavy(invKind(p, s))) return s;
+  return -1;
+}
+
+/** Carrying heavy cargo (loadMult < 100): slower, no sprint, no throw. */
+export function loaded(p: Pick<PlayerSimFields, "loadMult">): boolean {
+  return p.loadMult < 100;
 }
 
 /** Alive, not downed, not aboard: can gather / throw / interact. */
@@ -415,7 +428,7 @@ export function stepPlayerInto(p: PlayerSim, input: InputCmd, ctx: SimContext, o
   const free = act && !channeling && p.stunTicks === 0;
   handleEdges(p, buttons, act, channeling, free, ctx, out);
   handleCharge(p, buttons, free, out);
-  p.sprinting = free && wish.len > SPRINT_MIN_INPUT && !p.swimming && hasButton(buttons, BTN.SPRINT) && p.chargeTicks === 0;
+  p.sprinting = free && wish.len > SPRINT_MIN_INPUT && !p.swimming && hasButton(buttons, BTN.SPRINT) && p.chargeTicks === 0 && !loaded(p);
 
   if (p.boarded) {
     holdOnRaft(p, out);
@@ -544,9 +557,11 @@ function handleEdges(
   if (act && !channeling && hasButton(buttons, BTN.EAT)) out.eat = true;
   if (act && hasButton(buttons, BTN.INTERACT_PRESS)) out.interactPressed = true;
   if (free && hasButton(buttons, BTN.DROP) && p.throwTicks === 0) {
-    const held = heldKind(p);
+    // Loaded: the drop key puts the heavy cargo down, whichever slot is active (Long Tide T1).
+    const slot = loaded(p) ? heavySlot(p) : p.activeSlot;
+    const held = slot >= 0 ? invKind(p, slot) : heldKind(p);
     if (held !== "") {
-      out.throw = { kind: held, slot: p.activeSlot, charge: 0, toss: true, yaw: p.yaw, pitch: p.pitch, origin: vec3() };
+      out.throw = { kind: held, slot: slot >= 0 ? slot : p.activeSlot, charge: 0, toss: true, yaw: p.yaw, pitch: p.pitch, origin: vec3() };
       p.chargeTicks = 0;
       p.throwTicks = THROW_RECOVER_TICKS;
     }
@@ -593,7 +608,7 @@ function handleCharge(p: PlayerSim, buttons: number, free: boolean, out: StepPla
     return;
   }
   const held = heldKind(p);
-  const throwable = isThrowable(held);
+  const throwable = isThrowable(held) && !loaded(p);
   if (throwable && p.throwTicks === 0 && p.catchTicks === 0) {
     if (hasButton(buttons, BTN.THROW)) {
       if (p.chargeTicks < CHARGE_FULL_TICKS) p.chargeTicks++;
@@ -643,6 +658,7 @@ function targetSpeed(p: PlayerSim, character: CharacterId, channeling: boolean):
   if (p.warmth <= 0) speed *= FREEZING_MOVE_MULT;
   if (p.downed) speed *= DOWNED_MOVE_MULT;
   if (p.swimming) speed *= SWIM_SPEED_MULT * CHARACTERS[character].swimMult;
+  if (loaded(p)) speed *= Math.max(0, p.loadMult) / 100;
   return speed;
 }
 

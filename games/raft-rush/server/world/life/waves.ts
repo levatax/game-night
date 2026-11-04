@@ -4,6 +4,8 @@
 
 import {
   FULLMOON_MONSTER_MULT,
+  LAUNCH_WAVE_CRAB_FRACTION,
+  LAUNCH_WAVE_PUFFERS,
   MONSTER_SPAWN_FAR_BIAS,
   MONSTER_SPAWN_WINDOW,
   nightWave,
@@ -24,6 +26,8 @@ export interface WaveInput {
   fullMoon: boolean;
   /** A flare was found: no monsters tonight. */
   flare: boolean;
+  /** Captain Crab was killed (team.bossDown): he no longer comes. */
+  bossDown?: boolean;
 }
 
 export interface WavePlan {
@@ -35,17 +39,27 @@ export interface WavePlan {
 }
 
 /**
- * Monster counts for a night: nightWave(night, seats) × difficulty × biome (crabMult / pufferMult) × full moon,
- * rounded (never below 1 when the base wave has that kind). The boss is never multiplied; nightmare also sends
- * it on night 2. A flare skips the night entirely.
+ * Monster counts for a night (Long Tide §6): nightWave(night, seats) × difficulty × biome (crabMult / pufferMult) ×
+ * full moon, rounded (never below 1 when the base wave has that kind). Captain Crab comes from
+ * DifficultyDef.bossFromNight on, every night until he is killed (bossDown); he is never multiplied. A flare skips
+ * the night entirely.
  */
 export function planWave(i: WaveInput): WavePlan {
   if (i.flare) return { crabs: 0, puffers: 0, boss: 0, skipped: true };
   const base = nightWave(i.night, i.seats);
   const moon = i.fullMoon ? FULLMOON_MONSTER_MULT : 1;
   const scaled = (n: number, mult: number) => (n > 0 ? Math.max(1, Math.round(n * i.difficulty.monsters * mult * moon)) : 0);
-  const boss = base.boss > 0 || (i.difficulty.bossNight2 && i.night === 2) ? 1 : 0;
-  return { crabs: scaled(base.crabs, i.biome.crabMult), puffers: scaled(base.puffers, i.biome.pufferMult), boss, skipped: false };
+  const boss = !i.bossDown && i.night >= i.difficulty.bossFromNight ? 1 : 0;
+  return { crabs: scaled(base.crabs, i.biome.crabMult), puffers: Math.min(MAX_PUFFERS, scaled(base.puffers, i.biome.pufferMult)), boss, skipped: false };
+}
+
+/** Puffers in one night at most, after the biome / difficulty / moon multipliers (a volcanic night 6 would roll 10). */
+export const MAX_PUFFERS = 6;
+
+/** The push-off's launch wave (Long Tide §3.4): round(LAUNCH_WAVE_CRAB_FRACTION × the last night's crabs), the puffers, one boss. */
+export function planLaunchWave(i: Omit<WaveInput, "night" | "flare" | "fullMoon" | "bossDown"> & { lastNight: number }): WavePlan {
+  const last = planWave({ ...i, night: i.lastNight, flare: false, fullMoon: false, bossDown: true });
+  return { crabs: Math.max(1, Math.round(LAUNCH_WAVE_CRAB_FRACTION * last.crabs)), puffers: LAUNCH_WAVE_PUFFERS, boss: 1, skipped: false };
 }
 
 export interface WaveSpawn {
@@ -55,12 +69,12 @@ export interface WaveSpawn {
 }
 
 /**
- * Spread a wave over the first MONSTER_SPAWN_WINDOW of the night: evenly spaced slots with a little jitter,
+ * Spread a wave over the first MONSTER_SPAWN_WINDOW of the night (or `windowTicks`: the launch wave): evenly spaced slots with a little jitter,
  * puffers shuffled in among the crabs, the boss at the middle of the window (its entrance gets a beat of its
  * own). Sorted by `at`.
  */
-export function scheduleWave(plan: WavePlan, nightTicks: number, rng: Rng): WaveSpawn[] {
-  const window = Math.max(1, Math.floor(nightTicks * MONSTER_SPAWN_WINDOW));
+export function scheduleWave(plan: WavePlan, nightTicks: number, rng: Rng, windowTicks?: number): WaveSpawn[] {
+  const window = Math.max(1, windowTicks ?? Math.floor(nightTicks * MONSTER_SPAWN_WINDOW));
   const kinds: MonsterKind[] = [];
   for (let k = 0; k < plan.crabs; k++) kinds.push("crab");
   for (let k = 0; k < plan.puffers; k++) {

@@ -1,11 +1,11 @@
-// The match clock: 3 × (day, dusk, night) after the landing. Owner: architect (complete).
+// The match clock: Timings.days × (day, dusk, night) after the landing. Owner: architect (complete).
 // Pure functions shared by the server (phase flow, spawns) and the client (sun / sky / HUD clock).
 
-import { DAYS, type Timings } from "../constants.js";
-import type { DayPhase, Phase } from "../types.js";
+import { DIFFICULTIES, RAFT_STAGES, type Timings } from "../constants.js";
+import type { DayPhase, Difficulty, Phase } from "../types.js";
 
 export interface ClockInfo {
-  /** 1..DAYS (stays DAYS once the clock runs out). */
+  /** 1..t.days (stays t.days once the clock runs out). */
   day: number;
   dayPhase: DayPhase;
   /** Ticks elapsed / total / left in the current day phase. */
@@ -30,13 +30,25 @@ export function cycleTicks(t: Timings): number {
 
 /** Ticks from `playing` start to the storm. */
 export function matchTicks(t: Timings): number {
-  return DAYS * cycleTicks(t);
+  return t.days * cycleTicks(t);
+}
+
+/** First day raft stage `stage` accepts materials (RAFT_STAGES[stage].minDay; 1 with the cheap fast raft). */
+export function stageDayLock(stage: number, t: Pick<Timings, "cheapRaft">): number {
+  if (t.cheapRaft) return 1;
+  return RAFT_STAGES[stage]?.minDay ?? 1;
+}
+
+/** First day the finished raft may be boarded (DifficultyDef.launchDay; 1 with the cheap fast raft). */
+export function launchDayFor(difficulty: Difficulty, t: Pick<Timings, "cheapRaft">): number {
+  if (t.cheapRaft) return 1;
+  return (DIFFICULTIES[difficulty] ?? DIFFICULTIES.normal).launchDay;
 }
 
 /** Clock for `clockTicks` ticks since playing began. */
 export function clockAt(clockTicks: number, t: Timings): ClockInfo {
   const cyc = cycleTicks(t);
-  const total = DAYS * cyc;
+  const total = t.days * cyc;
   const clamped = clockTicks < 0 ? 0 : clockTicks >= total ? total - 1 : clockTicks;
   const dayIndex = Math.floor(clamped / cyc);
   const inCycle = clamped - dayIndex * cyc;

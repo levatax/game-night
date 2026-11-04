@@ -4,7 +4,6 @@
 // a Goal; botMotor.ts executes the Goal one InputCmd at a time. Keeping the view a plain snapshot (no schema
 // classes) lets the decision functions be pure and lets tests hand-write synthetic views.
 
-import type { RaftCost } from "../../shared/items.js";
 import type { XZ } from "../../shared/island/types.js";
 import type {
   BotRole,
@@ -58,6 +57,16 @@ export type Goal =
   | { kind: "chestPut"; items: { kind: ItemKind; count: number }[] }
   /** E at the raft: deliver what the current stage needs. */
   | { kind: "deliver" }
+  /** Hold E at the raft (CHANNEL.BUILD) while the current stage's materials are in and it isn't assembled yet. */
+  | { kind: "assemble" }
+  /** E at the raft with a hammer: spend a plank (or 2 wood) on raft hp, again while it is low. */
+  | { kind: "repair" }
+  /** Hold E at the wreck with a hammer (CHANNEL.SALVAGE) for scrap. */
+  | { kind: "salvage" }
+  /** Chop a tree to the last unit with an axe (it falls and drops a log), then pick the log up. */
+  | { kind: "fell"; node: number }
+  /** Walk beside teammate `playerId` while they carry heavy cargo (within ESCORT_RADIUS: they walk faster). */
+  | { kind: "escort"; playerId: string }
   /** Plant the torch in `slot` at the raft (Q). */
   | { kind: "plantTorch"; slot: number }
   /** Hold E on a tree / rock / bush until it is empty or the inventory is full. */
@@ -195,19 +204,39 @@ export interface BotSite {
   spring: XZ;
 }
 
+/** One requirement row of a raft stage (RAFT_STAGES[stage].req[i]) with the team's progress. */
+export interface BotRaftRow {
+  /** Primary kind (prompt / icon). */
+  item: ItemKind;
+  /** Kinds that fill the row. */
+  kinds: ReadonlyArray<ItemKind>;
+  have: number;
+  need: number;
+}
+
 export interface BotTeam {
+  /** RAFT_STAGES index; RAFT_LAUNCH_STAGE = every stage assembled (board). */
   stage: RaftStage;
   seats: number;
-  cost: RaftCost;
-  hullWood: number;
-  mastWood: number;
-  mastRope: number;
-  food: number;
-  water: number;
+  /** Requirement rows of the current stage (empty once finished). */
+  rows: BotRaftRow[];
+  /** The current stage accepts materials today (stageDayLock). */
+  stageOpen: boolean;
+  /** Rows of the next stage (have 0: what to prestock into the chest); empty past the last stage. */
+  nextRows: BotRaftRow[];
+  /** Assembly work done / needed on the current stage. */
+  raftWork: number;
+  raftWorkNeed: number;
+  raftHp: number;
+  /** The finished raft may be boarded now (launch window open and raft hp ≥ RAFT_HP_BOARD, or the push-off counting). */
+  canBoard: boolean;
+  benchTier: number;
+  wreckScrap: number;
+  springCharges: number;
+  bossDown: boolean;
   fireFuel: number;
   chest: Partial<Record<ItemKind, number>>;
   launchTicksLeft: number;
-  sail: boolean;
 }
 
 export interface BotClock {
@@ -221,6 +250,8 @@ export interface BotClock {
   phaseLength: number;
   /** Ticks until the storm (end of the last night). */
   stormLeft: number;
+  /** Days in the match (Timings.days). */
+  days: number;
   /** Phase lengths in ticks. */
   dayTicks: number;
   duskTicks: number;
@@ -307,6 +338,10 @@ export function goalKey(g: Goal): string {
       return `flee:${g.from}`;
     case "follow":
       return `follow:${g.playerId}`;
+    case "fell":
+      return `fell:${g.node}`;
+    case "escort":
+      return `escort:${g.playerId}`;
     default:
       return g.kind;
   }

@@ -662,7 +662,7 @@
 }
 .rr-ui .rr-raft__segs {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(var(--n, 7), 1fr);
   gap: calc(var(--u) * 5);
 }
 .rr-ui .rr-raft__seg {
@@ -1774,4 +1774,37 @@
 /* A capturing panel / wheel owns the center: hide the crosshair cluster under it. */
 .rr-ui:is([data-panel="pingWheel"], [data-panel="emoteWheel"], [data-panel="craft"], [data-panel="chest"], [data-panel="settings"]) .rr-hud__center {
   visibility: hidden;
+}
+
+/* Long Tide raft card: stage name, day lock, assembly and integrity bars, status line, heavy-load chip. */
+.rr-ui .rr-raft__name {
+  margin-top: calc(var(--u) * 3);
+  font-weight: 700;
+  font-size: max(12px, calc(var(--u) * 13));
+}
+.rr-ui .rr-raft__lock,
+.rr-ui .rr-raft__status,
+.rr-ui .rr-raft__heavy {
+  margin-top: calc(var(--u) * 4);
+  font-size: max(11px, calc(var(--u) * 12));
+  font-weight: 600;
+  color: var(--muted);
+}
+.rr-ui .rr-raft__asm,
+.rr-ui .rr-raft__hp {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 2);
+  margin-top: calc(var(--u) * 4);
+  font-size: max(11px, calc(var(--u) * 12));
+  font-weight: 600;
+}
+.rr-ui .rr-raft__hp .rr-raft__fill {
+  background: linear-gradient(180deg, #9ee28f, var(--green));
+}
+.rr-ui .rr-raft__hp.is-low .rr-raft__fill {
+  background: linear-gradient(180deg, #ff9a8a, #e0412a);
+}
+.rr-ui .rr-raft__heavy.is-escorted {
+  color: var(--green);
 }

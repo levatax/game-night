@@ -10,7 +10,8 @@
 //   coconut loose) · spears stick (`stick`) · wood / jellyfish landing in a lit campfire (or by a planted torch)
 //   burn as fuel · raw fish coming to rest becomes bait (BAIT_TICKS, MonsterSystem.onBait).
 // Resting / stuck items are pickups (E); they despawn GROUND_ITEM_DESPAWN_TICKS after they came to rest, and the
-// oldest one makes room when a spawn would exceed MAX_PROJECTILES.
+// oldest one makes room when a spawn would exceed MAX_PROJECTILES — except the raft's key cargo (KEPT_KINDS: logs,
+// barrels, the compass), which never despawns. A compass that sinks goes back to its team's chest.
 
 import {
   BAIT_TICKS,
@@ -61,6 +62,9 @@ import {
 const FUEL_CATCH_MAX_DY = 1.5;
 /** Blast reach in height around the explosion (players are 1.7 m tall). */
 const BLAST_MAX_DY = 2.5;
+
+/** Ground items that never despawn and are never evicted (heavy raft cargo, the one compass). */
+const KEPT_KINDS: ReadonlySet<string> = new Set(["log", "barrel", "compass"]);
 
 export class ProjectileSystem {
   private nextId = 1;
@@ -138,7 +142,7 @@ export class ProjectileSystem {
     let oldest = "";
     let since = Infinity;
     this.core.state.projectiles.forEach((b, id) => {
-      if (b.state !== "rest" && b.state !== "stuck") return;
+      if ((b.state !== "rest" && b.state !== "stuck") || KEPT_KINDS.has(b.kind)) return;
       const t = this.restSince.get(id) ?? -1;
       if (t < since) {
         since = t;
@@ -172,6 +176,7 @@ export class ProjectileSystem {
       const res = stepProjectileInto(b, this.ctx, this.res);
       if (res.sank) {
         core.emit({ type: "splash", tick, projectileId: id, kind: b.kind, pos: posOf(b) });
+        if (b.kind === "compass") core.returnToChest(core.site(Math.max(0, b.team)).team, "compass", 1);
         this.remove(id);
         continue;
       }
@@ -205,7 +210,7 @@ export class ProjectileSystem {
     }
     if (this.baitPending.delete(id)) this.startBait(b);
     else if (b.baitTicks > 0) b.baitTicks--;
-    if (tick - since >= GROUND_ITEM_DESPAWN_TICKS) this.remove(id);
+    if (tick - since >= GROUND_ITEM_DESPAWN_TICKS && !KEPT_KINDS.has(b.kind)) this.remove(id);
   }
 
   private startBait(b: ProjectileEntity): void {

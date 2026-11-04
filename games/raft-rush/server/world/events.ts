@@ -6,7 +6,7 @@ import type { ServerMessages, WorldEventType } from "../../shared/protocol.js";
 export type BroadcastWorldEvent = { [K in WorldEventType]: { type: K } & ServerMessages[K] }[WorldEventType];
 
 /**
- * The raft is ready and either every required player is aboard, or the boarding countdown
+ * The push-off is over: every required player is aboard after timings.launchMin, or the countdown
  * (state.launchTicksLeft) ran out with at least one aboard. The room switches to the launch phase.
  * Required = the team's participants that are alive, not downed, not washed (and connected or bot-driven).
  */
@@ -15,10 +15,13 @@ export interface LaunchRequestEvent {
   tick: number;
   team: number;
   aboard: string[];
+  /** Every participant not aboard. */
   left: string[];
+  /** The living ones among `left` (alive, not washed; downed included): LEFT_BEHIND_PENALTY each. */
+  leftBehind: string[];
 }
 
-/** Every participant of a team is washed ashore and no dawn is coming (night 3): the room ends the match. */
+/** Every participant of a team is washed ashore and no dawn is coming (the last night): the room ends the match. */
 export interface TeamWipedEvent {
   type: "teamWiped";
   tick: number;

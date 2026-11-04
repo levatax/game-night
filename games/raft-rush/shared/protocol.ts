@@ -39,7 +39,7 @@ export const ROOM_NAME = "raft_rush";
  * Create/JoinOptions (a mismatch is rejected with JOIN_ERROR.OUTDATED) and the server echoes it in WelcomeMsg, so a
  * stale cached client after a deploy is told to refresh instead of failing at random.
  */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 /** Every message type name. Client→server and server→client share one namespace. */
 export const MSG = {
@@ -93,6 +93,8 @@ export const MSG = {
   CHEST_CHANGED: "chestChanged",
   DELIVER: "deliver",
   RAFT_DAMAGE: "raftDamage",
+  RAFT_STAGE: "raftStage",
+  RAFT_REPAIR: "raftRepair",
   STRUCTURE_PLACED: "structurePlaced",
   STRUCTURE_HIT: "structureHit",
   STRUCTURE_DESTROYED: "structureDestroyed",
@@ -376,7 +378,7 @@ export interface BoardEvent {
   tick: number;
   playerId: string;
   team: number;
-  /** Boarding countdown started by this boarding (LAUNCH_WAIT_TICKS), 0 if everyone is aboard now. */
+  /** Push-off ticks left after this boarding (the first one starts LAUNCH_WAIT_TICKS). */
   launchTicksLeft: number;
 }
 
@@ -388,7 +390,7 @@ export interface RaftLaunchEvent {
   left: string[];
 }
 
-/** Night 3 ended without a launch. */
+/** The last night ended without a launch. */
 export interface StormEvent {
   tick: number;
 }
@@ -479,7 +481,7 @@ export interface PickupEvent {
   pos: Vec3Like;
   /** Ground projectile picked up ("" otherwise). */
   projectileId: string;
-  source: "ground" | "crab" | "spring" | "chest" | "craft" | "fish" | "treasure" | "catch";
+  source: "ground" | "crab" | "spring" | "chest" | "craft" | "fish" | "treasure" | "catch" | "salvage";
 }
 
 /** Right-click caught an in-flight projectile (it went to the inventory, or bounced off when full). */
@@ -506,6 +508,8 @@ export interface GatherEvent {
   dropped: boolean;
   eaten: boolean;
   pos: Vec3Like;
+  /** The last unit of a tree taken with an axe felled it: id of the `log` projectile resting at its foot. */
+  felled?: string;
 }
 
 /** LMB on a palm (or a throw hit it): coconuts fell (spawned as projectiles `projectileIds`). */
@@ -569,21 +573,48 @@ export interface DeliverEvent {
   tick: number;
   playerId: string;
   team: number;
-  /** Stage the items went to. */
+  /** Stage the items went to (the current one: delivery never completes a stage, assembly does). */
   stage: RaftStage;
   items: { kind: ItemKind; count: number }[];
-  /** Stage after delivery (> stage when it completed). */
+  /** Stage after delivery (= stage). */
   newStage: RaftStage;
+  /** Every material of the stage is in now: assembly can start. */
+  materialsDone: boolean;
 }
 
 export interface RaftDamageEvent {
   tick: number;
   team: number;
-  /** Hull wood lost. */
+  /** Raft hp lost. */
   amount: number;
   byMonsterId: string;
   pos: Vec3Like;
-  hullWood: number;
+  /** Raft hp after the hit (RAFT_HP_AFTER_LOSS when it broke a stage: see RaftStageEvent lost). */
+  hp: number;
+}
+
+/** A raft stage was assembled (`lost` false) or lost its assembly when the raft hp hit 0 (`lost` true). */
+export interface RaftStageEvent {
+  tick: number;
+  team: number;
+  /** The stage assembled / lost. */
+  stage: RaftStage;
+  /** team.stage now. */
+  newStage: RaftStage;
+  lost: boolean;
+  /** Holders credited with the assembly (empty when lost). */
+  playerIds: string[];
+}
+
+/** A hammer repair at the raft. */
+export interface RaftRepairEvent {
+  tick: number;
+  playerId: string;
+  team: number;
+  /** What it spent (one plank / 2 wood). */
+  kind: ItemKind;
+  added: number;
+  hp: number;
 }
 
 export interface StructurePlacedEvent {
@@ -846,6 +877,8 @@ export interface ServerMessages {
   chestChanged: ChestChangedEvent;
   deliver: DeliverEvent;
   raftDamage: RaftDamageEvent;
+  raftStage: RaftStageEvent;
+  raftRepair: RaftRepairEvent;
   structurePlaced: StructurePlacedEvent;
   structureHit: StructureHitEvent;
   structureDestroyed: StructureDestroyedEvent;
@@ -899,6 +932,8 @@ export type WorldEventType =
   | "chestChanged"
   | "deliver"
   | "raftDamage"
+  | "raftStage"
+  | "raftRepair"
   | "structurePlaced"
   | "structureHit"
   | "structureDestroyed"

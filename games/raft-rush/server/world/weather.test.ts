@@ -2,7 +2,7 @@
 // Owner: server-world-life.
 
 import { describe, expect, it } from "vitest";
-import { DAY1_WEATHER_CHANCE, DAY_EVENT_FRACTION, DAYS, PICKUP_RANGE, TREASURE_REEL_TICKS, WEATHER_IDS, WEATHER_START_FRACTION } from "../../shared/constants.js";
+import { DAY1_WEATHER_CHANCE, DAY_EVENT_FRACTION, FAST_TIMINGS, PICKUP_RANGE, TREASURE_REEL_TICKS, WEATHER_IDS, WEATHER_START_FRACTION } from "../../shared/constants.js";
 import { heightAt } from "../../shared/island/heightfield.js";
 import { mulberry32 } from "../../shared/island/noise.js";
 import type { DayEventKind, Weather } from "../../shared/types.js";
@@ -23,7 +23,7 @@ function bench(o: BenchOptions = {}) {
 
 /** Play the whole match clock (playing phase), stepping the weather system every tick. */
 function playMatch(w: FakeWorld, sky: WeatherSystem, each?: () => void): void {
-  const total = DAYS * (w.timings.day + w.timings.dusk + w.timings.night);
+  const total = w.timings.days * (w.timings.day + w.timings.dusk + w.timings.night);
   w.setClock(0);
   sky.onClock(null, w.setClock(0));
   for (let t = 0; t < total - 1; t++) {
@@ -115,7 +115,7 @@ describe("weather schedule", () => {
   it("fires each transition once even when the clock arrives from onClock and step both", () => {
     const { w, sky } = bench({ seed: 9 });
     playMatch(w, sky, () => sky.onClock(null, w.setClock(w.state.clockTicks)));
-    expect(w.ofType("dayEvent")).toHaveLength(DAYS);
+    expect(w.ofType("dayEvent")).toHaveLength(FAST_TIMINGS.days * 2);
     const starts = w.ofType("weather").filter((e) => e.weather !== "clear");
     expect(new Set(starts.map((e) => e.day)).size).toBe(starts.length);
   });
@@ -130,7 +130,7 @@ describe("weather schedule", () => {
 });
 
 describe("day events", () => {
-  it("one per day, and today's plan is never what happened yesterday", () => {
+  it("two per day (Long Tide §6), the second never the first, and today's plan is never what happened last", () => {
     for (let seed = 1; seed <= 30; seed++) {
       const { w, sky } = bench({ seed });
       const plans: DayEventKind[] = [];
@@ -143,13 +143,16 @@ describe("day events", () => {
         }
       });
       const evs = w.ofType("dayEvent");
-      expect(evs).toHaveLength(DAYS);
-      expect(plans).toHaveLength(DAYS);
-      for (let k = 1; k < plans.length; k++) expect(plans[k]).not.toBe(evs[k - 1]!.kind);
+      expect(evs).toHaveLength(FAST_TIMINGS.days * 2);
+      expect(plans).toHaveLength(FAST_TIMINGS.days);
+      for (let k = 1; k < plans.length; k++) expect(plans[k]).not.toBe(evs[2 * k - 1]!.kind);
+      for (let d = 0; d < FAST_TIMINGS.days; d++) {
+        if (evs[2 * d]!.kind !== "waveGift") expect(evs[2 * d + 1]!.kind).not.toBe(evs[2 * d]!.kind);
+      }
     }
   });
 
-  it("the event lands at 30% of the day", () => {
+  it("the first event lands at 25% of the day", () => {
     const { w, sky } = bench({ seed: 2 });
     let at = -1;
     playMatch(w, sky, () => {

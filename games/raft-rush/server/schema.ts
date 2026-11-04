@@ -106,6 +106,7 @@ export class PlayerState extends Schema implements PlayerView {
   @type("boolean") alive = false;
   @type("boolean") downed = false;
   @type("boolean") boarded = false;
+  @type("uint8") loadMult = 100;
 
   // ------------------------------------------------------------ inventory counts (4)
   @type("uint8") cnt0 = 0;
@@ -180,15 +181,18 @@ export class TeamState extends Schema implements TeamView {
   @type("uint8") index = 0;
   @type("uint8") seats = 2;
   @type("uint8") stage: RaftStage = 0;
-  @type("uint8") hullWood = 0;
-  @type("uint8") mastWood = 0;
-  @type("uint8") mastRope = 0;
-  @type("uint8") food = 0;
-  @type("uint8") water = 0;
+  @type(["uint8"]) raftHave = new ArraySchema<number>(0, 0, 0);
+  @type(["uint8"]) raftNeed = new ArraySchema<number>(0, 0, 0);
+  @type("uint16") raftWork = 0;
+  @type("uint16") raftWorkNeed = 0;
+  @type("uint8") raftHp = 0;
+  @type("uint8") benchTier = 0;
+  @type("uint8") wreckScrap = 0;
+  @type("uint8") springCharges = 0;
+  @type("boolean") bossDown = false;
   @type("uint16") fireFuel = 0;
   @type({ map: "uint16" }) chest = new MapSchema<number>();
   @type("boolean") flare = false;
-  @type("boolean") sail = false;
   @type("boolean") secretRevealed = false;
   @type("boolean") secretOpened = false;
   @type("boolean") springRevealed = false;

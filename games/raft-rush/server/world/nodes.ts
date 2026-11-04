@@ -3,9 +3,11 @@
 //
 // Node positions / kinds come from the IslandDef; the live amount is state.nodes[i]. A gather channel completes
 // one unit at a time (wood / stone / rope into the inventory or dropped when it doesn't fit; berries are eaten
-// on the spot, +BERRY_FOOD). Palms are shaken with LMB (one coconut, an axe in hand: all of them) or knocked by a
-// thrown coconut / stone; coconuts fall from the crown as loose projectiles. Emptied palms regrow to full after
-// PALM_REGROW_TICKS, emptied berry bushes after BERRY_REGROW_TICKS; trees, rocks and rope bushes don't.
+// on the spot, +BERRY_FOOD). Taking a tree's LAST unit with an axe in any slot fells it: a heavy `log` comes to
+// rest at its foot (gather event `felled`); by hand a tree just runs out. Palms are shaken with LMB (one coconut,
+// an axe in hand: all of them) or knocked by a thrown coconut / stone; coconuts fall from the crown as loose
+// projectiles. Emptied palms regrow to full after PALM_REGROW_TICKS, berry bushes after BERRY_REGROW_TICKS, rope
+// bushes after ROPE_REGROW_TICKS; trees and rocks don't.
 
 import {
   BERRY_FOOD,
@@ -19,9 +21,12 @@ import {
   PALM_REGROW_TICKS,
   PALM_THROW_DROPS,
   PALM_TRUNK_RADIUS,
+  ROPE_REGROW_TICKS,
+  TREE_TRUNK_RADIUS,
 } from "../../shared/constants.js";
 import type { NodeDef } from "../../shared/island/types.js";
 import { gatherYield } from "../../shared/rules/interact.js";
+import { countOf } from "../../shared/rules/inventory.js";
 import type { PlayerState } from "./context.js";
 import type { WorldCore } from "./core.js";
 import { dist, point } from "./rules.js";
@@ -30,6 +35,8 @@ import { dist, point } from "./rules.js";
 const COCONUT_SCATTER_SPEED = 0.9;
 /** They appear just outside the trunk so they don't spawn inside its collider. */
 const COCONUT_TRUNK_CLEARANCE = 0.35;
+/** A felled tree's log rests this far out from the trunk, toward the feller. */
+const LOG_TRUNK_CLEARANCE = 0.7;
 
 export class NodeSystem {
   /** Node index → tick at which it regrows to full. */
@@ -53,6 +60,7 @@ export class NodeSystem {
       const def = this.core.island.nodes[i];
       if (def?.kind === "palm") this.regrowAt.set(i, this.core.tick() + PALM_REGROW_TICKS);
       else if (def?.kind === "bush" && def.yield === "berry") this.regrowAt.set(i, this.core.tick() + BERRY_REGROW_TICKS);
+      else if (def?.kind === "bush" && def.yield === "rope") this.regrowAt.set(i, this.core.tick() + ROPE_REGROW_TICKS);
     }
     return taken;
   }
@@ -74,6 +82,8 @@ export class NodeSystem {
     }
     p.stats.gathered = Math.min(65535, p.stats.gathered + 1);
     core.addScore(p, MVP_POINTS.gather);
+    const depleted = this.amount(node.i) === 0;
+    const felled = depleted && node.kind === "tree" && countOf(p, "axe") > 0 ? this.dropLog(p, node) : "";
     core.emit({
       type: "gather",
       tick: core.tick(),
@@ -81,11 +91,22 @@ export class NodeSystem {
       node: node.i,
       kind,
       count: 1,
-      depleted: this.amount(node.i) === 0,
+      depleted,
       dropped,
       eaten,
       pos: point(node.x, node.y + 1, node.z),
+      ...(felled ? { felled } : {}),
     });
+  }
+
+  /** A tree felled with an axe: one log comes to rest at its foot, toward the feller. Returns its id ("" if none). */
+  private dropLog(p: PlayerState, tree: NodeDef): string {
+    const d = dist(p.x, p.z, tree.x, tree.z);
+    const ux = d > 1e-6 ? (p.x - tree.x) / d : 1;
+    const uz = d > 1e-6 ? (p.z - tree.z) / d : 0;
+    const off = Math.max(tree.radius, TREE_TRUNK_RADIUS) + LOG_TRUNK_CLEARANCE;
+    const b = this.core.spawnProjectile("log", point(tree.x + ux * off, tree.y + 0.3, tree.z + uz * off), point(0, 0, 0), { state: "loose" });
+    return b ? b.id : "";
   }
 
   /** The palm `p` is looking at within PALM_HIT_RANGE (any amount: an empty one is a whiff), or null. */

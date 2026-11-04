@@ -47,7 +47,7 @@ describe("EventBuffer", () => {
     buf.push(chest("b"));
     buf.push(chest("b")); // b's second chestChanged too ("a" still holds 5)
     buf.push(reject("a", "tooFar")); // the flooder's first reject gets in as well
-    buf.push({ type: "launchRequest", tick: 1, team: 0, aboard: ["a"], left: [] }); // internal: always in
+    buf.push({ type: "launchRequest", tick: 1, team: 0, aboard: ["a"], left: [], leftBehind: [] }); // internal: always in
     expect(buf.length).toBe(8);
     // "a" holds 3 chestChanged, "b" 2: b's third would only swap one repeat for another, so it's dropped too.
     buf.push(chest("b"));

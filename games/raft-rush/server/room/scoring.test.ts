@@ -1,8 +1,8 @@
 // Unit tests for the end-of-match scoring (standings, titles, MVP, team score). Owner: server-room.
 import { describe, expect, it } from "vitest";
-import { LAUNCH_BONUS, LAUNCH_BONUS_PER_SEC, TICK_RATE } from "../../shared/constants.js";
+import { LAUNCH_BONUS, LEFT_BEHIND_PENALTY, LOSS_STAGE_BONUS, WIN_BOSS_BONUS, WIN_RAFT_HP_BONUS, WIN_SURVIVOR_BONUS } from "../../shared/constants.js";
 import type { StatsView } from "../../shared/types.js";
-import { awardTitles, launchBonus, rankPlayers, rankStandings, scoreMatch, teamScore, type ScoreInput } from "./scoring.js";
+import { awardTitles, outcomeBonus, rankPlayers, rankStandings, scoreMatch, teamScore, type ScoreInput, type TeamOutcome } from "./scoring.js";
 
 const zero: StatsView = { gathered: 0, delivered: 0, hits: 0, kills: 0, revives: 0, fish: 0, eaten: 0, coconuts: 0, downs: 0, crafted: 0, raids: 0 };
 const player = (id: string, seat: number, score: number, stats: Partial<StatsView> = {}, aboard = false): ScoreInput => ({
@@ -66,21 +66,28 @@ describe("titles", () => {
 });
 
 describe("team score", () => {
-  it("sums MVP points and adds the launch bonus per whole second left", () => {
+  const outcome = (o: Partial<TeamOutcome> = {}): TeamOutcome => ({ survivorsAboard: 0, leftBehind: 0, raftHp: 0, bossDown: false, stagesAssembled: 0, ...o });
+
+  it("sums MVP points; a win adds survivors, raft hp and the boss, minus the living left behind; no bonus for speed", () => {
     const ps = [player("a", 0, 40), player("b", 1, 25)];
-    expect(teamScore(ps, 0, false, 0)).toBe(65);
-    const ticksLeft = 95 * TICK_RATE + 7; // 95.23 s
-    expect(launchBonus(true, ticksLeft)).toBe(LAUNCH_BONUS + LAUNCH_BONUS_PER_SEC * 95);
-    expect(teamScore(ps, 0, true, ticksLeft)).toBe(65 + LAUNCH_BONUS + LAUNCH_BONUS_PER_SEC * 95);
+    expect(teamScore(ps, 0, false)).toBe(65);
+    const won = outcome({ survivorsAboard: 2, raftHp: 60, bossDown: true, leftBehind: 1 });
+    const bonus = LAUNCH_BONUS + 2 * WIN_SURVIVOR_BONUS + 60 * WIN_RAFT_HP_BONUS + WIN_BOSS_BONUS - LEFT_BEHIND_PENALTY;
+    expect(outcomeBonus(true, won)).toBe(bonus);
+    expect(teamScore(ps, 0, true, won)).toBe(65 + bonus);
+    // A loss pays only for the stages assembled.
+    expect(outcomeBonus(false, outcome({ stagesAssembled: 3, raftHp: 80, bossDown: true }))).toBe(3 * LOSS_STAGE_BONUS);
+    // Never below 0.
+    expect(teamScore([player("a", 0, 0)], 0, true, outcome({ leftBehind: 9 }))).toBe(0);
   });
 
-  it("scoreMatch: standings, MVP and one score per team; the storm gives no bonus", () => {
-    const res = scoreMatch([player("a", 0, 12, {}, true), player("b", 1, 30, {}, true)], 1, 0, 300);
+  it("scoreMatch: standings, MVP and one score per team from the outcomes", () => {
+    const res = scoreMatch([player("a", 0, 12, {}, true), player("b", 1, 30, {}, true)], 1, 0, [outcome({ survivorsAboard: 2, raftHp: 50 })]);
     expect(res.mvpId).toBe("b");
     expect(res.standings.map((s) => s.place)).toEqual([1, 2]);
     expect(res.standings.every((s) => s.aboard)).toBe(true);
-    expect(res.teamScores).toEqual([42 + LAUNCH_BONUS + LAUNCH_BONUS_PER_SEC * 10]);
-    const lost = scoreMatch([player("a", 0, 0)], 1, -1, 300);
-    expect(lost).toMatchObject({ mvpId: "", teamScores: [0] });
+    expect(res.teamScores).toEqual([42 + LAUNCH_BONUS + 2 * WIN_SURVIVOR_BONUS + 50 * WIN_RAFT_HP_BONUS]);
+    const lost = scoreMatch([player("a", 0, 0)], 1, -1, [outcome({ stagesAssembled: 2 })]);
+    expect(lost).toMatchObject({ mvpId: "", teamScores: [2 * LOSS_STAGE_BONUS] });
   });
 });

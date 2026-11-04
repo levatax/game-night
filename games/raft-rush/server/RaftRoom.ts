@@ -30,7 +30,7 @@
 //   A seed change regenerates it (at most every previewCooldownTicks) via world.setIsland and sends a fresh
 //   welcome to everyone so clients regenerate too.
 // - phases & timers (ARCHITECTURE §4.2): lobby → landing → playing (clockTicks → day / dayPhase broadcasts,
-//   stormWarning once on the last night) → launch (world's launchRequest) | storm (night 3 over or teamWiped) →
+//   stormWarning once on the last night) → launch (world's launchRequest) | storm (last night over or teamWiped) →
 //   matchEnd (standings, titles, MVP, team score: room/scoring.ts) → lobby (any player's rematch after
 //   matchEndMin, or automatically after matchEndLobby). Every human left mid-match → matchEnd "abandoned".
 // - per match: gameplay rng (world) and bot rng (desk), separate mulberry32 streams from RAFT_TEST's testSeed or
@@ -61,7 +61,6 @@
 
 import { Room, ServerError, type Client } from "@colyseus/core";
 import {
-  DAYS,
   EMOTE_COOLDOWN_TICKS,
   MARKER_COOLDOWN_TICKS,
   MAX_BOTS,
@@ -106,7 +105,7 @@ import { LogThrottle, logLine } from "./room/log.js";
 import { nextRttEma, pingField, rttSample } from "./room/ping.js";
 import { claimRoomSlot, liveRoomCount, maxRooms, type RoomSlot } from "./room/registry.js";
 import { matchRngs, previewSeed, textRng, type Rng } from "./room/rng.js";
-import { scoreMatch, type ScoreInput } from "./room/scoring.js";
+import { scoreMatch, type ScoreInput, type TeamOutcome } from "./room/scoring.js";
 import { readKnobs, NO_KNOBS, type TestKnobs } from "./room/testing.js";
 import { say } from "./room/text.js";
 import { roomTimings, secondsLeft, type RoomTimings } from "./room/timings.js";
@@ -174,9 +173,11 @@ export class RaftRoom extends Room<RaftState> {
   /** The day clock of the current tick (null outside playing). */
   private dayClock: ClockInfo | null = null;
   private stormWarned = false;
-  /** Ticks that were left before the storm when the raft launched (team score bonus). */
+  /** Ticks that were left before the storm when the raft launched (matchEnd ticksLeft). */
   private launchTicksLeft = 0;
   private readonly aboard = new Set<string>();
+  /** Living participants left on the island at the launch (LEFT_BEHIND_PENALTY each). */
+  private leftBehind = 0;
   private matchEndTick = 0;
   private matchStartTick = 0;
   /** This process's live-room slot (registry.ts): claimed first thing in onCreate, released once. */
@@ -526,7 +527,7 @@ export class RaftRoom extends Room<RaftState> {
       this.sendAll(MSG.DAY_PHASE, { tick: s.tick, day: clock.day, dayPhase: clock.dayPhase });
     }
     s.phaseTicksLeft = clock.phaseLeft;
-    if (!this.stormWarned && !clock.over && clock.day === DAYS && clock.dayPhase === "night" && clock.stormLeft <= this.timings.stormWarnTicks) {
+    if (!this.stormWarned && !clock.over && clock.day === this.timings.days && clock.dayPhase === "night" && clock.stormLeft <= this.timings.stormWarnTicks) {
       this.stormWarned = true;
       this.sendAll(MSG.STORM_WARNING, { tick: s.tick, secondsLeft: secondsLeft(clock.stormLeft) });
     }
@@ -584,6 +585,7 @@ export class RaftRoom extends Room<RaftState> {
     this.matchIds = ids;
     this.leavers.clear();
     this.aboard.clear();
+    this.leftBehind = 0;
     this.stormWarned = false;
     this.launchTicksLeft = 0;
     this.dayClock = null;
@@ -641,13 +643,14 @@ export class RaftRoom extends Room<RaftState> {
     this.sendAll(MSG.STORM, { tick: s.tick });
   }
 
-  /** The world says the raft leaves (everyone required aboard, or the boarding countdown ran out). */
+  /** The world says the raft leaves (everyone required aboard after the minimum push-off, or the push-off ran out). */
   private onLaunchRequest(ev: LaunchRequestEvent): void {
     const s = this.state;
-    if (s.phase !== "playing" && s.phase !== "landing") return;
+    if (s.phase !== "playing") return;
     this.launchTicksLeft = this.dayClock ? this.dayClock.stormLeft : matchTicks(this.timings);
     this.aboard.clear();
     for (const id of ev.aboard) this.aboard.add(id);
+    this.leftBehind = ev.leftBehind.length;
     this.setPhase("launch");
     s.phaseTicksLeft = this.timings.launch;
     s.winnerTeam = ev.team;
@@ -672,7 +675,17 @@ export class RaftRoom extends Room<RaftState> {
       inputs.push({ id, seat: p.seat, team: p.team, score: p.score, stats: p.stats, aboard: won && (this.aboard.has(id) || p.boarded) });
     }
     const ticksLeft = won ? this.launchTicksLeft : 0;
-    const result = scoreMatch(inputs, Math.max(1, s.teams.length), s.winnerTeam, ticksLeft);
+    const outcomes: TeamOutcome[] = [];
+    s.teams.forEach((team) => {
+      outcomes[team.index] = {
+        survivorsAboard: inputs.filter((p) => p.team === team.index && p.aboard).length,
+        leftBehind: won && s.winnerTeam === team.index ? this.leftBehind : 0,
+        raftHp: team.raftHp,
+        bossDown: team.bossDown,
+        stagesAssembled: this.world.raft.stagesAssembled(team.index),
+      };
+    });
+    const result = scoreMatch(inputs, Math.max(1, s.teams.length), s.winnerTeam, outcomes);
     s.teams.forEach((team) => {
       team.score = result.teamScores[team.index] ?? 0;
     });
@@ -724,6 +737,7 @@ export class RaftRoom extends Room<RaftState> {
     });
     this.matchIds = [];
     this.aboard.clear();
+    this.leftBehind = 0;
     this.stormWarned = false;
     this.launchTicksLeft = 0;
     this.dayClock = null;

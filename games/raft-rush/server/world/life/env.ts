@@ -19,12 +19,16 @@ export interface SpawnOptions {
   yaw?: number;
   /** Feet height (default: terrain height). */
   y?: number;
+  /** Hit points (default MONSTERS[kind].hp; Captain Crab: bossHpFor). */
+  hp?: number;
 }
 
 export class LifeEnv {
   readonly brains = new Map<string, MonsterBrain>();
   /** Light rings this tick (ctx.lights() cached once per step). */
   rings: LightRing[] = [];
+  /** The campfire rings among them (raft-bound crabs ignore torch light: only these keep them off). */
+  fireRings: LightRing[] = [];
   /** Players monsters may target this tick: alive, not downed, not aboard, not washed. */
   targets: PlayerState[] = [];
   private seq = 0;
@@ -35,6 +39,7 @@ export class LifeEnv {
   /** Refresh the per-tick caches (call at the start of every step and before out-of-step queries). */
   refresh(): void {
     this.rings = this.ctx.lights();
+    this.fireRings = this.rings.filter((r) => r.kind === "fire");
     this.targets = this.ctx.alivePlayers().filter((p) => p.alive && !p.downed && !p.boarded && !p.washed && !p.spectator);
   }
 
@@ -52,9 +57,9 @@ export class LifeEnv {
     return b;
   }
 
-  /** (x, z) is inside a light ring right now. */
-  lit(x: number, z: number): boolean {
-    return inRings(this.rings, x, z);
+  /** (x, z) is inside a light ring right now (`fireOnly`: a campfire ring — what a raft-bound crab respects). */
+  lit(x: number, z: number, fireOnly = false): boolean {
+    return inRings(fireOnly ? this.fireRings : this.rings, x, z);
   }
 
   ground(x: number, z: number): number {
@@ -85,7 +90,7 @@ export class LifeEnv {
     m.z = z;
     m.y = o.y ?? this.ground(x, z);
     m.yaw = o.yaw ?? 0;
-    m.hp = MONSTERS[kind].hp;
+    m.hp = Math.max(1, Math.min(255, Math.round(o.hp ?? MONSTERS[kind].hp)));
     m.mode = o.mode;
     m.modeTicks = o.modeTicks;
     m.targetId = "";

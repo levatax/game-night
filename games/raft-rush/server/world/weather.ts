@@ -3,7 +3,7 @@
 //
 // Dawn: roll today's weather (day 1: DAY1_WEATHER_CHANCE, from day 2 always one of WEATHER_IDS) and today's
 // day event (DAY_EVENT_IDS); at WEATHER_START_FRACTION of the day set state.weather + emit weather; at the next
-// dawn back to "clear". At DAY_EVENT_FRACTION: gull / monkeys (MonsterSystem.spawnVisitor) or a wave gift: 3 resting
+// dawn back to "clear". At each of DAY_EVENT_FRACTIONS (two a day): gull / monkeys (MonsterSystem.spawnVisitor) or a wave gift: 3 resting
 // items washed up on a shore cell (2 random materials + 1 coconut), and 25% of the time whoever picks up the first
 // one also gets a treasure reel (FishingSystem.treasureReel "waveGift") — emit dayEvent either way.
 // Effects other systems read: state.weather (rain: fire ×3 drain, collectors fill, warmth loss; fog: client
@@ -15,7 +15,7 @@
 // detected on their own (a gift projectile vanished with a player right next to it); RaftWorld may also call
 // onPickup() for an exact answer.
 
-import { DAY_EVENT_FRACTION, WEATHER_START_FRACTION } from "../../shared/constants.js";
+import { DAY_EVENT_FRACTIONS, WEATHER_START_FRACTION } from "../../shared/constants.js";
 import { clockAt, type ClockInfo } from "../../shared/rules/schedule.js";
 import type { DayEventKind, Weather } from "../../shared/types.js";
 import type { MonsterSystem } from "./monsters.js";
@@ -37,7 +37,8 @@ export interface Forecast {
 export class WeatherSystem {
   private rewind = new ClockRewind();
   private rolledDay = 0;
-  private eventDay = 0;
+  /** Last day-event mark run: (day − 1) × DAY_EVENT_FRACTIONS.length + index + 1. */
+  private eventMark = 0;
   private weatherDay = 0;
   private today: Forecast = { day: 0, weather: "clear", event: "waveGift", happened: "" };
   private yesterdayWeather: Weather = "clear";
@@ -99,7 +100,7 @@ export class WeatherSystem {
 
   private resetMarks(): void {
     this.rolledDay = 0;
-    this.eventDay = 0;
+    this.eventMark = 0;
     this.weatherDay = 0;
     this.yesterdayWeather = "clear";
     this.yesterdayEvent = null;
@@ -114,14 +115,21 @@ export class WeatherSystem {
     if (clock.over) return;
     if (clock.dayPhase !== "day") {
       // Seen a day only after it ended (shouldn't happen): don't replay its morning.
-      if (this.rolledDay < clock.day) this.rolledDay = this.eventDay = this.weatherDay = clock.day;
+      if (this.rolledDay < clock.day) {
+        this.rolledDay = this.weatherDay = clock.day;
+        this.eventMark = clock.day * DAY_EVENT_FRACTIONS.length;
+      }
       return;
     }
     if (this.rolledDay < clock.day) this.dawn(clock.day);
     const f = phaseFraction(clock);
-    if (this.eventDay < clock.day && f >= DAY_EVENT_FRACTION) {
-      this.eventDay = clock.day;
-      this.runEvent();
+    // Two events a day (Long Tide §6), one at each DAY_EVENT_FRACTIONS mark; eventDay counts in half-days.
+    for (let k = 0; k < DAY_EVENT_FRACTIONS.length; k++) {
+      const mark = (clock.day - 1) * DAY_EVENT_FRACTIONS.length + k + 1;
+      if (this.eventMark < mark && f >= DAY_EVENT_FRACTIONS[k]!) {
+        this.eventMark = mark;
+        this.runEvent(k);
+      }
     }
     if (this.weatherDay < clock.day && f >= WEATHER_START_FRACTION) {
       this.weatherDay = clock.day;
@@ -148,10 +156,12 @@ export class WeatherSystem {
     this.ctx.emit({ type: "weather", tick: this.ctx.tick(), day, weather: this.today.weather });
   }
 
-  private runEvent(): void {
+  /** Day event `k` of today: the first is the rolled one, the second a fresh roll that isn't the first. */
+  private runEvent(k: number): void {
     if (this.ctx.state.teams.length === 0) return;
-    const happened = runDayEvent(this.ctx, this.monsters, this.gifts, this.today.event, 0);
-    this.today.happened = happened;
+    const kind = k === 0 ? this.today.event : rollDayEvent(this.ctx.rng, this.today.happened || this.today.event);
+    const happened = runDayEvent(this.ctx, this.monsters, this.gifts, kind, 0);
+    if (k === 0) this.today.happened = happened;
     this.yesterdayEvent = happened;
   }
 }

@@ -6,8 +6,9 @@
 // line (`feed.tip_<id>`, client-app) and the app records it in settings.seenTips itself, so every tip still shows
 // at most once — until the settings menu's "Show tips again" clears seenTips, which re-arms every tip here too.
 
-import { BAR_MAX, CHANNEL, DAYS, FIRE_LOW_FRACTION, FIRE_START_FUEL_TICKS, FISH_STATE, LOW_BAR_FRACTION } from "../../../shared/constants";
-import { carriesRaftGoods, type Interaction } from "../../../shared/rules/interact";
+import { BAR_MAX, CHANNEL, FIRE_LOW_FRACTION, FIRE_START_FUEL_TICKS, FISH_STATE, LOW_BAR_FRACTION, RAFT_LAUNCH_STAGE, timingsFor } from "../../../shared/constants";
+import { carriesRaftGoods, raftMaterialsDone, type Interaction } from "../../../shared/rules/interact";
+import { launchDayFor } from "../../../shared/rules/schedule";
 import { countOf } from "../../../shared/rules/inventory";
 import type { DayPhase, Phase, PlayerView, RaftStateView } from "../../../shared/types";
 import { has } from "../i18n";
@@ -39,6 +40,14 @@ export const COACH_TIPS = [
   "catch",
   "storm",
   "legend",
+  "fellWithAxe",
+  "heavyCarry",
+  "buildBench",
+  "salvageWreck",
+  "assemble",
+  "cookProvisions",
+  "guardRaft",
+  "killBoss",
 ] as const;
 export type CoachTip = (typeof COACH_TIPS)[number];
 
@@ -128,7 +137,15 @@ export class Coach {
     if (it?.kind === "craft") this.tip("craft");
     if (it?.kind === "chest") this.tip("chest");
     if (it?.kind === "spring") this.tip("spring");
-    if (team && team.stage < 3 && carriesRaftGoods(me)) this.tip("raft");
+    if (team && team.stage < RAFT_LAUNCH_STAGE && carriesRaftGoods(me)) this.tip("raft");
+    if (countOf(me, "axe") > 0) this.tip("fellWithAxe");
+    if (countOf(me, "log") > 0 || countOf(me, "barrel") > 0 || (me.loadMult > 0 && me.loadMult < 100)) this.tip("heavyCarry");
+    if (team && team.benchTier === 0 && it?.kind === "craft") this.tip("buildBench");
+    if (team && team.stage >= 2 && team.benchTier >= 1 && countOf(me, "hammer") === 0) this.tip("salvageWreck");
+    if (team && raftMaterialsDone(team)) this.tip("assemble");
+    if (team && team.stage === 5) this.tip("cookProvisions");
+    if (team && team.stage >= 1 && f.dayPhase === "dusk") this.tip("guardRaft");
+    if (team && team.stage >= 4 && !team.bossDown) this.tip("killBoss");
     if (countOf(me, "rod") > 0) this.tip("fishing");
     if (me.fishState === FISH_STATE.CAST) this.tip("bite");
     if (countOf(me, "torch") > 0) this.tip("torch");
@@ -137,11 +154,11 @@ export class Coach {
     if (f.day === 1 && f.dayPhase === "day" && f.phaseFrac > LEGEND_DAY_FRACTION) this.tip("legend");
     if (f.dayPhase === "dusk") this.tip("dusk");
     if (f.dayPhase === "night") this.tip("night");
-    if (f.day >= DAYS && f.dayPhase !== "day") this.tip("storm");
+    if (f.day >= timingsFor(f.state.fast).days && f.dayPhase !== "day") this.tip("storm");
     if (team) {
       if (team.fireFuel > 0 && team.fireFuel < FIRE_LOW_FRACTION * FIRE_START_FUEL_TICKS) this.tip("lowFire");
       else if (team.fireFuel < FIRE_START_FUEL_TICKS * 0.5) this.tip("fire");
-      if (team.stage >= 3) this.tip("board");
+      if (team.stage >= RAFT_LAUNCH_STAGE && f.day >= launchDayFor(f.state.difficulty, timingsFor(f.state.fast))) this.tip("board");
     }
     const low = LOW_BAR_FRACTION * BAR_MAX;
     if (me.hunger < low || me.thirst < low || me.warmth < low) this.tip("bars");

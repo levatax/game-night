@@ -50,11 +50,17 @@ interface MatchReport {
   gnawed: number;
   throws: number;
   hits: number;
+  /** Captain Crab: nights he came, damage he took, the night he went down (0 = never). */
+  bossSpawns: number;
+  bossHurt: number;
+  bossDownDay: number;
+  /** Raft stages lost to raft hp 0. */
+  stagesLost: number;
   rejects: Record<string, number>;
   goals: Record<string, number>;
 }
 
-function runMatch(seed: number, bots: number, difficulty: Difficulty, fast: boolean, idleHumans = 0): MatchReport {
+function runMatch(seed: number, bots: number, difficulty: Difficulty, fast: boolean, idleHumans = 0, bossHelpDay = 0): MatchReport {
   const timings = timingsFor(fast);
   const state = new RaftState();
   const island = generateIsland(seed, "solo");
@@ -106,7 +112,7 @@ function runMatch(seed: number, bots: number, difficulty: Difficulty, fast: bool
   state.day = 1;
   state.dayPhase = "day";
 
-  const report: MatchReport = { seed, biome: island.biome, outcome: "timeout", seconds: 0, stage: 0, raft: "", delivered: 0, downs: 0, kills: 0, fish: 0, crafted: 0, spawns: 0, hurt: 0, gnawed: 0, throws: 0, hits: 0, rejects: {}, goals: {} };
+  const report: MatchReport = { seed, biome: island.biome, outcome: "timeout", seconds: 0, stage: 0, raft: "", delivered: 0, downs: 0, kills: 0, fish: 0, crafted: 0, spawns: 0, hurt: 0, gnawed: 0, throws: 0, hits: 0, bossSpawns: 0, bossHurt: 0, bossDownDay: 0, stagesLost: 0, rejects: {}, goals: {} };
   const limit = timings.landing + matchTicks(timings) + 60;
   const trace = !!process.env.RAFT_BALANCE_TRACE;
   const lastGoal = new Map<string, string>();
@@ -131,13 +137,29 @@ function runMatch(seed: number, bots: number, difficulty: Difficulty, fast: bool
         break;
       }
     }
+    // RAFT_BALANCE_BOSS_HELP=<day>: the human's "bit of help" — Captain Crab is down by the dawn of that day and his
+    // compass is in the chest (what a human with a spear does; the bots alone rarely manage it).
+    if (bossHelpDay > 0 && clock && clock.day >= bossHelpDay && !state.teams[0]!.bossDown) {
+      state.teams[0]!.bossDown = true;
+      state.monsters.forEach((m) => {
+        if (m.kind === "boss") state.monsters.delete(m.id);
+      });
+      if (state.teams[0]!.stage <= 4) world.returnToChest(0, "compass", 1);
+      if (!report.bossDownDay) report.bossDownDay = clock.day;
+    }
     desk.tick();
+    if (trace && clock && (state.tick % (TICK_RATE * 10) === 0 || clock.phaseElapsed === 0)) {
+      const tm = state.teams[0]!;
+      out(`  == ${(state.clockTicks / TICK_RATE).toFixed(1).padStart(6)}s day ${clock.day} ${clock.dayPhase} fire ${Math.round(tm.fireFuel / TICK_RATE)}s stage ${tm.stage} have ${[...tm.raftHave].join("/")}/${[...tm.raftNeed].join("/")} work ${tm.raftWork}/${tm.raftWorkNeed} hp ${tm.raftHp} bench ${tm.benchTier} scrap ${tm.wreckScrap} boss ${tm.bossDown} monsters ${state.monsters.size}${[...state.monsters.values()].filter((m) => m.kind === "boss").map((m) => ` BOSS(${m.mode} ${m.targetId} hp${m.hp} raft ${Math.hypot(m.x - island.sites[0]!.raft.x, m.z - island.sites[0]!.raft.z).toFixed(0)}m)`).join("")} chest ${[...tm.chest.entries()].filter(([, n]) => n > 0).map(([k, n]) => `${k}${n}`).join(" ")}`);
+    }
     for (const id of ids.slice(0, bots)) {
       const key = desk.goalOf(id);
       const g = key.split(":")[0] || "-";
       report.goals[g] = (report.goals[g] ?? 0) + 1;
       if (trace && key !== lastGoal.get(id)) {
         lastGoal.set(id, key);
+        const failed = desk.failureOf(id);
+        if (failed) out(`  ${(state.clockTicks / TICK_RATE).toFixed(1).padStart(6)}s FAILED ${id} ${failed}`);
         const p = state.players.get(id)!;
         out(`  ${(state.clockTicks / TICK_RATE).toFixed(1).padStart(6)}s ${state.dayPhase.padEnd(5)} ${id} ${p.botRole.padEnd(7)} ${key || "-"}  hp ${p.hp} hu ${p.hunger} th ${p.thirst} wa ${p.warmth} inv ${p.inv0}${p.cnt0} ${p.inv1}${p.cnt1} ${p.inv2}${p.cnt2} ${p.inv3}${p.cnt3}`);
       }
@@ -155,10 +177,17 @@ function runMatch(seed: number, bots: number, difficulty: Difficulty, fast: bool
         const key = `${ev.action}:${ev.reason}`;
         report.rejects[key] = (report.rejects[key] ?? 0) + 1;
       } else if (ev.type === "playerDowned") report.downs++;
-      else if (ev.type === "monsterDie" && !ev.fled) report.kills++;
+      else if (ev.type === "monsterDie" && !ev.fled) {
+        report.kills++;
+        if (ev.kind === "boss" && !report.bossDownDay) report.bossDownDay = state.day;
+      }
       else if (ev.type === "fishResult") report.fish++;
       else if (ev.type === "crafted") report.crafted++;
-      else if (ev.type === "monsterSpawn") report.spawns++;
+      else if (ev.type === "monsterSpawn") {
+        report.spawns++;
+        if (ev.kind === "boss") report.bossSpawns++;
+      } else if (ev.type === "monsterHurt" && ev.kind === "boss") report.bossHurt += ev.damage;
+      else if (ev.type === "raftStage" && ev.lost) report.stagesLost++;
       else if (ev.type === "playerHurt") report.hurt += ev.amount;
       else if (ev.type === "raftDamage") report.gnawed += ev.amount;
       else if (ev.type === "throw" && !ev.toss) {
@@ -187,7 +216,7 @@ function runMatch(seed: number, bots: number, difficulty: Difficulty, fast: bool
   const team = state.teams[0]!;
   report.seconds = Math.round(state.clockTicks / TICK_RATE);
   report.stage = team.stage;
-  report.raft = `hull ${team.hullWood} mast ${team.mastWood}/${team.mastRope} prov ${team.food}/${team.water} fire ${Math.round(team.fireFuel / TICK_RATE)}s`;
+  report.raft = `stage ${team.stage} have ${[...team.raftHave].join("/")} need ${[...team.raftNeed].join("/")} work ${team.raftWork}/${team.raftWorkNeed} hp ${team.raftHp} bench ${team.benchTier} fire ${Math.round(team.fireFuel / TICK_RATE)}s`;
   state.players.forEach((p) => (report.delivered += p.stats.delivered));
   return report;
 }
@@ -224,6 +253,7 @@ function parseBand(raw: string | undefined): { lo: number; hi: number } | null {
 const env = process.env;
 const enabled = !!env.RAFT_BALANCE;
 const seeds = Number(env.RAFT_BALANCE_SEEDS ?? 6);
+const bossHelp = Number(env.RAFT_BALANCE_BOSS_HELP ?? 0);
 const scenario: Scenario = {
   difficulty: (env.RAFT_BALANCE_DIFFICULTY ?? "normal") as Difficulty,
   bots: Number(env.RAFT_BALANCE_BOTS ?? 3),
@@ -244,7 +274,7 @@ describe("bot balance harness", () => {
     const reports: MatchReport[] = [];
     for (let i = 0; i < seeds; i++) {
       const seed = env.RAFT_BALANCE_SEED ? Number(env.RAFT_BALANCE_SEED) + i : 1000 + i * 7919;
-      const r = runMatch(seed, bots, difficulty, fast, idle);
+      const r = runMatch(seed, bots, difficulty, fast, idle, bossHelp);
       reports.push(r);
       const top = Object.entries(r.goals)
         .sort((a, b) => b[1] - a[1])
@@ -255,7 +285,7 @@ describe("bot balance harness", () => {
         .map(([k, n]) => `${k}×${n}`)
         .join(" ");
       out(
-        `seed ${r.seed} ${r.biome.padEnd(8)} ${r.outcome.padEnd(8)} t=${r.seconds}s stage ${r.stage} | ${r.raft} | delivered ${r.delivered} downs ${r.downs} kills ${r.kills} fish ${r.fish} crafted ${r.crafted} | spawns ${r.spawns} throws ${r.throws} hits ${r.hits} hurt ${r.hurt} gnawed ${r.gnawed}\n   goals: ${top}\n   rejects: ${rej || "-"}`,
+        `seed ${r.seed} ${r.biome.padEnd(8)} ${r.outcome.padEnd(8)} t=${r.seconds}s stage ${r.stage} | ${r.raft} | delivered ${r.delivered} downs ${r.downs} kills ${r.kills} fish ${r.fish} crafted ${r.crafted} | spawns ${r.spawns} throws ${r.throws} hits ${r.hits} hurt ${r.hurt} gnawed ${r.gnawed} lost ${r.stagesLost} | boss ${r.bossSpawns}× hurt ${r.bossHurt} down ${r.bossDownDay ? `day ${r.bossDownDay}` : "-"}\n   goals: ${top}\n   rejects: ${rej || "-"}`,
       );
     }
     const wins = reports.filter((r) => r.outcome === "launched").length;

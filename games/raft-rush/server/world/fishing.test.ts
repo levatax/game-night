@@ -200,8 +200,8 @@ describe("FishingSystem", () => {
   });
 
   it("bad-luck protection: after FISH_PITY boots the next catch is at least a fish", () => {
-    // Every rng value 0.65: the wait is fixed, every normal roll is a boot (base table), no reel tease.
-    w.setRng(() => 0.65);
+    // Every rng value 0.6: the wait is fixed, every normal roll is a boot (base table), no reel tease.
+    w.setRng(() => 0.6);
     for (let k = 0; k <= FISH_PITY; k++) {
       castAndWait();
       tick(true);
@@ -265,9 +265,9 @@ describe("FishingSystem", () => {
     expect(w.treasures[0]!.treasure).not.toBe(w.treasures[1]!.treasure);
   });
 
-  it("does not hand out a useless treasure (old sail after the mast, a second flare)", () => {
+  it("does not hand out a useless treasure (old sail after the sail, a second flare)", () => {
     const team = w.team(0);
-    team.stage = 2;
+    team.stage = 4;
     team.flare = true;
     for (let k = 0; k < 40; k++) {
       fish.treasureReel(p, "waveGift");

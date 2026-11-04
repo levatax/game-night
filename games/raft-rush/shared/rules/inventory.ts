@@ -1,6 +1,7 @@
 // 4-slot inventory helpers over the flat schema fields (inv0..inv3 / cnt0..cnt3). Owner: architect (complete).
 // Mutating helpers are for the server world; the client and bots use the read-only ones.
 
+import { HEAVY_MAX } from "../constants.js";
 import { ITEMS } from "../items.js";
 import type { InvKind, ItemKind } from "../types.js";
 
@@ -58,9 +59,10 @@ export function countOf(inv: Inventory, kind: ItemKind): number {
   return n;
 }
 
-/** How many units of `kind` would fit (topping up partial stacks first, then empty slots). */
+/** How many units of `kind` would fit (topping up partial stacks first, then empty slots; heavy cargo: heavyRoom). */
 export function roomFor(inv: Inventory, kind: ItemKind): number {
   const stack = ITEMS[kind].stack;
+  if (ITEMS[kind].heavy) return heavyRoom(inv);
   let n = 0;
   for (let s = 0; s < SLOTS; s++) {
     const k = slotKind(inv, s);
@@ -70,9 +72,29 @@ export function roomFor(inv: Inventory, kind: ItemKind): number {
   return n;
 }
 
+/** Heavy units (logs, barrels) across the slots. */
+export function heavyCount(inv: Inventory): number {
+  let n = 0;
+  for (let s = 0; s < SLOTS; s++) {
+    const k = slotKind(inv, s);
+    if (k !== "" && ITEMS[k].heavy) n += slotCount(inv, s);
+  }
+  return n;
+}
+
+/** Heavy units that still fit: HEAVY_MAX in all (one), and an empty slot for it. */
+export function heavyRoom(inv: Inventory): number {
+  const left = HEAVY_MAX - heavyCount(inv);
+  if (left <= 0) return 0;
+  let empty = 0;
+  for (let s = 0; s < SLOTS; s++) if (slotKind(inv, s) === "") empty++;
+  return Math.min(left, empty);
+}
+
 /** Add up to `count` units (partial stacks first, then the lowest empty slot). Returns how many were added. */
 export function addItem(inv: Inventory, kind: ItemKind, count: number): number {
   const stack = ITEMS[kind].stack;
+  if (ITEMS[kind].heavy) count = Math.min(count, heavyRoom(inv));
   let left = count;
   for (let s = 0; s < SLOTS && left > 0; s++) {
     if (slotKind(inv, s) !== kind) continue;

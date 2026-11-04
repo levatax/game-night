@@ -99,6 +99,8 @@ export interface PromptModel {
   ok: boolean;
   /** i18n key under `reject.` when !ok. */
   reason: string;
+  /** Params of the reason text ({day}, {bench}). */
+  reasonParams?: Record<string, string | number>;
 }
 
 export interface SlotModel {
@@ -108,11 +110,51 @@ export interface SlotModel {
   meter: number;
 }
 
+/** One requirement row of the current raft stage (RAFT_STAGES[stage].req[slot]). */
 export interface RaftPartModel {
-  /** "hullWood" | "mastWood" | "mastRope" | "food" | "water". */
-  part: "hullWood" | "mastWood" | "mastRope" | "food" | "water";
+  /** The slot's primary item (icon + name; the provisions food slot also takes crab / golden fish). */
+  item: ItemKind;
   have: number;
   need: number;
+}
+
+/** The raft card (Long Tide: six build stages + the launch). */
+export interface RaftHudModel {
+  /** Current stage 0..stages-1 (stages-1 = the launch: everything assembled). */
+  stage: RaftStage;
+  /** Segments on the card (RAFT_LAUNCH_STAGE + 1 = 7). */
+  stages: number;
+  /** The current stage's requirement rows (empty on the launch stage). */
+  parts: RaftPartModel[];
+  /** Day the current stage (or, on the launch stage, the launch window) opens; 0 = open now. */
+  lockDay: number;
+  /** Assembly 0..1 of the current stage (materials in, hold E at the raft); -1 = not assembling. */
+  assembly: number;
+  /** The current stage needs this many players holding E at once (the mast: 2), 1 otherwise. */
+  minHolders: number;
+  /** Players holding E on the raft right now. */
+  holders: number;
+  /** Raft integrity 0..1, -1 before the keel exists. */
+  hp: number;
+  /** Below the boarding threshold (RAFT_HP_BOARD). */
+  hpLow: boolean;
+  /** Boardable now (every stage assembled, launch window open, hp ≥ 50). */
+  ready: boolean;
+  aboard: number;
+  total: number;
+}
+
+/** Long Tide status line under the clock: the day's objective, the launch window, Captain Crab, the spring. */
+export interface StatusModel {
+  /** i18n key (coach.obj_day<n>) of today's objective, "" none. */
+  objective: string;
+  /** Launch window: the day it opens and whether it is open now (0 = n/a). */
+  launchDay: number;
+  launchOpen: boolean;
+  /** Captain Crab: "here" (on the island now), "tonight" (comes at night), "returns" (fled, comes back), "" none / down. */
+  boss: "here" | "tonight" | "returns" | "";
+  /** Spring charges left (-1 = unknown). */
+  spring: number;
 }
 
 export type CompassMarkKind = "camp" | "raft" | "spring" | "secret" | "ping" | "player" | "resource" | "danger" | "cave";
@@ -168,7 +210,11 @@ export interface HudModel {
   charge: number;
   /** Fishing: "cast" waiting, "bite" (click now! windowFrac 1 → 0), "reel" (result coming). */
   fishing: { state: "cast" | "bite" | "reel"; windowFrac: number } | null;
-  raft: { stage: RaftStage; parts: RaftPartModel[]; ready: boolean; aboard: number; total: number };
+  raft: RaftHudModel;
+  /** Objective / launch window / boss line (Long Tide). */
+  status: StatusModel;
+  /** Carrying a heavy log / barrel: escorted = a teammate is close enough (faster carry). null = not loaded. */
+  heavy: { escorted: boolean; pct: number } | null;
   fire: { frac: number; lit: boolean; low: boolean; secLeft: number };
   compass: { yaw: number; marks: CompassMark[] };
   /** You are downed: seconds until you wash ashore; `revive` 0..1 when a teammate is reviving you. */
@@ -245,10 +291,16 @@ export interface RecipeRowModel {
   locked: boolean;
   /** Output item (null for fuel / team feast). */
   out: ItemKind | null;
+  /** Why it can't be crafted yet regardless of ingredients: needs a bench tier / a later day (i18n key under `reject.`, "" none). */
+  gate?: "needBench" | "tooEarly" | "built" | "";
+  /** Params of the gate text ({bench} already translated, {day}). */
+  gateParams?: Record<string, string | number>;
 }
 
 export interface CraftPanelModel {
   recipes: RecipeRowModel[];
+  /** Camp bench tier: 0 bare campfire, 1 workbench, 2 anvil. */
+  benchTier?: number;
   fireLit: boolean;
   /** Fire fuel 0..1 and seconds. */
   fuelFrac: number;

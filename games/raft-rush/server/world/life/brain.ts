@@ -49,6 +49,13 @@ export interface MonsterBrain {
   windup: number;
   /** Raft gnaw progress (ticks toward RAFT_GNAW_TICKS). */
   gnaw: number;
+  /** A crab going for the raft (or its guard): torch light doesn't stop it, only campfire light (Long Tide §3.3). */
+  raftBound: boolean;
+  /** Chest raid progress (ticks toward CHEST_RAID_TICKS). */
+  raid: number;
+  /** Boss: closest it got to the raft lately and the tick of that best (a boss that stops getting closer resurfaces). */
+  raftBest: number;
+  raftBestTick: number;
   /** Fence being gnawed / snagged on ("" none) and progress ticks. */
   fenceId: string;
   fenceTicks: number;
@@ -91,6 +98,10 @@ export function createBrain(kind: MonsterKind, night: number, phase: number): Mo
     cooldown: 0,
     windup: 0,
     gnaw: 0,
+    raftBound: false,
+    raid: 0,
+    raftBest: Infinity,
+    raftBestTick: 0,
     fenceId: "",
     fenceTicks: 0,
     kvx: 0,

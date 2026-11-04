@@ -45,14 +45,15 @@ const GULL_CLIMB_SPEED = 4;
 
 /* ================================================================ spawning */
 
-/** 1–2 monkeys from a tree near the chest; the first goes for `victim` (Fenomen) when given. */
+/** 2 monkeys (1 when there is only one thing to take) from a tree near the chest; the first goes for `victim` (Fenomen) when given. */
 export function spawnMonkeys(env: LifeEnv, victim: PlayerState | null, team: number): string[] {
   const site = env.ctx.site(team);
   const plans: string[] = [];
   if (victim && hasLoot(victim)) plans.push(victim.id);
   const chestUnits = chestCount(env, team);
   if (chestUnits > 0) plans.push("");
-  if (plans.length === 1 && chestUnits >= 2 && env.ctx.rng() < 0.5) plans.push("");
+  // Long Tide §6: a monkey raid takes 2 items (a second monkey whenever the chest holds 2 or more).
+  if (plans.length === 1 && chestUnits >= 2) plans.push("");
   const ids: string[] = [];
   const used = new Set<number>();
   for (const victimId of plans.slice(0, 2)) {

@@ -10,15 +10,14 @@
 // Run: npx vitest run games/raft-rush/server/room
 
 import { describe, expect, it } from "vitest";
-import { CHARACTER_IDS, DOWNED_TICKS, FIRE_FUEL_MAX_TICKS, FIRE_LIGHT_RADIUS, secToTicks, timingsFor } from "../../shared/constants.js";
-import { raftCost } from "../../shared/items.js";
+import { CHARACTER_IDS, DIFFICULTIES, DOWNED_TICKS, FIRE_FUEL_MAX_TICKS, FIRE_LIGHT_RADIUS, RAFT_HP_MAX, RAFT_LAUNCH_STAGE, secToTicks, timingsFor } from "../../shared/constants.js";
 import { generateIsland } from "../../shared/island/generate.js";
 import { heightAt } from "../../shared/island/heightfield.js";
 import { mulberry32 } from "../../shared/island/noise.js";
 import { BTN, type InputCmd } from "../../shared/protocol.js";
 import { resolveInteraction } from "../../shared/rules/interact.js";
 import { addItem, clearInventory, slotsOf } from "../../shared/rules/inventory.js";
-import { clockAt } from "../../shared/rules/schedule.js";
+import { clockAt, cycleTicks } from "../../shared/rules/schedule.js";
 import { wrapAngle, yawFromDir } from "../../shared/sim/math.js";
 import type { BotRole, ItemKind } from "../../shared/types.js";
 import { PlayerState, ProjectileEntity, RaftState } from "../schema.js";
@@ -54,6 +53,8 @@ interface Match {
   calls: string[];
   /** Run the room's per-tick order (clock → bots → world) from clock tick `from` up to `to`; returns the events. */
   run(from: number, to: number): GameEvent[];
+  /** From now on `run` plays on day `day` (the clock ticks are offset by whole days). */
+  setDay(day: number): void;
 }
 
 /** A solo match on the real world with seat "h1" (the dropped human) driven as a stand-in or as a full bot. */
@@ -103,9 +104,14 @@ function match(role: BotRole, standIn: boolean, seed: number, extra: (state: Raf
   desk.reset();
   state.phase = "playing";
   state.day = 1;
+  let offset = 0;
+  const setDay = (day: number): void => {
+    offset = (day - 1) * cycleTicks(timings);
+    state.day = day;
+  };
   const run = (from: number, to: number): GameEvent[] => {
     const events: GameEvent[] = [];
-    for (state.clockTicks = from; state.clockTicks < to; ) {
+    for (state.clockTicks = from + offset; state.clockTicks < to + offset; ) {
       state.tick++;
       state.clockTicks++;
       const clock = clockAt(state.clockTicks, timings);
@@ -117,7 +123,7 @@ function match(role: BotRole, standIn: boolean, seed: number, extra: (state: Raf
     }
     return events;
   };
-  return { state, world, desk, h, calls, run };
+  return { state, world, desk, h, calls, run, setDay };
 }
 
 function actorOf(ev: GameEvent): string {
@@ -167,7 +173,8 @@ function night(role: BotRole, standIn: boolean, seed: number): Night {
   for (const ev of events) {
     if (actorOf(ev) !== h.id) continue;
     if (ACTING.has(ev.type)) acted.push(ev.type);
-    if (ev.type === "playerHurt") hurt += ev.amount;
+    // Bites and the cold count; hunger / thirst don't (a long Long Tide dusk + night drains the 44 it starts with).
+    if (ev.type === "playerHurt" && ev.cause !== "hunger" && ev.cause !== "thirst") hurt += ev.amount;
   }
   return {
     inventoryBefore,
@@ -183,14 +190,20 @@ function night(role: BotRole, standIn: boolean, seed: number): Night {
   };
 }
 
+/** Every raft stage assembled, a sound raft and the launch window open (day DifficultyDef.launchDay). */
+function readyRaft(m: Match): void {
+  const team = m.state.teams[0]!;
+  team.stage = RAFT_LAUNCH_STAGE;
+  team.raftHp = RAFT_HP_MAX;
+  m.setDay(DIFFICULTIES.normal.launchDay);
+}
+
 /**
  * The raft is ready; seat h1 stands at the board flow's land-side stand point, its look `yawOff` off facing the
  * raft, and a coconut it has room for lies `dist` m away, `angle` off facing the raft. Returns that facing yaw.
  */
 function atTheRaft(m: Match, yawOff: number, angle: number, dist: number): number {
-  const team = m.state.teams[0]!;
-  Object.assign(team, raftCost(team.seats));
-  team.stage = 3;
+  readyRaft(m);
   const { raft, campfire } = m.world.island.sites[0]!;
   const l = Math.hypot(campfire.x - raft.x, campfire.z - raft.z);
   const h = m.h;
@@ -229,7 +242,7 @@ describe("reconnect stand-in in the real world (normal timings)", () => {
     });
   }
 
-  it("still revives a downed teammate, and boards the ready raft so the absent player isn't left ashore", () => {
+  it("still revives a downed teammate, and boards during the push-off so the absent player isn't left ashore", () => {
     // A connected teammate who went down 3 m away (and never presses a key).
     const m = match("asci", true, SEED, (state) => {
       const mate = new PlayerState();
@@ -250,13 +263,14 @@ describe("reconnect stand-in in the real world (normal timings)", () => {
     const revived = m.run(0, secToTicks(8)).filter((ev) => ev.type === "playerRevived");
     expect(revived).toMatchObject([{ playerId: "h2", byId: "h1" }]);
 
-    // The raft is ready and the mate stands by it: the stand-in walks over and boards (E), nothing else.
-    const team = m.state.teams[0]!;
-    Object.assign(team, raftCost(team.seats));
-    team.stage = 3;
+    // The raft is ready and the mate boards it (a human starts the push-off, Long Tide §7.8): the stand-in walks
+    // over and boards (E), nothing else.
+    readyRaft(m);
     const raft = m.world.island.sites[0]!.raft;
     mate.x = raft.x + 2;
     mate.z = raft.z;
+    mate.boarded = true;
+    m.state.launchTicksLeft = m.world.timings.launchWait;
     const events = m.run(secToTicks(8), secToTicks(30));
     expect(m.h.boarded).toBe(true);
     expect(events.filter((ev) => actorOf(ev) === "h1" && ACTING.has(ev.type))).toEqual([]);

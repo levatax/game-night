@@ -45,6 +45,8 @@ export interface WalkSpec {
   minY: number;
   /** Fences are walked into, not around (crabs gnaw, puffers snag, the boss smashes). */
   pushFences: boolean;
+  /** Only campfire rings count for avoidLight (a raft-bound crab walks through torch light, Long Tide §3.3). */
+  fireOnly?: boolean;
 }
 
 export interface WalkResult {
@@ -67,6 +69,18 @@ const SWEEP: ReadonlyArray<{ c: number; s: number; deg: number }> = SWEEP_DEG.ma
 
 /** One tick of ground movement toward (gx, gz). Mutates m (x, y, z, yaw) and the brain's steering memory. */
 export function walk(env: LifeEnv, m: MonsterState, b: MonsterBrain, spec: WalkSpec, gx: number, gz: number, arrive: number): WalkResult {
+  if (!spec.fireOnly || !spec.avoidLight) return walkIn(env, m, b, spec, gx, gz, arrive);
+  // Torch rings don't count for this walker: steer against the campfire rings only.
+  const rings = env.rings;
+  env.rings = env.fireRings;
+  try {
+    return walkIn(env, m, b, spec, gx, gz, arrive);
+  } finally {
+    env.rings = rings;
+  }
+}
+
+function walkIn(env: LifeEnv, m: MonsterState, b: MonsterBrain, spec: WalkSpec, gx: number, gz: number, arrive: number): WalkResult {
   const ox = m.x;
   const oz = m.z;
   const toGoal = dist2(ox, oz, gx, gz);

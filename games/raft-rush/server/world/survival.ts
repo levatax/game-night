@@ -4,30 +4,35 @@
 // Bars are floats in the runtime store (they drain by fractions per tick) and are written to the schema rounded
 // up. They only run while the day clock does (not during the landing / cinematics), and freeze for downed and
 // boarded players.
-// - Hunger 25/min (sprinting ×1.5), thirst 33/min (heat wave ×2 outside tree shade), both × difficulty bars ×
-//   timings.barMult.
-// - Warmth: +5/s within FIRE_WARM_RADIUS of a lit fire; cold (night on a nightChill biome, rain outside the cave /
-//   a hut, swimming unless Kolluklu Çocuk) −2/s, −1/s with a lit torch in hand; otherwise the day sun +1/s.
-// - Hp: lit fire +3/s nearby; once per second every empty bar −2, drowning (swimTicks > DROWN_TICKS) −10, a
-//   jellyfish as the active item −3; damagePlayer from monsters / blasts at any time. hp 0 → downed.
+// - Hunger 12/min (sprinting ×1.5), thirst 16/min (heat wave ×2 outside tree shade), both × difficulty bars ×
+//   timings.barMult (Long Tide §6).
+// - Warmth: +5/s within FIRE_WARM_RADIUS of a lit fire; cold (night — × BiomeDef.nightChillMult, volcanic 0.5 —,
+//   rain outside the cave / a hut, swimming unless Kolluklu Çocuk) −2/s, −1/s with a lit torch in hand; otherwise
+//   the day sun +1/s.
+// - Hp: lit fire +1/s nearby while hunger and thirst are above 0; once per second an empty hunger / thirst bar −3
+//   each, warmth 0 −1.5, drowning (swimTicks > DROWN_TICKS) −10, a jellyfish as the active item −3; damagePlayer
+//   from monsters / blasts at any time. hp 0 → downed (a carried compass goes back to the chest).
 // - Item timers per tick: a lit torch in hand burns (gone at 0; a spare starts fresh), a puffer's fuse counts
 //   down and explodes in hand (`blast` inHand, PUFFER_SELF_DAMAGE).
-// - Fire: −1 fuel per tick always (rain ×RAIN_FIRE_DRAIN_MULT unless a duel hut shelters it); 0 = out (`fireFuel`
-//   "out"). addFuel relights it. Spyglass countdown.
+// - Fire: burns FIRE_DAY_BURN_MULT fuel per tick by day, 1 at dusk / night (rain ×RAIN_FIRE_DRAIN_MULT unless a
+//   hut of the team shelters it, any layout); 0 = out (`fireFuel` "out"). addFuel relights it. Its light ring
+//   follows the fuel (fireLightRadius / fireRepels, RaftWorld.lights()). Spyglass countdown.
 // - Downed: DOWNED_TICKS crawl, then washed ashore (inventory lost); washed players respawn at the next dawn at
-//   the wreck with RESPAWN_BARS / RESPAWN_HP. Everyone washed with no dawn coming (day 3) → `teamWiped`.
+//   the wreck with RESPAWN_BARS / RESPAWN_HP, but only while a teammate is alive: every participant washed →
+//   `teamWiped` on any day (Long Tide T4).
 
 import {
   BAR_MAX,
   BIOMES,
   CHANNEL,
   CHARACTERS,
-  DAYS,
   DOWNED_TICKS,
   DROWN_DAMAGE_PER_SEC,
   DROWN_TICKS,
   DT,
+  COLD_DAMAGE_PER_SEC,
   EMPTY_BAR_DAMAGE_PER_SEC,
+  FIRE_DAY_BURN_MULT,
   FIRE_FUEL_MAX_TICKS,
   FIRE_HEAL_PER_SEC,
   FIRE_WARM_RADIUS,
@@ -48,6 +53,7 @@ import { countOf } from "../../shared/rules/inventory.js";
 import type { ClockInfo } from "../../shared/rules/schedule.js";
 import type { CoverCircle } from "../../shared/sim/cover.js";
 import { yawFromDir } from "../../shared/sim/math.js";
+import { fireRepels } from "../../shared/constants.js";
 import { copyPlayerSim, createPlayerSim, heldKind } from "../../shared/sim/player.js";
 import type { FireFuelEvent } from "../../shared/protocol.js";
 import type { HurtCause } from "../../shared/types.js";
@@ -66,6 +72,8 @@ function barValue(v: number, max: number): number {
 export class SurvivalSystem {
   /** Teams already reported as wiped this match. */
   private readonly wiped = new Set<number>();
+  /** Per team: fractional fuel burn carried to the next tick (the day burns at FIRE_DAY_BURN_MULT). */
+  private readonly burnFrac = new Map<number, number>();
   private readonly scratch: CoverCircle[] = [];
 
   constructor(private readonly core: WorldCore) {}
@@ -73,6 +81,7 @@ export class SurvivalSystem {
   /** Forget per-match flags. */
   reset(): void {
     this.wiped.clear();
+    this.burnFrac.clear();
   }
 
   /* ------------------------------------------------------------ float bars */
@@ -138,6 +147,12 @@ export class SurvivalSystem {
   private down(p: PlayerState, cause: HurtCause): void {
     const core = this.core;
     core.fishing.cancel(p, "cancel");
+    // The compass is never lost: a downed holder's goes straight back to the team chest (Long Tide §4.2).
+    const compasses = countOf(p, "compass");
+    if (compasses > 0) {
+      core.bag.take(p, "compass", compasses);
+      core.returnToChest(core.site(p.team).team, "compass", compasses);
+    }
     p.downed = true;
     p.downedTicks = DOWNED_TICKS;
     p.hp = 0;
@@ -180,7 +195,7 @@ export class SurvivalSystem {
       if (!p.alive || p.downed || p.boarded) return;
       this.bars(p, clock);
     });
-    this.fires();
+    this.fires(clock);
     for (const team of core.state.teams) if (team.spyglassTicks > 0) team.spyglassTicks--;
   }
 
@@ -220,12 +235,14 @@ export class SurvivalSystem {
       warmthPerSec({
         nearFire,
         nightChill: clock.dayPhase === "night" && BIOMES[core.state.biome].nightChill,
+        nightChillMult: BIOMES[core.state.biome].nightChillMult,
         rainChill: weather === "rain" && !this.sheltered(p, site),
         waterChill: p.swimming && CHARACTERS[p.character].waterChill,
         litTorch: heldKind(p) === "torch" && p.torchTicks > 0,
         daylight: clock.dayPhase === "day",
       }) * DT;
-    if (nearFire) rt.hp += FIRE_HEAL_PER_SEC * DT;
+    // The fire only heals the fed and watered (Long Tide §6).
+    if (nearFire && rt.hunger > 0 && rt.thirst > 0) rt.hp += FIRE_HEAL_PER_SEC * DT;
     this.write(p, rt);
 
     rt.secTicks++;
@@ -233,7 +250,7 @@ export class SurvivalSystem {
       rt.secTicks = 0;
       if (rt.hunger <= 0) this.damage(p, EMPTY_BAR_DAMAGE_PER_SEC, "hunger", "");
       if (rt.thirst <= 0) this.damage(p, EMPTY_BAR_DAMAGE_PER_SEC, "thirst", "");
-      if (rt.warmth <= 0) this.damage(p, EMPTY_BAR_DAMAGE_PER_SEC, "cold", "");
+      if (rt.warmth <= 0) this.damage(p, COLD_DAMAGE_PER_SEC, "cold", "");
       if (p.swimTicks > DROWN_TICKS) this.damage(p, DROWN_DAMAGE_PER_SEC, "drown", "");
       if (heldKind(p) === "jellyfish") this.damage(p, JELLYFISH_DAMAGE_PER_SEC, "jellyfish", "");
     }
@@ -281,16 +298,26 @@ export class SurvivalSystem {
 
   /* ----------------------------------------------------------------- fire */
 
-  private fires(): void {
+  private fires(clock: ClockInfo): void {
     const core = this.core;
     const raining = core.state.weather === "rain";
     for (const site of core.island.sites) {
       const team = core.team(site.team);
-      if (team.fireFuel <= 0) continue;
-      // Only a (duel) hut keeps the rain off the campfire (§2.7: not in coop).
-      const drain = raining && !this.hutNear(site.campfire.x, site.campfire.z, site.team) ? RAIN_FIRE_DRAIN_MULT : 1;
+      if (team.fireFuel <= 0) {
+        this.burnFrac.delete(site.team);
+        continue;
+      }
+      // Half rate by day, full at dusk / night (Long Tide §6); rain ×RAIN_FIRE_DRAIN_MULT unless a hut of the team
+      // stands by the fire (any layout).
+      const rate = (clock.dayPhase === "day" ? FIRE_DAY_BURN_MULT : 1) * (raining && !this.hutNear(site.campfire.x, site.campfire.z, site.team) ? RAIN_FIRE_DRAIN_MULT : 1);
+      const acc = (this.burnFrac.get(site.team) ?? 0) + rate;
+      const drain = Math.floor(acc);
+      this.burnFrac.set(site.team, acc - drain);
+      if (drain <= 0) continue;
       const before = team.fireFuel;
       team.fireFuel = Math.max(0, before - drain);
+      // The ring shrinks with the fuel and stops repelling below FIRE_REPEL_MIN_FRACTION: lights() re-reads it.
+      if (fireRepels(before) !== fireRepels(team.fireFuel)) core.lightsChanged();
       if (team.fireFuel === 0) {
         core.emit({ type: "fireFuel", tick: core.tick(), team: site.team, playerId: "", added: -before, fuel: 0, source: "out" });
         core.lightsChanged();
@@ -307,12 +334,15 @@ export class SurvivalSystem {
     team.fireFuel = after;
     const relit = before === 0 && after > 0;
     core.emit({ type: "fireFuel", tick: core.tick(), team: teamIdx, playerId: byId, added: after - before, fuel: after, source: relit ? "relit" : source });
-    if (relit) core.lightsChanged();
+    if (relit || fireRepels(before) !== fireRepels(after)) core.lightsChanged();
   }
 
   /* ---------------------------------------------------- downed & washed */
 
-  /** RaftWorld step 7: downed timers run out → washed ashore; everyone washed with no dawn coming → teamWiped. */
+  /**
+   * RaftWorld step 7: downed timers run out → washed ashore; every participant of a team washed ashore → teamWiped
+   * on ANY day (Long Tide T4: the washed only wake up at dawn while a teammate is still alive).
+   */
   stepDowned(clock: ClockInfo): void {
     const core = this.core;
     core.state.players.forEach((p) => {
@@ -320,7 +350,6 @@ export class SurvivalSystem {
       if (p.downedTicks > 0) p.downedTicks--;
       if (p.downedTicks === 0) this.wash(p, clock);
     });
-    if (clock.day < DAYS) return;
     for (const site of core.island.sites) {
       if (this.wiped.has(site.team)) continue;
       const parts = core.participants(site.team);
@@ -334,6 +363,9 @@ export class SurvivalSystem {
   wash(p: PlayerState, clock: ClockInfo | null): void {
     const core = this.core;
     core.fishing.cancel(p, "cancel");
+    // The compass is never lost: it goes back to the team chest.
+    const compasses = countOf(p, "compass");
+    if (compasses > 0) core.returnToChest(core.site(p.team).team, "compass", compasses);
     core.bag.clear(p);
     p.alive = false;
     p.washed = true;
@@ -350,13 +382,16 @@ export class SurvivalSystem {
     p.vz = 0;
     core.lightsChanged();
     const day = clock?.day ?? core.state.day;
-    core.emit({ type: "playerWashed", tick: core.tick(), playerId: p.id, pos: posOf(p), willRespawn: day < DAYS });
+    const mateAlive = core.alivePlayers(p.team).some((q) => q !== p && q.alive && !q.spectator);
+    core.emit({ type: "playerWashed", tick: core.tick(), playerId: p.id, pos: posOf(p), willRespawn: day < core.timings.days && mateAlive });
   }
 
-  /** Dawn: every washed participant wakes up at the wreck. */
+  /** Dawn: every washed participant wakes up at the wreck — only while a teammate is still alive (Long Tide T4). */
   respawnWashed(): void {
     this.core.state.players.forEach((p) => {
-      if (p.washed && !p.spectator) this.respawn(p);
+      if (!p.washed || p.spectator) return;
+      if (!this.core.alivePlayers(p.team).some((q) => q.alive && !q.spectator)) return;
+      this.respawn(p);
     });
   }
 

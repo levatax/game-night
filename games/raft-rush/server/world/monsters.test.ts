@@ -5,6 +5,7 @@ import {
   BAIT_TICKS,
   BIOMES,
   BOSS_BAIT_TICKS,
+  bossHpFor,
   CRAB_FLIP_TICKS,
   DIFFICULTIES,
   FENCE_GNAW_TICKS,
@@ -26,8 +27,8 @@ import { heightAt } from "../../shared/island/heightfield.js";
 import type { Difficulty, MonsterKind } from "../../shared/types.js";
 import { ProjectileEntity, StructureState, type MonsterState } from "../schema.js";
 import { FakeWorld, SHORE_R, type BenchOptions } from "./life/testkit.js";
-import { FLEE_TIMEOUT_TICKS, MONKEY_TREE_TICKS } from "./life/tuning.js";
-import { pickShoreCell, planWave, scheduleWave } from "./life/waves.js";
+import { BOSS_RAFT_GNAW, CHEST_RAID_TICKS, CRAB_RAFT_GNAW, FLEE_TIMEOUT_TICKS, MONKEY_TREE_TICKS } from "./life/tuning.js";
+import { pickShoreCell, planLaunchWave, planWave, scheduleWave } from "./life/waves.js";
 import { MonsterSystem } from "./monsters.js";
 
 function bench(o: BenchOptions = {}): { w: FakeWorld; mon: MonsterSystem } {
@@ -83,41 +84,57 @@ describe("wave sizes", () => {
   const plan = (night: number, seats: number, difficulty: Difficulty = "normal", biome: keyof typeof BIOMES = "tropic", fullMoon = false, flare = false) =>
     planWave({ night, seats, difficulty: DIFFICULTIES[difficulty], biome: BIOMES[biome], fullMoon, flare });
 
-  it("follows nightWave(night, seats) on normal in the tropics", () => {
+  it("follows nightWave(night, seats) on normal in the tropics (the Long Tide curve)", () => {
     for (let seats = 2; seats <= 6; seats++) {
-      for (let night = 1; night <= 3; night++) {
+      for (let night = 1; night <= 8; night++) {
         const base = nightWave(night, seats);
-        expect(plan(night, seats)).toEqual({ crabs: base.crabs, puffers: base.puffers, boss: base.boss, skipped: false });
+        expect(plan(night, seats)).toEqual({ crabs: base.crabs, puffers: base.puffers, boss: night >= 3 ? 1 : 0, skipped: false });
       }
     }
-    expect(plan(1, 3)).toMatchObject({ crabs: 6, puffers: 0, boss: 0 });
-    expect(plan(2, 4)).toMatchObject({ crabs: 11, puffers: 2, boss: 0 });
-    expect(plan(3, 6)).toMatchObject({ crabs: 18, puffers: 3, boss: 1 });
+    // Long Tide §6 table: 3 seats 5 … 19, 6 seats 8 … 29 crabs; puffers min(5, n − 1).
+    expect([1, 2, 3, 4, 5, 6, 7, 8].map((n) => plan(n, 3).crabs)).toEqual([5, 7, 9, 11, 13, 15, 17, 19]);
+    expect([1, 2, 3, 4, 5, 6, 7, 8].map((n) => plan(n, 6).crabs)).toEqual([8, 11, 14, 17, 20, 23, 26, 29]);
+    expect([1, 2, 3, 6, 7, 8].map((n) => plan(n, 3).puffers)).toEqual([0, 1, 2, 5, 5, 5]);
+    expect(plan(1, 3)).toMatchObject({ crabs: 5, puffers: 0, boss: 0 });
+    expect(plan(2, 4)).toMatchObject({ crabs: 8, puffers: 1, boss: 0 });
+    expect(plan(3, 6)).toMatchObject({ crabs: 14, puffers: 2, boss: 1 });
+  });
+
+  it("Captain Crab comes every night from bossFromNight on, until he is down", () => {
+    const at = (night: number, bossDown: boolean) =>
+      planWave({ night, seats: 3, difficulty: DIFFICULTIES.normal, biome: BIOMES.tropic, fullMoon: false, flare: false, bossDown }).boss;
+    expect([1, 2, 3, 4, 5, 8].map((n) => at(n, false))).toEqual([0, 0, 1, 1, 1, 1]);
+    expect([3, 4, 8].map((n) => at(n, true))).toEqual([0, 0, 0]);
+    expect(bossHpFor(3, DIFFICULTIES.normal.bossHp)).toBe(10);
+    expect(bossHpFor(6, DIFFICULTIES.normal.bossHp)).toBe(16);
+    expect(bossHpFor(3, DIFFICULTIES.nightmare.bossHp)).toBe(14);
+    // The launch wave: 0.6 × the last night's crabs, 3 puffers and a boss.
+    expect(planLaunchWave({ seats: 3, difficulty: DIFFICULTIES.normal, biome: BIOMES.tropic, lastNight: 8 })).toEqual({ crabs: 11, puffers: 3, boss: 1, skipped: false });
   });
 
   it("scales with difficulty (vacation ×0.6, nightmare ×1.5 and a night-2 boss)", () => {
-    expect(plan(1, 3, "vacation")).toMatchObject({ crabs: 4, puffers: 0, boss: 0 });
-    expect(plan(2, 3, "vacation")).toMatchObject({ crabs: 6, puffers: 1, boss: 0 });
-    expect(plan(3, 3, "vacation")).toMatchObject({ crabs: 7, puffers: 2, boss: 1 });
-    expect(plan(1, 3, "nightmare")).toMatchObject({ crabs: 9, puffers: 0, boss: 0 });
-    expect(plan(2, 3, "nightmare")).toMatchObject({ crabs: 15, puffers: 3, boss: 1 });
-    expect(plan(3, 3, "nightmare")).toMatchObject({ crabs: 18, puffers: 5, boss: 1 });
+    expect(plan(1, 3, "vacation")).toMatchObject({ crabs: 3, puffers: 0, boss: 0 });
+    expect(plan(2, 3, "vacation")).toMatchObject({ crabs: 4, puffers: 1, boss: 0 });
+    expect(plan(3, 3, "vacation")).toMatchObject({ crabs: 5, puffers: 1, boss: 1 });
+    expect(plan(1, 3, "nightmare")).toMatchObject({ crabs: 8, puffers: 0, boss: 0 });
+    expect(plan(2, 3, "nightmare")).toMatchObject({ crabs: 11, puffers: 2, boss: 1 });
+    expect(plan(3, 3, "nightmare")).toMatchObject({ crabs: 14, puffers: 3, boss: 1 });
   });
 
   it("scales with the biome (swamp crabs ×1.5, volcanic puffers ×2) and the full moon (×1.5)", () => {
-    expect(plan(1, 3, "normal", "swamp").crabs).toBe(9);
-    expect(plan(2, 3, "normal", "volcanic")).toMatchObject({ crabs: 10, puffers: 4 });
-    expect(plan(1, 3, "normal", "tropic", true).crabs).toBe(9);
-    expect(plan(2, 3, "normal", "tropic", true).puffers).toBe(3);
+    expect(plan(1, 3, "normal", "swamp").crabs).toBe(8);
+    expect(plan(2, 3, "normal", "volcanic")).toMatchObject({ crabs: 7, puffers: 2 });
+    expect(plan(1, 3, "normal", "tropic", true).crabs).toBe(8);
+    expect(plan(2, 3, "normal", "tropic", true).puffers).toBe(2);
     expect(plan(3, 3, "normal", "tropic", true).boss).toBe(1);
-    expect(plan(1, 2, "nightmare", "swamp", true).crabs).toBe(Math.round(5 * 1.5 * 1.5 * 1.5));
+    expect(plan(1, 2, "nightmare", "swamp", true).crabs).toBe(Math.round(nightWave(1, 2).crabs * 1.5 * 1.5 * 1.5));
   });
 
   it("a flare skips the night entirely", () => {
     expect(plan(3, 6, "nightmare", "volcanic", true, true)).toEqual({ crabs: 0, puffers: 0, boss: 0, skipped: true });
   });
 
-  it("spreads a wave over the first 60% of the night with the boss mid-window", () => {
+  it("spreads a wave over the first 70% of the night with the boss mid-window", () => {
     const night = 1500;
     const spawns = scheduleWave({ crabs: 12, puffers: 3, boss: 1, skipped: false }, night, mulberry32(4));
     expect(spawns).toHaveLength(16);
@@ -144,11 +161,11 @@ describe("night spawning", () => {
     const { w, mon } = bench({ seats: 3 });
     const clock = w.setClock(w.clockFor(1, "night"));
     mon.onClock(null, clock);
-    expect(mon.wavePlan(0)).toMatchObject({ crabs: 6, puffers: 0, boss: 0 });
+    expect(mon.wavePlan(0)).toMatchObject({ crabs: 5, puffers: 0, boss: 0 });
     const start = w.state.tick;
     run(w, mon, Math.ceil(w.timings.night * MONSTER_SPAWN_WINDOW) + 1);
     const spawns = w.ofType("monsterSpawn");
-    expect(spawns).toHaveLength(6);
+    expect(spawns).toHaveLength(5);
     for (const s of spawns) {
       expect(s.night).toBe(1);
       expect(s.kind).toBe("crab");
@@ -178,16 +195,50 @@ describe("night spawning", () => {
     run(w, mon, w.timings.night - 2);
     expect(w.ofType("monsterSpawn")).toHaveLength(0);
     mon.onClock(null, w.setClock(w.clockFor(2, "night")));
-    expect(mon.wavePlan(0)).toMatchObject({ crabs: 8, puffers: 2, skipped: false });
+    expect(mon.wavePlan(0)).toMatchObject({ crabs: 6, puffers: 1, skipped: false });
     run(w, mon, Math.ceil(w.timings.night * MONSTER_SPAWN_WINDOW) + 1);
-    expect(w.ofType("monsterSpawn").length).toBe(10);
+    expect(w.ofType("monsterSpawn").length).toBe(7);
   });
 
   it("full moon tonight means ×1.5", () => {
     const { w, mon } = bench({ seats: 3 });
     w.state.weather = "fullmoon";
     mon.onClock(null, w.setClock(w.clockFor(1, "night")));
-    expect(mon.wavePlan(0)!.crabs).toBe(9);
+    expect(mon.wavePlan(0)!.crabs).toBe(8);
+  });
+
+  it("Captain Crab flees at dawn, returns at full hp every night until killed, then drops the compass and 3 scrap", () => {
+    const { w, mon } = bench({ seats: 3 });
+    const bossNow = () => w.monsters().find((m) => m.kind === "boss");
+    const night = (n: number) => {
+      mon.onClock(null, w.setClock(w.clockFor(n, "night")));
+      run(w, mon, Math.ceil(w.timings.night * MONSTER_SPAWN_WINDOW) + 1);
+    };
+    night(3);
+    const first = bossNow()!;
+    expect(first.hp).toBe(bossHpFor(3, DIFFICULTIES.normal.bossHp));
+    mon.hitByProjectile(first, projectile(w, "spear", first.x, first.z), 2, { x: 0, y: 0, z: 0 }, "ana");
+    expect(first.hp).toBe(bossHpFor(3, 1) - 2);
+    // Dawn: he flees and is gone; the compass is still his.
+    mon.onClock(null, w.setClock(w.clockFor(4, "day")));
+    run(w, mon, FLEE_TIMEOUT_TICKS + 30);
+    expect(bossNow()).toBeUndefined();
+    expect(w.team(0).bossDown).toBe(false);
+    expect([...w.state.projectiles.values()].some((p) => p.kind === "compass")).toBe(false);
+    // Night 4: back, at full hp.
+    night(4);
+    const again = bossNow()!;
+    expect(again.id).not.toBe(first.id);
+    expect(again.hp).toBe(bossHpFor(3, 1));
+    mon.hitByProjectile(again, projectile(w, "spear", again.x, again.z), again.hp, { x: 0, y: 0, z: 0 }, "ana");
+    expect(bossNow()).toBeUndefined();
+    expect(w.team(0).bossDown).toBe(true);
+    const drops = [...w.state.projectiles.values()].filter((p) => p.state === "rest");
+    expect(drops.filter((p) => p.kind === "compass")).toHaveLength(1);
+    expect(drops.filter((p) => p.kind === "scrap")).toHaveLength(3);
+    // Night 5: no more Captain Crab.
+    mon.onClock(null, w.setClock(w.clockFor(5, "night")));
+    expect(mon.wavePlan(0)!.boss).toBe(0);
   });
 
   it(`never has more than MONSTER_CAP (${MONSTER_CAP}) alive; the rest queues`, () => {
@@ -207,7 +258,7 @@ describe("night spawning", () => {
     w.setClock(w.clockFor(1, "night") - 1);
     run(w, mon, 3, () => mon.onClock(null, w.setClock(w.state.clockTicks)));
     run(w, mon, Math.ceil(w.timings.night * MONSTER_SPAWN_WINDOW) + 1);
-    expect(w.ofType("monsterSpawn")).toHaveLength(5);
+    expect(w.ofType("monsterSpawn")).toHaveLength(4);
   });
 });
 
@@ -230,6 +281,7 @@ describe("light rings", () => {
       const rng = mulberry32(seed * 31);
       let violations = 0;
       let checks = 0;
+      const boundAt = new Map<string, number>();
       run(w, mon, w.timings.night - 2, () => {
         for (const p of [...campers, walker, holder]) {
           p.hp = 100;
@@ -239,7 +291,11 @@ describe("light rings", () => {
         for (const m of w.state.monsters.values()) {
           if (m.kind === "boss") continue;
           checks++;
-          if (w.inLight(m.x, m.z)) violations++;
+          // Crabs going for the raft (or its guard) walk through torch light; the campfire's ring keeps out all.
+          // (A crab that just stopped going for the raft is still walking back out of the torch light it was in.)
+          if (mon.isRaftBound(m.id)) boundAt.set(m.id, w.state.tick);
+          const raftBound = w.state.tick - (boundAt.get(m.id) ?? -1e9) < 300;
+          if (raftBound ? w.lights().some((l) => l.kind === "fire" && Math.hypot(m.x - l.x, m.z - l.z) < l.r) : w.inLight(m.x, m.z)) violations++;
         }
       });
       expect(checks).toBeGreaterThan(5000);
@@ -250,7 +306,7 @@ describe("light rings", () => {
   it("players inside a ring are safe from crabs: they wait at the edge", () => {
     const { w, mon } = bench();
     const camper = w.addPlayer("camper", 0, -1);
-    w.team(0).hullWood = 0; // nothing to gnaw: the crab goes for the lit camper
+    w.team(0).raftHp = 0; // nothing to gnaw: the crab goes for the lit camper
     mon.spawnMonster("crab", 0, -12);
     run(w, mon, 300);
     const m = mon0(w);
@@ -265,7 +321,7 @@ describe("light rings", () => {
   it("the boss walks into the light, slowed", () => {
     const { w, mon } = bench();
     w.addPlayer("camper", 0, 0);
-    w.team(0).hullWood = 0;
+    w.team(0).raftHp = 0;
     mon.spawnMonster("boss", 0, -8);
     let inside = false;
     run(w, mon, 400, () => {
@@ -356,7 +412,7 @@ describe("crabs", () => {
     expect(dmg.length).toBeGreaterThanOrEqual(2);
     expect(dmg.length).toBeLessThanOrEqual(4);
     expect(dmg[0]!.byMonsterId).toBe(mon0(unguarded.w).id);
-    expect(unguarded.w.team(0).hullWood).toBe(10 - dmg.length);
+    expect(unguarded.w.team(0).raftHp).toBe(100 - CRAB_RAFT_GNAW * dmg.length);
     for (let k = 1; k < dmg.length; k++) expect(dmg[k]!.tick - dmg[k - 1]!.tick).toBe(RAFT_GNAW_TICKS);
 
     const guarded = bench();
@@ -371,12 +427,28 @@ describe("crabs", () => {
     expect(guarded.w.ofType("playerHurt").length).toBeGreaterThan(0);
   });
 
-  it("a torch planted by the raft keeps the gnawers off it", () => {
+  it("a torch planted by the raft no longer keeps the gnawers off it (Long Tide §3.3: guarding is a fight)", () => {
     const { w, mon } = bench();
     torch(w, "t", 0, 25.5);
     mon.spawnMonster("crab", 0, 17);
     run(w, mon, RAFT_GNAW_TICKS * 3);
-    expect(w.ofType("raftDamage")).toHaveLength(0);
+    expect(w.ofType("raftDamage").length).toBeGreaterThan(0);
+  });
+
+  it("a crab at the dark chest destroys a material or food unit every 8 s (never the compass)", () => {
+    const { w, mon } = bench({ rng: () => 0.3 });
+    w.team(0).fireFuel = 0;
+    w.team(0).raftHp = 0; // no raft to go for
+    w.team(0).chest.set("wood", 3);
+    w.team(0).chest.set("compass", 1);
+    w.team(0).chest.set("axe", 1);
+    const site = w.island.sites[0]!;
+    mon.spawnMonster("crab", site.chest.x + 3, site.chest.z);
+    run(w, mon, CHEST_RAID_TICKS * 3 + 60);
+    expect(w.team(0).chest.get("wood") ?? 0).toBeLessThan(3);
+    expect(w.team(0).chest.get("compass")).toBe(1);
+    expect(w.team(0).chest.get("axe")).toBe(1);
+    expect(w.ofType("chestChanged").every((e) => e.op === "steal" && e.items[0]!.kind === "wood")).toBe(true);
   });
 
   it("gnaw through a fence in its way (FENCE_HP hits over FENCE_GNAW_TICKS)", () => {
@@ -467,7 +539,7 @@ describe("puffers and the boss", () => {
     expect(w.ofType("structureDestroyed")[0]).toMatchObject({ id: "f" });
     const dmg = w.ofType("raftDamage");
     expect(dmg.length).toBeGreaterThan(0);
-    expect(dmg[0]!.amount).toBe(2);
+    expect(dmg[0]!.amount).toBe(BOSS_RAFT_GNAW);
   });
 
   it("the boss never flips and dies at 0 hp", () => {
@@ -649,7 +721,7 @@ describe("monkeys", () => {
 
   it("a hit at the chest puts the loot straight back", () => {
     const { w, mon } = bench({ rng: () => 0.9 });
-    w.team(0).chest.set("wood", 2);
+    w.team(0).chest.set("wood", 1);
     const [id] = mon.spawnVisitor("monkey", null);
     const m = w.state.monsters.get(id!)!;
     let done = false;
@@ -660,7 +732,7 @@ describe("monkeys", () => {
       }
     });
     expect(done).toBe(true);
-    expect(w.team(0).chest.get("wood")).toBe(2);
+    expect(w.team(0).chest.get("wood")).toBe(1);
     expect(w.ofType("chestChanged").map((e) => e.op)).toEqual(["steal", "return"]);
   });
 
