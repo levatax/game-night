@@ -1,7 +1,10 @@
-// Optional EffectComposer chain: [render (HDR target, optional MSAA)] → [bloom] → output (sRGB) → [FXAA].
-// Bloom runs on linear HDR values with a threshold above anything the lit toon island reaches (white sand at
-// noon lands around 1.0), so only emissive / HDR glow things bloom: flames, torches, the READY halo, golden
-// fish, lightning. Owner: client-render. Copied from games/bonk-brawl/client/src/render/PostFx.ts.
+// Optional EffectComposer chain: [render (HDR target, optional MSAA)] → [bloom] → output (grade + sRGB) → [FXAA].
+// Bloom runs on linear HDR values with a threshold above anything the lit toon island reaches (sunlit sand at
+// noon lands around 0.6–0.8 after the calmer grade), so only emissive / HDR glow things bloom: flames, torches,
+// the READY halo, golden fish, lightning. OutputPass applies the renderer's tone mapping, i.e. the custom grade
+// of grade.ts, to the whole frame (same curve the direct path runs per material); the depth-test-free overlay
+// layer (marker labels, nameplates) is excluded and drawn after it by Renderer.renderPost. Owner: client-render. Copied
+// from games/bonk-brawl/client/src/render/PostFx.ts.
 
 import * as THREE from "three";
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
@@ -18,9 +21,10 @@ export interface PostFxOptions {
   samples: number;
 }
 
-const BLOOM_STRENGTH = 0.6;
+/** A touch stronger than before: warm lights should carry the calmer, darker world (esp. at night). */
+const BLOOM_STRENGTH = 0.7;
 const BLOOM_RADIUS = 0.35;
-const BLOOM_THRESHOLD = 1.3;
+const BLOOM_THRESHOLD = 1.2;
 
 export class PostFx {
   private readonly composer: EffectComposer;

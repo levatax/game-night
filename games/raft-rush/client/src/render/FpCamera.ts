@@ -1,13 +1,16 @@
 // First-person camera rig (game4.md §16): FOV 75° (+5 sprinting, slight zoom while charging, punch-in on a
-// catch / golden fish), speed-based head-bob with a landing dip (settings.headBob), throw recoil, trauma
+// catch / golden fish), speed-based head-bob with a landing dip + nod scaled by the fall speed and a dip on
+// diving into the sea (settings.headBob), a swimmer's head riding the drawn waves (waves.ts: heave always, so the
+// storm swell never swallows the view; the gentle tilt only with head-bob on), throw recoil, trauma
 // shake (toned down by reduced flashing), a low tilted + desaturated view while downed, the spectator orbit
 // (washed ashore / mid-match joiners: slowly circles the camp until steered with steerSpectate(); the app moves
 // its center and distance to follow a teammate), and an explicit orbit for menus / the podium. Owner:
 // client-render. Renderer.ts re-exports FpCamera (its public members are part of the frozen Renderer facade).
 
 import * as THREE from "three";
-import { CAMERA_FOV, CAMERA_FOV_SPRINT, HEAD_BOB_AMPLITUDE, HEAD_BOB_HZ, WALK_SPEED } from "../../../shared/constants";
+import { CAMERA_FOV, CAMERA_FOV_SPRINT, HEAD_BOB_AMPLITUDE, HEAD_BOB_HZ, WALK_SPEED, WATER_Y } from "../../../shared/constants";
 import { CameraShake } from "./CameraShake";
+import { seaDepthAt, seaSurfaceY, sea, waveAttenuation, waveSlopeAt } from "./island/waves";
 import { smoothing } from "./noise";
 import type { CameraFrame } from "./types";
 
@@ -33,6 +36,16 @@ const SPECTATE_SPEED = 0.07;
 const SPECTATE_BLEND_RATE = 2.5;
 /** How fast the orbit distance eases to a new target (1/s). */
 const SPECTATE_ZOOM_RATE = 3;
+/** Swimming: share of the wave heave the head follows, its cap (m), tilt per unit slope (rad), ease rate. */
+const SWIM_HEAVE = 0.8;
+const SWIM_HEAVE_MAX = 0.7;
+const SWIM_TILT = 0.35;
+const SWIM_RATE = 5;
+/** Landing: dip (m) per m/s of fall speed, its cap, nod (rad per m of dip); diving in. */
+const LAND_DIP_PER_SPEED = 0.012;
+const LAND_DIP_MAX = 0.14;
+const LAND_NOD = 0.45;
+const DIVE_DIP = 0.1;
 
 const tmpQ = new THREE.Quaternion();
 const tmpQ2 = new THREE.Quaternion();
@@ -41,6 +54,7 @@ const tmpV2 = new THREE.Vector3();
 const euler = new THREE.Euler(0, 0, 0, "YXZ");
 const lookM = new THREE.Matrix4();
 const UP = new THREE.Vector3(0, 1, 0);
+const slope = { x: 0, z: 0 };
 
 /** First-person camera rig: head-bob, FOV, shake, recoil (owned by the renderer). */
 export class FpCamera {
@@ -61,6 +75,10 @@ export class FpCamera {
   private lastEyeY = Number.NaN;
   private eyeVy = 0;
   private wasGrounded = true;
+  private wasSwimming = false;
+  private swimHeave = 0;
+  private swimPitch = 0;
+  private swimRoll = 0;
   private roll = 0;
   private desat = 0;
   private spectateW = 0;
@@ -140,18 +158,42 @@ export class FpCamera {
     this.bobAmp += (ampTarget - this.bobAmp) * smoothing(8, step);
     this.bobPhase += step * HEAD_BOB_HZ * Math.PI * 2 * (0.7 + 0.3 * Math.max(0.6, speedK));
     if (frame.grounded && !this.wasGrounded && frame.headBob && !frame.swimming) {
-      this.landDip = Math.min(0.12, Math.max(this.landDip, -this.eyeVy * 0.012));
+      this.landDip = Math.min(LAND_DIP_MAX, Math.max(this.landDip, -this.eyeVy * LAND_DIP_PER_SPEED));
+    }
+    if (frame.swimming && !this.wasSwimming && frame.headBob && !frame.spectate) {
+      this.landDip = Math.max(this.landDip, Math.min(DIVE_DIP, DIVE_DIP * 0.4 - this.eyeVy * LAND_DIP_PER_SPEED));
     }
     this.wasGrounded = frame.grounded;
+    this.wasSwimming = frame.swimming;
     this.landDip *= Math.exp(-9 * step);
     let bobY = ((Math.cos(this.bobPhase * 2) - 1) * 0.5) * this.bobAmp - this.landDip;
     let bobX = Math.sin(this.bobPhase) * this.bobAmp * 0.5;
     let bobRoll = Math.sin(this.bobPhase) * this.bobAmp * 0.25;
-    if (frame.swimming && frame.headBob) {
-      bobY += Math.sin(this.time * 1.4) * 0.05;
-      bobX += Math.sin(this.time * 0.8) * 0.02;
-      bobRoll += Math.sin(this.time * 0.9) * 0.02;
+    const nod = frame.headBob ? -this.landDip * LAND_NOD : 0;
+
+    // --- Swimming: the head rides the drawn swell (heave always; the tilt is head-bob comfort only).
+    let heaveT = 0;
+    let pitchT = 0;
+    let rollT = 0;
+    if (frame.swimming && !frame.spectate) {
+      const atten = waveAttenuation(seaDepthAt(frame.eye.x, frame.eye.z));
+      heaveT = Math.max(-SWIM_HEAVE_MAX, Math.min(SWIM_HEAVE_MAX, (seaSurfaceY(frame.eye.x, frame.eye.z) - WATER_Y) * SWIM_HEAVE));
+      if (frame.headBob) {
+        waveSlopeAt(frame.eye.x, frame.eye.z, sea.time, sea.amp * atten, slope);
+        // Slope along / across the view heading.
+        const fx = -Math.sin(frame.yaw);
+        const fz = -Math.cos(frame.yaw);
+        pitchT = Math.max(-0.12, Math.min(0.12, (slope.x * fx + slope.z * fz) * SWIM_TILT));
+        rollT = Math.max(-0.1, Math.min(0.1, (slope.z * fx - slope.x * fz) * SWIM_TILT));
+        bobX += Math.sin(this.time * 0.8) * 0.015;
+      }
     }
+    const k = smoothing(SWIM_RATE, step);
+    this.swimHeave += (heaveT - this.swimHeave) * k;
+    this.swimPitch += (pitchT - this.swimPitch) * k;
+    this.swimRoll += (rollT - this.swimRoll) * k;
+    bobY += this.swimHeave;
+    bobRoll += this.swimRoll;
 
     // --- Downed: low, tilted, desaturated.
     const rollTarget = frame.downed ? DOWNED_ROLL + Math.sin(this.time * 0.7) * 0.03 : 0;
@@ -166,7 +208,7 @@ export class FpCamera {
 
     // --- Eye pose.
     const cam = this.camera;
-    euler.set(frame.pitch + this.recoilPitch, frame.yaw, this.roll + bobRoll, "YXZ");
+    euler.set(frame.pitch + this.recoilPitch + nod + this.swimPitch, frame.yaw, this.roll + bobRoll, "YXZ");
     cam.quaternion.setFromEuler(euler);
     tmpV.set(bobX, bobY, this.recoilPush).applyQuaternion(tmpQ.setFromAxisAngle(UP, frame.yaw));
     cam.position.set(frame.eye.x + tmpV.x, frame.eye.y + tmpV.y, frame.eye.z + tmpV.z);

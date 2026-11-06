@@ -8,8 +8,11 @@ are measured from the real scene objects and frame time is a documented model, n
 
 | layout | budget | measured (after) | |
 | --- | --- | --- | --- |
-| solo (5 tourists) | ≤60 draws, ≤250k tris | **42 draws, 118k tris** | pass |
-| duel (6 tourists) | ≤60 draws, ≤250k tris | **57 draws, 211k tris** | pass |
+| solo (5 tourists) | ≤60 draws, ≤250k tris | **42 draws, 230k tris** | pass |
+| duel (6 tourists) | ≤60 draws, ≤250k tris | **57 draws, 427k tris** | **over (tris)** |
+
+Re-measured after the bigger, flatter island (ISLAND_RADIUS 48, 161² grid, ×2.5 flora nodes, 440 m adaptive sea,
+area-scaled grass): see "Bigger island" below. The numbers in the sections after it are the earlier pass.
 
 The duel budget is the same as solo (it is a different layout, not a bigger machine target): two islands on
 the same screen may not cost more than one, which is why the second pass below pushes the raft batches.
@@ -31,7 +34,24 @@ casting, every flora archetype in the shadow batch). `after` is the shipped path
 `frame ms* = 5.0 ms fixed 1080p cost + 0.045 ms/draw + 0.00002 ms/triangle` — indicative only, for
 comparing two scenes on the same budget.
 
-## Measured (seed 4471, high)
+## Bigger island (seed 4471, high)
+
+| layout | main draws | shadow draws | total draws | main tris | shadow tris | total tris | frame ms* |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| solo, 5 tourists | 38 | 4 | 42 | 168k | 62k | 230k | ~11.5 |
+| duel, 6 tourists | 52 | 5 | 57 | 309k | 118k | 427k | ~16.1 |
+
+Draw calls are unchanged (every new instance lands in an existing batch). Solo main-pass triangles by object:
+flora (casters) 49.6k, flora-soft (bushes) 44.2k, terrain 22.4k, water 15.5k (88² adaptive grid, was 4.6k),
+characters 13.5k, grass 11.6k, landmarks + outline 9.2k. `WEBGL_multi_draw` fallback: solo 38 → 655 main
+draws, duel 52 → 386 (one range per visible flora instance; ×2.5 nodes).
+
+Duel is over the triangle budget because flora scales with node count (×2.5) on two islands. Duel is not
+playable yet; before it ships, pick one: fewer duel nodes (e.g. `BASE_NODE_COUNTS` × ~0.6 per duel island),
+a distance LOD / cull for bushes (`flora-soft`, no shadows: the cheapest to drop), or a duel-specific budget.
+Shadow triangles remain an upper bound (no shadow-camera culling in the counter).
+
+## Measured before the bigger island (seed 4471, high)
 
 ### Solo island, 5 tourists
 

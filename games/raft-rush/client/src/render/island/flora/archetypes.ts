@@ -2,14 +2,16 @@
 // tree), a stump, 2 palms (6-sided curved trunk + drooping frond planes) and a coconut, 2 rocks + pebbles,
 // 2 bushes (each also with hanging vines for rope bushes), a bare bush and a berry cluster. Each is ONE baked
 // vertex-colored geometry (kit/Baker) with its origin at the base, sized in meters at scale 1, colored from the
-// biome palette. Flora.ts puts them all in one BatchedMesh. Adapted from bakeTree / bakeBush in
-// games/bonk-brawl/client/src/render/arena/decor/staticDecor.ts. Owner: client-render.
+// muted island palette (flora/palette.ts: deep muted canopy greens, yellower palms, warm grey-brown rock). Flora.ts
+// puts them all in one BatchedMesh and adds per-instance hue / value / scale variety. Triangle counts are kept
+// lean (the long-tide island has ~2.5x the nodes): open tubes, 5-sided palm trunks, few vine strands. Adapted
+// from bakeTree / bakeBush in games/bonk-brawl/client/src/render/arena/decor/staticDecor.ts. Owner: client-render.
 
 import * as THREE from "three";
-import { BIOMES } from "../../../../../shared/constants";
 import type { Biome } from "../../../../../shared/types";
 import { Baker, composeMatrix } from "../../kit/Baker";
 import { createRng, randRange } from "../../noise";
+import { groundPalette } from "./palette";
 
 export interface FloraColors {
   trunk: string;
@@ -24,6 +26,12 @@ export interface FloraColors {
   twig: string;
   berry: string[];
   flower: string[];
+  /** Stump cut face (light / heart wood). */
+  cut: string;
+  cutHeart: string;
+  coconut: string;
+  /** Rope bushes' coiled bundle (rope tan, so they read against the foliage). */
+  rope: string;
 }
 
 /** Every archetype geometry plus the local crown points coconuts hang from. */
@@ -53,24 +61,31 @@ const tube = (rTop: number, rBottom: number, h: number, seg: number) => new THRE
 const cone = (r: number, h: number, seg: number) => new THREE.ConeGeometry(r, h, seg, 1, true);
 
 export function floraColors(biome: Biome): FloraColors {
-  const c = BIOMES[biome].colors;
-  const forest = new THREE.Color(c.forest);
-  const grass = new THREE.Color(c.grass);
+  const p = groundPalette(biome);
+  const forest = new THREE.Color(p.forest);
+  const grass = new THREE.Color(p.grass);
+  const dry = new THREE.Color(p.grassDry);
   const mix = (t: number, k = 1) => "#" + forest.clone().lerp(grass, t).multiplyScalar(k).getHexString();
-  const rock = new THREE.Color(c.rock);
+  // Palms: a touch yellower / sunnier than the broadleaf canopy.
+  const palmMix = (t: number, k = 1) => "#" + forest.clone().lerp(grass, t).lerp(dry, 0.18).multiplyScalar(k).getHexString();
   return {
-    trunk: biome === "volcanic" ? "#5E4636" : "#8A5A3B",
-    trunkDark: biome === "volcanic" ? "#47352A" : "#6E452C",
-    palmTrunk: "#A57C52",
-    palmRing: "#7E5B3A",
-    leaves: [mix(0), mix(0.35), mix(0.65), mix(0.15, 0.85)],
-    palmLeaves: [mix(0.55), mix(0.8), mix(0.4, 0.92)],
-    rock: c.rock,
-    rockDark: "#" + rock.clone().multiplyScalar(0.78).getHexString(),
-    vine: biome === "swamp" ? "#4E6B2E" : "#5C7F2C",
-    twig: "#7A5236",
-    berry: biome === "volcanic" ? ["#B0305A", "#7E2A6B", "#D9485F"] : ["#E5383B", "#9B2C8E", "#FF5A7A"],
-    flower: ["#FF8FB8", "#FFF4A3", "#FFFFFF", "#FFB347"],
+    trunk: biome === "volcanic" ? "#4F4036" : "#6F5643",
+    trunkDark: biome === "volcanic" ? "#3D3129" : "#54412F",
+    palmTrunk: "#8C7A5E",
+    palmRing: "#6B5A44",
+    leaves: [mix(0), mix(0.35), mix(0.7), mix(0.15, 0.85)],
+    palmLeaves: [palmMix(0.6), palmMix(0.9), palmMix(0.4, 0.92)],
+    rock: p.rock,
+    rockDark: p.rockDark,
+    vine: biome === "swamp" ? "#4A5A2C" : "#56692F",
+    twig: "#6A5240",
+    // Berries stay saturated enough to read as food against the calmer foliage.
+    berry: biome === "volcanic" ? ["#A33256", "#74306A", "#C24A5E"] : ["#C8373B", "#8C2E7E", "#E0566E"],
+    flower: ["#D98FAA", "#E6DA9C", "#E9E4D8", "#DDA35E"],
+    cut: "#C9A77E",
+    cutHeart: "#B08A62",
+    coconut: "#5F4630",
+    rope: "#A48C5C",
   };
 }
 
@@ -110,9 +125,9 @@ export function buildFloraArchetypes(biome: Biome, seed: number): FloraArchetype
 /* ================================================================== trees */
 
 function trunk(b: Baker, col: FloraColors, height: number, rBottom: number, rTop: number, lean: number): void {
-  b.addAt(tube(rTop, rBottom, height, 6), col.trunk, v3(lean * height * 0.5, height / 2, 0), e3(0, 0, -lean), 1, true);
+  b.addAt(tube(rTop, rBottom, height, 5), col.trunk, v3(lean * height * 0.5, height / 2, 0), e3(0, 0, -lean), 1, true);
   // Root flare so the trunk sits in the grass.
-  b.addAt(cone(rBottom * 1.7, 0.4, 6), col.trunkDark, v3(0, 0.12, 0), e3(0, 0.4, 0), 1, true);
+  b.addAt(cone(rBottom * 1.7, 0.4, 5), col.trunkDark, v3(0, 0.12, 0), e3(0, 0.4, 0), 1, true);
 }
 
 function blob(b: Baker, color: string, x: number, y: number, z: number, r: number, rng: () => number, squash = 1): void {
@@ -153,8 +168,8 @@ function coneTree(col: FloraColors, rng: () => number): THREE.BufferGeometry {
 function umbrellaTree(col: FloraColors, rng: () => number): THREE.BufferGeometry {
   const b = new Baker();
   // Two-segment bent trunk.
-  b.addAt(tube(0.2, 0.3, 2.0, 6), col.trunk, v3(0.15, 1.0, 0), e3(0, 0, -0.15), 1, true);
-  b.addAt(tube(0.14, 0.2, 1.7, 6), col.trunk, v3(0.55, 2.7, 0.05), e3(0.1, 0, -0.35), 1, true);
+  b.addAt(tube(0.2, 0.3, 2.0, 5), col.trunk, v3(0.15, 1.0, 0), e3(0, 0, -0.15), 1, true);
+  b.addAt(tube(0.14, 0.2, 1.7, 5), col.trunk, v3(0.55, 2.7, 0.05), e3(0.1, 0, -0.35), 1, true);
   b.addAt(tube(0.08, 0.12, 1.3, 5), col.trunk, v3(-0.1, 2.6, 0.2), e3(-0.3, 0, 0.55), 1, true);
   b.addAt(cone(0.5, 0.4, 6), col.trunkDark, v3(0, 0.12, 0), null, 1, true);
   const L = col.leaves;
@@ -174,8 +189,8 @@ function vineTree(col: FloraColors, rng: () => number): THREE.BufferGeometry {
   blob(b, L[0]!, -0.85, 3.2, 0.35, 1.05, rng);
   blob(b, L[1]!, 0.1, 4.3, 0.1, 0.9, rng);
   // Hanging vines (the "sarmaşık" rope source) with little leaves.
-  for (let i = 0; i < 6; i++) {
-    const a = (i / 6) * Math.PI * 2 + rng() * 0.4;
+  for (let i = 0; i < 5; i++) {
+    const a = (i / 5) * Math.PI * 2 + rng() * 0.4;
     const r = randRange(rng, 1.0, 1.35);
     const len = randRange(rng, 1.2, 2.0);
     const x = Math.cos(a) * r;
@@ -184,7 +199,7 @@ function vineTree(col: FloraColors, rng: () => number): THREE.BufferGeometry {
     b.addAt(tube(0.025, 0.035, len, 3), col.vine, v3(x, top - len / 2, z), e3(rng() * 0.2, 0, rng() * 0.2), 1, true);
     b.addAt(new THREE.TetrahedronGeometry(0.12, 0), L[2]!, v3(x + 0.05, top - len * 0.55, z), e3(0, a, 0.6), v3(1, 0.6, 1.5), true);
   }
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 3; i++) {
     const a = rng() * Math.PI * 2;
     b.addAt(new THREE.TetrahedronGeometry(0.12, 0), col.flower[i % col.flower.length]!, v3(Math.cos(a) * 1.3, 3.2 + rng() * 0.8, Math.sin(a) * 1.3), e3(rng(), rng(), 0), 1, true);
   }
@@ -195,13 +210,13 @@ function vineTree(col: FloraColors, rng: () => number): THREE.BufferGeometry {
 function stumpGeo(col: FloraColors, rng: () => number): THREE.BufferGeometry {
   const b = new Baker();
   b.addAt(tube(0.27, 0.34, 0.5, 7), col.trunk, v3(0, 0.25, 0), null, 1, true);
-  b.addAt(new THREE.CircleGeometry(0.27, 7), "#E0B98A", v3(0, 0.5, 0), e3(-Math.PI / 2, 0, 0), 1, true);
-  b.addAt(new THREE.CircleGeometry(0.12, 7), "#C99A66", v3(0, 0.505, 0), e3(-Math.PI / 2, 0, 0), 1, true);
+  b.addAt(new THREE.CircleGeometry(0.27, 7), col.cut, v3(0, 0.5, 0), e3(-Math.PI / 2, 0, 0), 1, true);
+  b.addAt(new THREE.CircleGeometry(0.12, 7), col.cutHeart, v3(0, 0.505, 0), e3(-Math.PI / 2, 0, 0), 1, true);
   b.addAt(cone(0.55, 0.3, 7), col.trunkDark, v3(0, 0.1, 0), null, 1, true);
   for (let i = 0; i < 2; i++) {
     const a = rng() * Math.PI * 2;
     const d = randRange(rng, 0.5, 0.9);
-    b.addAt(new THREE.BoxGeometry(0.16, 0.04, 0.08), "#E0B98A", v3(Math.cos(a) * d, 0.03, Math.sin(a) * d), e3(0, a, 0), 1, true);
+    b.addAt(new THREE.BoxGeometry(0.16, 0.04, 0.08), col.cut, v3(Math.cos(a) * d, 0.03, Math.sin(a) * d), e3(0, a, 0), 1, true);
   }
   return b.build();
 }
@@ -249,9 +264,9 @@ function palm(col: FloraColors, rng: () => number, height: number, lean: number,
     const tilt = Math.atan2(dir.x, dir.y);
     const r0 = 0.24 - u0 * 0.09;
     const r1 = 0.24 - u1 * 0.09;
-    b.addAt(tube(r1, r0, len, 6), col.palmTrunk, mid, e3(0, 0, -tilt), 1, true);
+    b.addAt(tube(r1, r0, len, 5), col.palmTrunk, mid, e3(0, 0, -tilt), 1, true);
     // Bark ring at every other joint.
-    if (k % 2 === 0) b.addAt(tube(r1 * 1.14, r1 * 1.14, 0.1, 6), col.palmRing, p1, e3(0, 0, -tilt), 1, true);
+    if (k % 2 === 1) b.addAt(tube(r1 * 1.14, r1 * 1.14, 0.1, 5), col.palmRing, p1, e3(0, 0, -tilt), 1, true);
   }
   const top = pointAt(1);
   b.addAt(cone(0.32, 0.5, 6), col.palmLeaves[2]!, top.clone().add(v3(0, 0.15, 0)), null, 1, true);
@@ -269,7 +284,7 @@ function palm(col: FloraColors, rng: () => number, height: number, lean: number,
 
 function coconutGeo(col: FloraColors): THREE.BufferGeometry {
   const b = new Baker();
-  b.addVaried(new THREE.IcosahedronGeometry(0.17, 0), "#6B4A2B", composeMatrix(v3(0, 0, 0), null, v3(1, 1.1, 1)), 0.08, 7);
+  b.addVaried(new THREE.IcosahedronGeometry(0.17, 0), col.coconut, composeMatrix(v3(0, 0, 0), null, v3(1, 1.1, 1)), 0.08, 7);
   b.addAt(tube(0.02, 0.03, 0.12, 3), col.palmRing, v3(0, 0.2, 0), null, 1, true);
   return b.build();
 }
@@ -319,16 +334,16 @@ function pebblesGeo(col: FloraColors, rng: () => number): THREE.BufferGeometry {
 /* ================================================================== bushes */
 
 function addVines(b: Baker, col: FloraColors, rng: () => number, radius: number, top: number): void {
-  for (let i = 0; i < 5; i++) {
-    const a = (i / 5) * Math.PI * 2 + rng() * 0.5;
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2 + rng() * 0.5;
     const x = Math.cos(a) * radius;
     const z = Math.sin(a) * radius;
     // A drooping vine strand with a leaf at its tip.
-    b.addAt(tube(0.022, 0.03, 0.55, 4), col.vine, v3(x * 1.05, top - 0.24, z * 1.05), e3(Math.sin(a) * 0.35, 0, -Math.cos(a) * 0.35), 1, true);
+    b.addAt(tube(0.024, 0.032, 0.55, 3), col.vine, v3(x * 1.05, top - 0.24, z * 1.05), e3(Math.sin(a) * 0.35, 0, -Math.cos(a) * 0.35), 1, true);
     b.addAt(new THREE.TetrahedronGeometry(0.09, 0), col.leaves[2]!, v3(x * 1.18, top - 0.52, z * 1.18), e3(0, a, 0.5), v3(1, 0.6, 1.4), true);
   }
   // A coiled bundle so rope bushes read from afar.
-  b.addAt(new THREE.TorusGeometry(0.16, 0.04, 3, 6), col.vine, v3(radius * 0.6, 0.22, radius * 0.4), e3(Math.PI / 2, 0, 0.3), 1, true);
+  b.addAt(new THREE.TorusGeometry(0.16, 0.045, 3, 6), col.rope, v3(radius * 0.6, 0.22, radius * 0.4), e3(Math.PI / 2, 0, 0.3), 1, true);
 }
 
 function roundBush(col: FloraColors, rng: () => number, vines: boolean): THREE.BufferGeometry {
@@ -358,7 +373,7 @@ function fernBush(col: FloraColors, rng: () => number, vines: boolean): THREE.Bu
   for (let i = 0; i < count; i++) {
     const yaw = (i / count) * Math.PI * 2 + rng() * 0.3;
     const lift = randRange(rng, 0.55, 0.95);
-    const leaf = frondGeometry(randRange(rng, 0.9, 1.2), randRange(rng, 0.16, 0.22), 0.35, 3);
+    const leaf = frondGeometry(randRange(rng, 0.9, 1.2), randRange(rng, 0.16, 0.22), 0.35, 2);
     const m = composeMatrix(v3(0, 0.08, 0), new THREE.Euler(0, yaw, lift, "YZX"), 1);
     b.addVaried(leaf, L[i % L.length]!, m, 0.08, i * 13);
   }

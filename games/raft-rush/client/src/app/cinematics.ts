@@ -7,7 +7,7 @@
 // the sky breaks) and the menu / podium orbit over the island.
 // Owner: client-app. Only drives renderer.fp (FpCamera); the lightning is the renderer's.
 
-import { EYE_HEIGHT, PITCH_LIMIT, TICK_RATE, type Timings } from "../../../shared/constants";
+import { EYE_HEIGHT, ISLAND_RADIUS, PITCH_LIMIT, TICK_RATE, type Timings } from "../../../shared/constants";
 import { heightAt } from "../../../shared/island/heightfield";
 import type { IslandDef } from "../../../shared/island/types";
 import { inputLocked } from "../../../shared/rules/schedule";
@@ -50,9 +50,9 @@ export interface CameraResult {
   cinematic: boolean;
 }
 
-/** Menu / lobby orbit over the whole island. */
-const MENU_RADIUS = 40;
-const MENU_HEIGHT = 21;
+/** Menu / lobby orbit over the whole island (scales with it: 40 m / 21 m on the old radius-30 island). */
+const MENU_RADIUS = ISLAND_RADIUS * 1.33;
+const MENU_HEIGHT = ISLAND_RADIUS * 0.6;
 const MENU_SPEED = 0.045;
 /** Podium orbit. */
 const PODIUM_RADIUS = 13;

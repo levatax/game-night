@@ -18,7 +18,7 @@ export interface QualityProfile {
   postSamples: number;
   /** Fraction of decorative instances drawn (grass tufts, clouds, stars, fireflies, rain drops). */
   instanceScale: number;
-  /** Grass tufts on a solo island at instanceScale 1. */
+  /** Grass tufts per 1400 m² of grassy ground at instanceScale 1 (Grass.ts scales by the island's grassy area, ≤ 3×). */
   grassTufts: number;
   /** Rain streaks around the camera. */
   rainDrops: number;

@@ -35,7 +35,7 @@ export function bakeSpring(out: Baker, spring: { x: number; z: number }, rock: s
   const b = new Baker();
   const moss = new THREE.Color(rock).lerp(new THREE.Color(grass), 0.35).getStyle();
   // Basin under the water.
-  b.addAt(new THREE.CylinderGeometry(SPRING_POOL_RADIUS, SPRING_POOL_RADIUS * 0.7, 0.3, 12), "#2F5F73", new THREE.Vector3(0, -0.12, 0), null, 1, true);
+  b.addAt(new THREE.CylinderGeometry(SPRING_POOL_RADIUS, SPRING_POOL_RADIUS * 0.7, 0.3, 12), "#2A4F5A", new THREE.Vector3(0, -0.12, 0), null, 1, true);
   const count = 9;
   for (let i = 0; i < count; i++) {
     const a = (i / count) * Math.PI * 2 + rng() * 0.25;
@@ -51,16 +51,16 @@ export function bakeSpring(out: Baker, spring: { x: number; z: number }, rock: s
     const a = rng() * Math.PI * 2;
     const d = SPRING_POOL_RADIUS * randRange(rng, 0.65, 0.95);
     const h = randRange(rng, 0.5, 0.9);
-    b.addAt(new THREE.ConeGeometry(0.03, h, 4), "#5C8F3A", new THREE.Vector3(Math.cos(a) * d, h / 2 - 0.05, Math.sin(a) * d), new THREE.Euler(rng() * 0.2, 0, rng() * 0.2), 1, true);
+    b.addAt(new THREE.ConeGeometry(0.03, h, 4), "#5F7A3C", new THREE.Vector3(Math.cos(a) * d, h / 2 - 0.05, Math.sin(a) * d), new THREE.Euler(rng() * 0.2, 0, rng() * 0.2), 1, true);
     if (i % 3 === 0) b.addAt(new THREE.CapsuleGeometry(0.035, 0.12, 1, 5), "#7A4E2D", new THREE.Vector3(Math.cos(a) * d, h - 0.05, Math.sin(a) * d), null, 1, true);
   }
   // Lily pad with a flower.
-  b.addAt(new THREE.CylinderGeometry(0.2, 0.2, 0.02, 8, 1, false, 0.4, Math.PI * 1.8), "#4FA36B", new THREE.Vector3(0.3, SPRING_WATER_HEIGHT + 0.02, -0.2), null, 1, true);
+  b.addAt(new THREE.CylinderGeometry(0.2, 0.2, 0.02, 8, 1, false, 0.4, Math.PI * 1.8), "#58784A", new THREE.Vector3(0.3, SPRING_WATER_HEIGHT + 0.02, -0.2), null, 1, true);
   b.addAt(new THREE.ConeGeometry(0.07, 0.08, 5), "#FF8FB8", new THREE.Vector3(0.32, SPRING_WATER_HEIGHT + 0.07, -0.18), null, 1, true);
   // Bamboo spout trickling into the pool from the uphill side.
   const spout = new THREE.Vector3(-SPRING_POOL_RADIUS - 0.25, 0.55, 0);
-  b.addAt(new THREE.CylinderGeometry(0.06, 0.06, 0.9, 6), "#B9C46A", spout, new THREE.Euler(0, 0, 1.25), 1, true);
-  b.addAt(new THREE.CylinderGeometry(0.065, 0.065, 0.04, 6), "#8E9A45", spout.clone().add(new THREE.Vector3(0.2, -0.07, 0)), new THREE.Euler(0, 0, 1.25), 1, true);
+  b.addAt(new THREE.CylinderGeometry(0.06, 0.06, 0.9, 6), "#A7AB6A", spout, new THREE.Euler(0, 0, 1.25), 1, true);
+  b.addAt(new THREE.CylinderGeometry(0.065, 0.065, 0.04, 6), "#7F8545", spout.clone().add(new THREE.Vector3(0.2, -0.07, 0)), new THREE.Euler(0, 0, 1.25), 1, true);
   out.merge(b, composeMatrix(new THREE.Vector3(spring.x, y, spring.z), new THREE.Euler(0, rng() * Math.PI * 2, 0), 1));
   return y;
 }
@@ -115,7 +115,7 @@ export function bakeCave(out: Baker, cave: NonNullable<IslandSite["cave"]>, grid
   for (let i = 0; i < 5; i++) {
     const x = ((i / 4) * 2 - 1) * r * 0.75;
     const len = randRange(rng, 0.5, 1.0);
-    b.addAt(new THREE.CylinderGeometry(0.03, 0.03, len, 3, 1, true), "#5C7F2C", new THREE.Vector3(x, 2.75 - len / 2, r * 0.25), null, 1, true);
+    b.addAt(new THREE.CylinderGeometry(0.03, 0.03, len, 3, 1, true), "#56692F", new THREE.Vector3(x, 2.75 - len / 2, r * 0.25), null, 1, true);
   }
   // Dark floor that hugs the slope under the roof.
   const mb = new MeshBuilder();
@@ -149,12 +149,12 @@ export function secretChestGeometries(): { body: THREE.BufferGeometry; lid: THRE
   for (const x of [-0.3, 0.3]) body.addAt(new THREE.BoxGeometry(0.08, 0.52, 0.58), GOLD, new THREE.Vector3(x, 0.12, 0), null, 1, true);
   body.addAt(new THREE.BoxGeometry(0.14, 0.16, 0.04), GOLD, new THREE.Vector3(0, 0.3, -0.3), null, 1, true);
   // Mound of sand around it.
-  body.addAt(new THREE.SphereGeometry(0.75, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2), "#E6D3A0", new THREE.Vector3(0, -0.14, 0), null, new THREE.Vector3(1.2, 0.35, 1.0), true);
+  body.addAt(new THREE.SphereGeometry(0.75, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2), "#C9B48A", new THREE.Vector3(0, -0.14, 0), null, new THREE.Vector3(1.2, 0.35, 1.0), true);
   // A red X painted on two planks in front of it.
   for (const a of [0.7, -0.7]) body.addAt(new THREE.BoxGeometry(0.9, 0.03, 0.12), "#D7263D", new THREE.Vector3(0, 0.02, -0.75), new THREE.Euler(0, a, 0), 1, true);
   // Palm-leaf cover leaning on the back.
   for (let i = 0; i < 3; i++) {
-    body.addAt(new THREE.BoxGeometry(0.22, 0.02, 1.1), i % 2 ? "#6FBF5A" : "#4FA36B", new THREE.Vector3(-0.3 + i * 0.3, 0.32, 0.45), new THREE.Euler(0.9, (i - 1) * 0.3, 0), 1, true);
+    body.addAt(new THREE.BoxGeometry(0.22, 0.02, 1.1), i % 2 ? "#6B8A4C" : "#56763F", new THREE.Vector3(-0.3 + i * 0.3, 0.32, 0.45), new THREE.Euler(0.9, (i - 1) * 0.3, 0), 1, true);
   }
   const lid = new Baker();
   // Lid geometry is built around its hinge (back top edge at the origin).

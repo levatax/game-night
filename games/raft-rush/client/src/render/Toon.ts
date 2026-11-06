@@ -2,23 +2,35 @@
 // Copied from games/bonk-brawl/client/src/render/Toon.ts and extended with cached shared colors
 // (toonColor), the shared vertex-colored toon material (vertexColorToon), additive glow materials and
 // noShadow(). Characters and fx may import this file (docs/ARCHITECTURE.md §1).
+// The ramp is soft on purpose (no pure-white lit band, a darker shade band that grade.ts tints cool): the
+// global grade lives in grade.ts and is installed the first time a toon material is made.
 
 import * as THREE from "three";
 import { mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
 import { PALETTE } from "../../../shared/constants";
+import { installGrade } from "./grade";
 
 /** Outline / ink color of the whole game (game4.md §16). */
 export const INK = PALETTE.ink;
+
+/**
+ * Camera layer of the depth-test-free screen overlay (marker labels, nameplates). The main camera sees it on every
+ * tier; on the post-FX tier Renderer draws it after the composer, so OutputPass's grade never dims it.
+ */
+export const OVERLAY_LAYER = 2;
 
 let ramp: THREE.DataTexture | null = null;
 
 /**
  * The shared 3-step toon ramp (dark / mid / light), 3×1 px, NearestFilter, used as the
- * gradientMap of every MeshToonMaterial so all lighting falls into crisp cel bands.
+ * gradientMap of every MeshToonMaterial so all lighting falls into crisp cel bands. Steps 0.36 / 0.69 / 0.91:
+ * the lit band stops short of 1 so sunlit sand and white cloth don't blow out, the shade band sits a little
+ * lower than the classic cel 0.43 for depth (grade.ts tints it cool).
  */
 export function getToonRamp(): THREE.DataTexture {
   if (ramp) return ramp;
-  const data = new Uint8Array([110, 190, 255]);
+  installGrade();
+  const data = new Uint8Array([92, 176, 232]);
   ramp = new THREE.DataTexture(data, data.length, 1, THREE.RedFormat);
   ramp.minFilter = THREE.NearestFilter;
   ramp.magFilter = THREE.NearestFilter;

@@ -33,12 +33,12 @@ const CURVE_POP_END = 4;
 
 /** Default tint per kind (BurstOptions.color overrides). */
 export const PARTICLE_COLORS: Readonly<Record<ParticleKind, string>> = {
-  woodChips: "#C98F57",
-  stoneChips: "#A39E95",
-  leaves: "#6CC35E",
+  woodChips: "#B08560",
+  stoneChips: "#9A948A",
+  leaves: "#6F8A48",
   berries: "#6B2E9A",
-  splash: "#DDF6FF",
-  ripple: "#FFFFFF",
+  splash: "#D3E2DF",
+  ripple: "#E9EFEC",
   hitStars: "#FFE14D",
   bonk: "#FFE14D",
   flip: "#FFE14D",
@@ -47,8 +47,8 @@ export const PARTICLE_COLORS: Readonly<Record<ParticleKind, string>> = {
   smoke: "#B9B4AE",
   sparkle: "#FFE27A",
   gold: "#FFC83D",
-  dust: "#EADBC0",
-  bubbles: "#DDF3FF",
+  dust: "#CDBC98",
+  bubbles: "#D2E3E1",
   feathers: "#FFFFFF",
   crabBits: "#FF4D3A",
   confetti: "#FFFFFF",
@@ -115,8 +115,10 @@ export const EMIT_RATE: Readonly<Record<ParticleKind, number>> = {
 const CONFETTI_COLORS: ReadonlyArray<string> = [...PLAYER_COLORS, "#FFFFFF", PALETTE.hud, PALETTE.sea, PALETTE.sunset, "#FF9EC8"];
 const WHITE = "#FFFFFF";
 const GOLD_LIGHT = "#FFF1A8";
-const LEAF_SHADES: ReadonlyArray<string> = ["#6CC35E", "#4FA34A", "#8ED46B", "#3E8E52"];
-const WOOD_SHADES: ReadonlyArray<string> = ["#C98F57", "#B07A45", "#E3B77E", "#8B5A2B"];
+// Environmental debris follows the muted island palette (olive / sage leaves, weathered wood); gameplay
+// feedback (stars, gold, hearts, blasts) keeps its saturated colors so it still pops.
+const LEAF_SHADES: ReadonlyArray<string> = ["#6F8A48", "#5B7340", "#859A5A", "#4A6338"];
+const WOOD_SHADES: ReadonlyArray<string> = ["#B08560", "#9A7350", "#C7A47C", "#7C5A3A"];
 const SMOKE_DARK = "#7D7872";
 
 function rnd(min: number, max: number): number {
@@ -929,7 +931,7 @@ export class Particles {
         this.orbitingStars(pos, scale * 1.1, color, delay);
         return;
       case "flip":
-        this.ring(pos.x, pos.y + 0.05, pos.z, this.tint("#EADBC0", "dust"), 0.4 * scale, 1.8 * scale, 0.45, delay, true, 0.8);
+        this.ring(pos.x, pos.y + 0.05, pos.z, this.tint("#CDBC98", "dust"), 0.4 * scale, 1.8 * scale, 0.45, delay, true, 0.8);
         for (let i = 0; i < this.countFor(4, scale); i++) this.dustPuff(pos.x, pos.y, pos.z, undefined, scale * 0.8, false, delay);
         this.orbitingStars({ x: pos.x, y: pos.y + 0.25, z: pos.z }, scale * 0.9, color, delay);
         return;
@@ -958,7 +960,7 @@ export class Particles {
       case "splash":
         this.ring(pos.x, pos.y + 0.03, pos.z, this.tint(WHITE, "ripple"), 0.3 * scale, 1.9 * scale, 0.7, delay, true, 0.75);
         this.ring(pos.x, pos.y + 0.03, pos.z, this.tint(WHITE, "ripple"), 0.2 * scale, 1.2 * scale, 0.8, delay + 0.18, true, 0.5);
-        for (let i = 0; i < this.countFor(3, scale); i++) this.puff(pos.x, pos.y, pos.z, "#F4FCFF", scale * 0.6, delay);
+        for (let i = 0; i < this.countFor(3, scale); i++) this.puff(pos.x, pos.y, pos.z, "#E4ECEA", scale * 0.6, delay);
         return;
       case "embers":
         this.flash(pos.x, pos.y + 0.2, pos.z, this.tint("#FF9A3C", "embers"), TILE.glow, 1.2 * scale, 1.8 * scale, 0.35, BILLBOARD_FACING, delay);
@@ -971,7 +973,7 @@ export class Particles {
         return;
       case "woodChips":
       case "stoneChips":
-        for (let i = 0; i < this.countFor(2, scale); i++) this.dustPuff(pos.x, pos.y - 0.1, pos.z, kind === "woodChips" ? "#E9D8B4" : undefined, scale * 0.6, false, delay);
+        for (let i = 0; i < this.countFor(2, scale); i++) this.dustPuff(pos.x, pos.y - 0.1, pos.z, kind === "woodChips" ? "#D3C29E" : undefined, scale * 0.6, false, delay);
         if (kind === "stoneChips") this.flash(pos.x, pos.y, pos.z, this.tint("#FFF4DC", "stoneChips"), TILE.flash, 0.4 * scale, 0.8 * scale, 0.08, BILLBOARD_FACING, delay);
         return;
       default:

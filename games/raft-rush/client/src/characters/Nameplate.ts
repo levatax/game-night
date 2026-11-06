@@ -7,6 +7,7 @@
 
 import * as THREE from "three";
 import { PALETTE } from "../../../shared/constants";
+import { OVERLAY_LAYER } from "../render/Toon";
 import { shadeHex } from "../util/color";
 
 const CANVAS_W = 512;
@@ -134,12 +135,15 @@ export class Nameplate {
     for (let i = 0; i < SPARKLES; i++) {
       const s = new THREE.Sprite(getSparkleMaterial());
       s.renderOrder = 1002;
+      s.layers.set(OVERLAY_LAYER);
       s.userData.phase = i / SPARKLES;
       this.sparkles.add(s);
     }
     this.sparkles.visible = false;
 
     this.object.name = "nameplate";
+    this.sprite.layers.set(OVERLAY_LAYER);
+    this.statusSprite.layers.set(OVERLAY_LAYER);
     this.object.add(this.sprite, this.statusSprite, this.sparkles);
     this.redrawWhenFontLoads();
   }

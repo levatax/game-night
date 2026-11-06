@@ -2,13 +2,19 @@
 // Adapted from games/bonk-brawl/client/src/fx/Balls.ts (pooled visuals keyed by id, predicted visuals adopted by
 // the server projectile of the same throw, squash on bounce, trail while live, fade for timed-out predictions).
 //
-// - live: tumbles by `age` (so a predicted throw and its server twin spin identically); spears point along their
+// - live: tumbles by `age` (so a predicted throw and its server twin spin identically) at a rate scaled by its
+//   horizontal throw speed, mostly end over end around the axis across its flight; spears point along their
 //   velocity; puffers pulse; a short white trail.
 // - loose: round items roll along the ground, the rest keep tumbling and slow down.
 // - rest: eases into a lying pose (tools flat, fish on their side), bobs slightly and glows so it can be found
 //   (more at night: the halo is additive); occasional glints; bait fish emit green smell lines.
 // - stuck: a spear keeps the angle it hit with.
-// - bounced: squash along world up, by impact speed. opacity < 1: the item fades (per-visual material clones).
+// - bounced: squash along world up, by impact speed; a dust puff when it hits dry ground.
+// - landing (live / loose → rest): squash + a damped rock that settles it into its lying pose, dust on sand.
+// - water (client-only feel, the sim's sink → splash event stays authoritative): a speed-scaled droplet crown where a
+//   falling item crosses the drawn surface, items resting in the shallows lift and tilt with the waves
+//   (render/island/waves.ts), and a sunk item is drawn slipping under instead of shrinking in mid-air.
+// - opacity < 1: the item fades (per-visual material clones).
 // - hand-off (first person): my own predicted throw is drawn leaving the first-person hand, not the simulated throw
 //   origin, and eases onto its true path over HAND_OFF_SEC (render-only offset; the simulation never moves).
 
@@ -17,6 +23,8 @@ import type { ItemKind, Vec3Like } from "../../../shared/types";
 import type { ProjectileFrame } from "../net/types";
 import { BILLBOARD_FACING, BillboardBatch } from "./billboard";
 import { glowTexture } from "./fxTextures";
+import { WATER_Y } from "../../../shared/constants";
+import { seaSurfaceY, sea, waveSlopeAt } from "../render/island/waves";
 import { buildItemMesh, flickerFlame, itemInfo } from "./itemMeshes";
 import type { Particles } from "./Particles";
 import type { BlobShadows } from "./Shadows";
@@ -29,6 +37,19 @@ const REMOVE_SEC = 0.14;
 const REST_EASE = 10;
 const BOB_HEIGHT = 0.03;
 const BOB_HZ = 0.45;
+/** Spin scales with horizontal throw speed: ×1 at this speed (m/s), clamped to SPIN_SCALE_MIN..MAX. */
+const SPIN_REF_SPEED = 11;
+const SPIN_SCALE_MIN = 0.55;
+const SPIN_SCALE_MAX = 1.45;
+/** Landing settle: rock amplitude (rad) per m/s of impact, its cap, frequency (rad/s) and decay (1/s). */
+const SETTLE_PER_SPEED = 0.035;
+const SETTLE_MAX = 0.32;
+const SETTLE_FREQ = 17;
+const SETTLE_DECAY = 6.5;
+/** Dust puff on dry ground / droplets on the water above this impact speed (m/s). */
+const IMPACT_FX_MIN_SPEED = 3;
+/** How fast a sunk item slips under while its visual is removed (m/s). */
+const SINK_SPEED = 2.5;
 /** A predicted visual is adopted by a server projectile of the same owner + kind within this distance (m). */
 const ADOPT_DIST = 3;
 const HALO_SCALE = 4.4;
@@ -135,6 +156,21 @@ interface Visual {
   handOff: THREE.Vector3;
   /** Seconds since the hand-off started (≥ HAND_OFF_SEC: no offset). */
   handOffT: number;
+  /** Drawn center height last frame (water-entry detection); NaN = unknown. */
+  prevY: number;
+  /** Already splashed on this dive (re-armed once back above the surface). */
+  splashed: boolean;
+  /** Last speed seen in flight / loose (landing strength). */
+  lastSpeed: number;
+  /** Landing rock: seconds since landing, amplitude (rad), horizontal axis. */
+  settleT: number;
+  settleAmp: number;
+  settleAxis: THREE.Vector3;
+  /** Last horizontal velocity direction (settle axis, sink). */
+  lastDirX: number;
+  lastDirZ: number;
+  /** Drawn over water when removed: slips under instead of shrinking in place. */
+  sinking: boolean;
 }
 
 export class ProjectileVisuals {
@@ -152,6 +188,11 @@ export class ProjectileVisuals {
   private readonly tmpQ2 = new THREE.Quaternion();
   private readonly white = new THREE.Color("#FFFFFF");
   private readonly box = new THREE.Box3();
+  private readonly spinAxis = new THREE.Vector3();
+  private readonly slope = { x: 0, z: 0 };
+  private readonly fxPos = { x: 0, y: 0, z: 0 };
+  /** Terrain height for water / sand checks (Fx.setIsland); null = no island (no impact FX). */
+  private ground: ((x: number, z: number) => number) | null = null;
   private readonly haloColor = new THREE.Color();
   /** Every pickup halo in one additive draw call. */
   private readonly halos: BillboardBatch;
@@ -175,6 +216,11 @@ export class ProjectileVisuals {
 
   get count(): number {
     return this.visuals.size;
+  }
+
+  /** Terrain height sampler (null = none): water entry, shallow floating, dust on sand. */
+  setGround(ground: ((x: number, z: number) => number) | null): void {
+    this.ground = ground;
   }
 
   /** World position of a projectile visual (false if unknown). */
@@ -254,6 +300,14 @@ export class ProjectileVisuals {
     if (f.state === "rest") restPoseFor(v.kind, v.base, v.orient);
     if (f.state === "stuck") v.orient.copy(this.stuckPose(v, f));
     v.restQuat.copy(v.orient);
+    v.prevY = Number.NaN;
+    v.splashed = false;
+    v.lastSpeed = 0;
+    v.settleT = 1e3;
+    v.settleAmp = 0;
+    v.lastDirX = 0;
+    v.lastDirZ = 1;
+    v.sinking = false;
     this.startHandOff(v, f, hand);
     v.root.position.set(f.x + v.handOff.x, f.y + v.handOff.y, f.z + v.handOff.z);
     v.root.scale.setScalar(1);
@@ -330,6 +384,15 @@ export class ProjectileVisuals {
       restLift: 0,
       handOff: new THREE.Vector3(),
       handOffT: HAND_OFF_SEC,
+      prevY: Number.NaN,
+      splashed: false,
+      lastSpeed: 0,
+      settleT: 1e3,
+      settleAmp: 0,
+      settleAxis: new THREE.Vector3(1, 0, 0),
+      lastDirX: 0,
+      lastDirZ: 1,
+      sinking: false,
     };
   }
 
@@ -368,16 +431,23 @@ export class ProjectileVisuals {
 
   private updateVisual(v: Visual, f: ProjectileFrame, dt: number): void {
     v.removing = 0;
+    v.sinking = false;
+    const speed = Math.hypot(f.vx, f.vy, f.vz);
+    const hs = Math.hypot(f.vx, f.vz);
+    if (hs > 0.2) {
+      v.lastDirX = f.vx / hs;
+      v.lastDirZ = f.vz / hs;
+    }
     const entering = v.lastState !== f.state;
     if (entering) this.enterState(v, f);
     v.lastState = f.state;
     if (f.bounced) {
       v.squashT = 0;
       v.squashAmount = Math.min(0.42, Math.max(0.08, f.bounceSpeed / 14));
+      this.impactDust(f, f.bounceSpeed);
     }
     v.squashT = Math.min(SQUASH_SEC, v.squashT + dt);
-
-    const speed = Math.hypot(f.vx, f.vy, f.vz);
+    if (f.state === "live" || f.state === "loose") v.lastSpeed = speed;
     switch (f.state) {
       case "live":
         this.flightOrientation(v, f, v.orient);
@@ -396,6 +466,12 @@ export class ProjectileVisuals {
         break;
     }
     v.spin.quaternion.copy(v.orient);
+    // Landing rock: a damped wobble about the horizontal axis across the last travel direction.
+    if (v.settleT < 1.2) {
+      v.settleT += dt;
+      const a = v.settleAmp * Math.sin(v.settleT * SETTLE_FREQ) * Math.exp(-v.settleT * SETTLE_DECAY);
+      v.spin.quaternion.premultiply(this.tmpQ.setFromAxisAngle(v.settleAxis, a));
+    }
 
     // First-person hand-off: the drawn position eases from the hand onto the simulated one (render only).
     let ox = 0;
@@ -413,10 +489,35 @@ export class ProjectileVisuals {
 
     // Position: resting items settle to the ground and bob gently.
     let y = f.y + oy;
+    const groundY = this.ground ? this.ground(x, z) : Number.NaN;
     if (f.state === "rest") {
       const bob = BOB_HEIGHT * (0.6 + 0.4 * Math.sin(this.time * BOB_HZ * Math.PI * 2 + v.phase));
       y += (v.restLift + bob) * v.restBlend;
+      // In the shallows the waves lift it a little and tip it with the surface.
+      const wet = groundY < WATER_Y ? Math.min(1, (WATER_Y - groundY) / Math.max(0.1, f.radius * 3)) : 0;
+      if (wet > 0) {
+        y += Math.max(0, seaSurfaceY(x, z) - WATER_Y) * 0.6 * wet * v.restBlend;
+        waveSlopeAt(x, z, sea.time, sea.amp * 0.5 * wet, this.slope);
+        v.spin.quaternion.premultiply(this.tmpQ.setFromAxisAngle(this.tmpV.set(-this.slope.z, 0, this.slope.x).normalize(), Math.min(0.25, Math.hypot(this.slope.x, this.slope.z))));
+      }
     }
+    // Water entry (client feel only): droplets where a falling item crosses the drawn surface. Only on the shelf
+    // shallower than the item's diameter, where the sim bounces / rests it: deeper, the sim sinks it and the server's
+    // SplashEvent already bursts there (app/feedback.ts onSplash), so a crown would double the splash.
+    if ((f.state === "live" || f.state === "loose") && groundY < WATER_Y - 0.05 && groundY + 2 * f.radius >= WATER_Y) {
+      const surf = seaSurfaceY(x, z);
+      if (!v.splashed && Number.isFinite(v.prevY) && v.prevY > surf && y <= surf && f.vy < -IMPACT_FX_MIN_SPEED) {
+        v.splashed = true;
+        this.fxPos.x = x;
+        this.fxPos.y = surf;
+        this.fxPos.z = z;
+        const k = Math.min(0.85, Math.max(0.3, -f.vy / 16 + f.radius));
+        this.particles.burst("splash", this.fxPos, { scale: k, count: Math.round(4 + k * 8) });
+      } else if (y > surf + 0.3) {
+        v.splashed = false;
+      }
+    }
+    v.prevY = y;
     v.root.position.set(x, y, z);
 
     // Squash along world up after a bounce; puffers swell in flight; jellyfish wobble.
@@ -447,9 +548,24 @@ export class ProjectileVisuals {
   }
 
   private updateRemoved(v: Visual, dt: number): void {
+    if (v.removing === 0) {
+      // Gone in flight while drawn at / under the surface over water: the sim sank it, so it slips under. A resting
+      // item never sinks (picked up / despawned in the shallows): it gets the normal shrink-pop.
+      const p = v.root.position;
+      const g = this.ground ? this.ground(p.x, p.z) : Number.NaN;
+      const moving = v.lastState === "live" || v.lastState === "loose";
+      v.sinking = moving && g < WATER_Y - 0.05 && p.y < seaSurfaceY(p.x, p.z) + 0.25;
+    }
     v.removing += dt;
-    if (v.removing >= REMOVE_SEC) {
+    if (v.removing >= REMOVE_SEC * (v.sinking ? 2.5 : 1)) {
       this.release(v);
+      return;
+    }
+    if (v.sinking) {
+      v.root.position.y -= SINK_SPEED * dt;
+      v.root.position.x += v.lastDirX * dt * 0.4;
+      v.root.position.z += v.lastDirZ * dt * 0.4;
+      v.trail.rebuild(v.root.position.x, v.root.position.y, v.root.position.z);
       return;
     }
     const k = 1 - v.removing / REMOVE_SEC;
@@ -462,6 +578,18 @@ export class ProjectileVisuals {
       if (ROUND.has(v.kind)) v.restQuat.copy(v.orient);
       else restPoseFor(v.kind, v.base, v.restQuat);
       v.restBlend = 0;
+      if (v.lastState === "live" || v.lastState === "loose") {
+        // Landing: squash, then rock across the travel direction and settle; dust on dry ground.
+        const impact = v.lastSpeed;
+        v.squashT = 0;
+        v.squashAmount = Math.max(v.squashAmount * 0.5, Math.min(0.32, Math.max(0.06, impact / 16)));
+        v.settleT = 0;
+        v.settleAmp = Math.min(SETTLE_MAX, impact * SETTLE_PER_SPEED) * (ROUND.has(v.kind) ? 0.5 : 1);
+        v.settleAxis.set(v.lastDirZ, 0, -v.lastDirX);
+        if (v.settleAxis.lengthSq() < 1e-6) v.settleAxis.set(1, 0, 0);
+        v.settleAxis.normalize();
+        this.impactDust(f, impact);
+      }
     } else if (f.state === "stuck") {
       if (v.lastState === "live" || v.lastState === "loose") {
         // Keep the impact angle: point along the last flight direction, embedded a bit.
@@ -486,8 +614,17 @@ export class ProjectileVisuals {
       }
       return;
     }
-    const rate = SPIN_RATE[v.kind] ?? DEFAULT_SPIN;
-    out.setFromAxisAngle(v.axis, f.age * rate + v.phase);
+    // Faster throws spin faster, mostly end over end around the axis across the flight (horizontal speed is constant
+    // in ballistic flight, so the angle stays a pure function of age for a predicted throw and its server twin).
+    const hs = Math.hypot(f.vx, f.vz);
+    const rate = (SPIN_RATE[v.kind] ?? DEFAULT_SPIN) * Math.min(SPIN_SCALE_MAX, Math.max(SPIN_SCALE_MIN, hs / SPIN_REF_SPEED));
+    const axis = this.spinAxis.copy(v.axis);
+    if (hs > 0.5) {
+      // base yaw is applied after (premultiply), so express the across-flight axis in the item's unrotated frame.
+      this.tmpV.set(f.vz / hs, 0, -f.vx / hs).applyQuaternion(this.tmpQ2.copy(v.base).invert());
+      axis.multiplyScalar(0.45).addScaledVector(this.tmpV, 0.9).normalize();
+    }
+    out.setFromAxisAngle(axis, f.age * rate + v.phase);
     if (v.kind === "fish_raw" || v.kind === "fish_golden") {
       // Floppy fish: a side-to-side flap on top of the tumble.
       this.tmpQ.setFromAxisAngle(UP, Math.sin(f.age * 22) * 0.5);
@@ -518,6 +655,18 @@ export class ProjectileVisuals {
     const yaw = idHash(f.id, 6) * Math.PI * 2;
     this.tmpV.set(Math.sin(yaw) * 0.5, -0.87, Math.cos(yaw) * 0.5).normalize();
     return this.tmpQ.setFromUnitVectors(UP, this.tmpV).multiply(this.tmpQ2.copy(v.base));
+  }
+
+  /** A small dust puff where an item hits dry ground hard enough (sand, dirt; never over water). */
+  private impactDust(f: ProjectileFrame, impact: number): void {
+    if (!this.ground || impact < IMPACT_FX_MIN_SPEED) return;
+    const g = this.ground(f.x, f.z);
+    if (!(g >= WATER_Y - 0.02)) return;
+    this.fxPos.x = f.x;
+    this.fxPos.y = g + 0.05;
+    this.fxPos.z = f.z;
+    const k = Math.min(0.7, 0.25 + impact / 30 + f.radius * 0.5);
+    this.particles.burst("dust", this.fxPos, { scale: k, count: Math.round(2 + k * 5) });
   }
 
   /** Vertical offset (from the projectile center) that puts the lying item's lowest point on the ground. */

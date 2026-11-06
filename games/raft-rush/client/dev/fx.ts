@@ -16,7 +16,7 @@ import type { ItemKind, MarkerKind, Vec3Like } from "../../shared/types";
 import { BURST_KINDS, Fx, POP_STYLE_IDS, type Bobber, type BurstKind, type PopStyle } from "../src/fx/Fx";
 import { buildBerryMesh, buildItemMesh, flickerFlame, itemTriangleCount, setItemGlow } from "../src/fx/itemMeshes";
 import type { ProjectileFrame } from "../src/net/types";
-import { createToonMaterial } from "../src/render/Toon";
+import { createToonMaterial, OVERLAY_LAYER } from "../src/render/Toon";
 
 /* ------------------------------------------------------------------ scene */
 
@@ -33,6 +33,7 @@ const NIGHT_SKY = new THREE.Color("#0B1A33");
 scene.background = DAY_SKY.clone();
 scene.fog = new THREE.Fog(DAY_SKY.clone(), 40, 160);
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.05, 400);
+camera.layers.enable(OVERLAY_LAYER); // marker labels / nameplates
 camera.position.set(9, 7, -16);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 1, 2);

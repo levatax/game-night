@@ -13,7 +13,8 @@ const VERTEX = /* glsl */ `
   }
 `;
 
-// Colors arrive in sRGB so the gradient blends perceptually; converted to linear before output.
+// Colors arrive in sRGB so the gradient blends perceptually; converted to linear before output. No tone mapping
+// on purpose: the dome's horizon must equal the fog color, which three mixes in after the grade (grade.ts).
 const FRAGMENT = /* glsl */ `
   uniform vec3 topColor;
   uniform vec3 horizonColor;
@@ -46,10 +47,10 @@ const FRAGMENT = /* glsl */ `
 
     // Sun: halo + crisp disc.
     float s = max(dot(d, sunDir), 0.0);
-    float halo = pow(s, 10.0) * 0.35 + pow(s, 80.0) * 0.5;
+    float halo = pow(s, 10.0) * 0.26 + pow(s, 80.0) * 0.45;
     col = mix(col, sunColor, clamp(halo * sunGlow, 0.0, 1.0));
     float disc = smoothstep(sunSize, sunSize + 0.0012, s) * step(0.001, sunGlow) * step(-0.02, sunDir.y);
-    col = mix(col, vec3(1.0, 0.98, 0.9), disc * (1.0 - fogAmount * 0.7));
+    col = mix(col, vec3(1.0, 0.96, 0.86), disc * (1.0 - fogAmount * 0.7));
 
     // Moon: soft glow + disc with a few darker "seas" and a crisp rim.
     float m = max(dot(d, moonDir), 0.0);

@@ -46,8 +46,9 @@ const FRAGMENT = /* glsl */ `
     float a = t.a * opacity * smoothstep(0.0, fadeIn, vAge) * (1.0 - smoothstep(0.55, 1.0, vAge));
     if (a < 0.01) discard;
     gl_FragColor = vec4(color, a);
-    #include <fog_fragment>
+    #include <tonemapping_fragment>
     #include <colorspace_fragment>
+    #include <fog_fragment>
   }
 `;
 

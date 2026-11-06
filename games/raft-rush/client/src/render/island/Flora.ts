@@ -3,13 +3,16 @@
 // at a single draw call; per-instance frustum culling included). Node depletion is read from WorldFrame.nodes:
 // a tree falls over and leaves a stump at 0, palms show 0–2 coconuts (they pop back when regrown), rocks
 // crumble to pebbles, rope bushes go bare, berry bushes show berries while amount > 0, and every hit shakes the
-// node. Wind sway is injected into the toon shader (stronger in the storm). Owner: client-render.
+// node. Wind sway is injected into the toon shader (stronger in the storm). Each instance gets its own value,
+// warm / cool tilt and (cosmetic) proportions, and plants on dry open ground (the terrain's macro noise) read a
+// little yellower, so a big island's hundreds of copies of a few archetypes don't look stamped. The batches are
+// sized from def.nodes, so they scale with the node count. Owner: client-render.
 
 import * as THREE from "three";
 import type { IslandDef, NodeDef } from "../../../../shared/island/types";
 import type { ArrayView, Vec3Like } from "../../../../shared/types";
 import type { MaterialBank } from "../kit/MaterialBank";
-import { hash2 } from "../noise";
+import { fbm2, hash2 } from "../noise";
 import { createToonMaterial } from "../Toon";
 import { buildFloraArchetypes, type FloraArchetypes } from "./flora/archetypes";
 import { createWindUniforms, injectWind } from "./wind";
@@ -75,8 +78,10 @@ export class Flora {
   /** geometry → the batch that owns it and its geometry id there. */
   private readonly idsOf = new Map<THREE.BufferGeometry, { mesh: THREE.BatchedMesh; id: number }>();
   private primed = false;
+  private readonly seed: number;
 
   constructor(def: IslandDef, bank: MaterialBank) {
+    this.seed = def.seed | 0;
     const arch = buildFloraArchetypes(def.biome, def.seed);
     for (const g of arch.all) bank.geo(g);
     const material = bank.own(createToonMaterial(0xffffff, { vertexColors: true, side: THREE.DoubleSide }));
@@ -160,18 +165,23 @@ export class Flora {
     let geoFull = -1;
     let geoBare = -1;
     switch (node.kind) {
-      case "tree":
+      case "tree": {
         mainGeo = arch.trees[v % arch.trees.length]!;
         altGeo = arch.stump;
-        scale.setScalar(clamp(s, 0.7, 1.4));
+        const k = clamp(s, 0.7, 1.4);
+        // Cosmetic proportions: some trees taller and slimmer, some squat and wide.
+        const tall = 0.88 + hash2(node.x, node.z, 41) * 0.26;
+        scale.set(k * (1.06 - (tall - 0.88) * 0.4), k * tall, k * (1.06 - (tall - 0.88) * 0.4));
         pos.y -= 0.05;
         break;
+      }
       case "palm": {
         const k = v % arch.palms.length;
         mainGeo = arch.palms[k]!;
         extraGeo = arch.coconut;
         extraSpots = arch.palmCoconuts[k]!;
-        scale.setScalar(clamp(0.92 + (s - 1) * 0.35, 0.8, 1.1));
+        const ps = clamp(0.92 + (s - 1) * 0.35, 0.8, 1.1);
+        scale.set(ps, ps * (0.9 + hash2(node.x, node.z, 43) * 0.24), ps);
         pos.y -= 0.05;
         break;
       }
@@ -196,7 +206,9 @@ export class Flora {
           extraGeo = arch.berries;
           extraSpots = [new THREE.Vector3(0, 0, 0)];
         }
-        scale.setScalar(clamp(s, 0.7, 1.35));
+        const bs = clamp(s, 0.7, 1.35);
+        const wide = 0.9 + hash2(node.x, node.z, 47) * 0.22;
+        scale.set(bs * wide, bs * (0.92 + hash2(node.z, node.x, 49) * 0.16), bs * wide);
         pos.y -= 0.04;
         break;
       }
@@ -218,9 +230,7 @@ export class Flora {
     };
     const base = tmpM.compose(pos, quat, scale);
     home.setMatrixAt(slot.main, base);
-    const tint = 0.86 + hash2(node.x, node.z, 17) * 0.14;
-    const hue = (hash2(node.z, node.x, 5) - 0.5) * 0.06;
-    tmpColor.setRGB(tint * (1 - hue), tint, tint * (1 + hue));
+    instanceTint(node, this.seed, tmpColor);
     home.setColorAt(slot.main, tmpColor);
     if (slot.alt >= 0) {
       home.setMatrixAt(slot.alt, base);
@@ -420,6 +430,18 @@ export class Flora {
       if (done) this.anims.splice(this.anims.indexOf(a), 1);
     }
   }
+}
+
+/**
+ * Per-instance color multiplier: value 0.8–1.03, a warm (olive) / cool (blue-green) tilt and, for plants, a dry
+ * tint where the terrain's large-scale noise says open dry ground (same noise and seed as Terrain.ts' macro).
+ */
+function instanceTint(node: NodeDef, seed: number, out: THREE.Color): THREE.Color {
+  const rock = node.kind === "rock";
+  const value = (rock ? 0.86 : 0.8) + hash2(node.x, node.z, 17) * (rock ? 0.18 : 0.23);
+  const tilt = (hash2(node.z, node.x, 5) - 0.5) * (rock ? 0.05 : 0.14);
+  const dry = rock ? 0 : Math.max(0, Math.min(1, (fbm2(node.x * 0.022, node.z * 0.022, seed ^ 0x6c3, 3) - 0.45) * 2)) * 0.08;
+  return out.setRGB(value * (1 + tilt + dry), value * (1 + dry * 0.4), value * (1 - tilt - dry * 0.6));
 }
 
 function clamp(v: number, lo: number, hi: number): number {

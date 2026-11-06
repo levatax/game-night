@@ -11,6 +11,7 @@ import {
   EYE_HEIGHT,
   FIRE_FUEL_MAX_TICKS,
   FIRE_START_FUEL_TICKS,
+  ISLAND_RADIUS,
   KRAKEN_TICKS,
   NORMAL_TIMINGS,
   SPRINT_SPEED,
@@ -80,7 +81,7 @@ let heldTorch = false;
 let downed = false;
 let lastLog = "";
 
-const cam = { x: 0, y: 12, z: 30, yaw: 0, pitch: -0.3 };
+const cam = { x: 0, y: 12, z: ISLAND_RADIUS, yaw: 0, pitch: -0.3 };
 const walk = { x: 0, z: 0, vx: 0, vz: 0, y: 0, grounded: true };
 let orbitT = 0;
 let elapsed = 0;
@@ -573,7 +574,8 @@ function frame(now: number): void {
 
   if (view === "orbit") {
     const c = def.sites[0]!.center;
-    renderer.fp.orbit({ x: c.x, y: 2, z: c.z }, 58, 30, orbitT);
+    // Scaled to the island (ISLAND_RADIUS): the whole coast stays in frame on any island size.
+    renderer.fp.orbit({ x: c.x, y: 2, z: c.z }, ISLAND_RADIUS * 1.95, ISLAND_RADIUS, orbitT);
   } else {
     cameraFrame.eye = eye;
     cameraFrame.yaw = cam.yaw;

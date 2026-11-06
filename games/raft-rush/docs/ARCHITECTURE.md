@@ -66,7 +66,7 @@ a notice).
 
 Allowed cross-module imports on the client (everything else goes through client-app):
 `net → shared`, `render → shared, app/settings (types)`, `characters → render/* (Toon, kit), fx/itemMeshes, net/types, shared`,
-`fx → render/* (Toon, textures), net/types, shared`, `audio → shared, app/settings (types)`,
+`fx → render/* (Toon, textures, island/waves), net/types, shared`, `audio → shared, app/settings (types)`,
 `ui → app/settings, i18n, audio/Sfx (types), input/bindings (pure key tables: bindingFor / codesFor / keyCap /
 keyCapsVersion / onKeyCapsChange), shared`, `app → everything`. Every client module may import `util/*` and
 `i18n` (`t`, `itemName`, …).
@@ -419,11 +419,13 @@ no tunneling at 34 m/s through a 0.3 m trunk, `sampleTrajectory` end ≈ actual 
 
 ### 5.3 Island generator (island) — game4.md §9
 
-- Grid: SOLO_GRID (96 m) / DUEL_GRID, CELL_SIZE 1 m, centered on the origin (duel island centers ±(R + strait/2)).
+- Grid: SOLO_GRID (160 m; the island is ~95–100 m across) / DUEL_GRID (256 × 176 m), CELL_SIZE 1 m, centered on the origin (duel island centers ±(R + strait/2)).
 - Shape: elliptical mask (random axes 0.85–1.15 × ISLAND_RADIUS, random rotation via a *rational* rotation
   (pick (c, s) from a Pythagorean-triple table, never cos/sin)), coastline perturbed by low-frequency fbm2 of
-  the position, hills by fbm2 / ridged2 (biome `rugged`), peak PEAK_MIN..MAX, beach band around the coast
-  (0–0.6 m sand), shallow shelf (walkable, −0.6..0), deep water beyond, sea floor SEA_FLOOR_Y at the edges.
+  the position, a low rolling lowland (plateau + low-frequency swells / dips, a few soft knolls, one or two
+  small flat-topped tors, one broad gentle main rise; fbm2 / ridged2 detail by biome `rugged`), peak
+  PEAK_MIN..MAX (4–7 m, per-biome range in shape.ts BIOME_STYLES, volcanic highest), a wide beach band around
+  the coast (0–0.6 m sand), shallow shelf (walkable, −0.6..0), deep water beyond, sea floor SEA_FLOOR_Y at the edges.
   Ensure: the camp/wreck/raft beach area is gentle (flatten a radius around them), no unwalkable pits, at least
   one gentle path from the beach to the spring.
 - Landmarks per site with **corridor guarantees** (CORRIDOR_WIDTH clear of nodes between wreck↔camp↔raft and the

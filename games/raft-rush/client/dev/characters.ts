@@ -31,7 +31,7 @@ import { Characters, type CharacterTrigger, type FpArmsFrame, type FpGesture, ty
 import { countTriangles } from "../src/characters/kit";
 import { createPuppetFrame } from "../src/characters/puppet";
 import type { MonsterFrame, PlayerFrame } from "../src/net/types";
-import { createToonMaterial } from "../src/render/Toon";
+import { createToonMaterial, OVERLAY_LAYER } from "../src/render/Toon";
 
 /* ------------------------------------------------------------------ scene */
 
@@ -49,6 +49,7 @@ const NIGHT_SKY = new THREE.Color("#0B1A33");
 scene.background = DAY_SKY.clone();
 scene.fog = new THREE.Fog("#BFE9F7", 40, 120);
 const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 300);
+camera.layers.enable(OVERLAY_LAYER); // marker labels / nameplates
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 

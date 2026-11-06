@@ -10,8 +10,8 @@ import { distanceField, vertexX, vertexZ, type Terrain } from "./terrain.js";
 import type { XZ } from "./types.js";
 import { WALK_MIN_Y } from "./walk.js";
 
-/** Shore cells wanted per island (contract minimum is 24). */
-export const SHORE_TARGET = 36;
+/** Shore cells wanted per island (contract minimum is 24; ~one per 6 m of the ~300 m coastline). */
+export const SHORE_TARGET = 48;
 /** Shore cell water depth band (m). */
 export const SHORE_DEPTH_MIN = 0.3;
 export const SHORE_DEPTH_MAX = 1.5;

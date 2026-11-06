@@ -1,13 +1,13 @@
 // PannerNode / AudioListener helpers and the radio distance curves. Owner: client-fx-audio. Copied from
 // games/bonk-brawl/client/src/audio/engine/spatial.ts (world units are meters, Y up, which is also Web Audio's
-// convention, so positions pass through unchanged) with distances retuned for a ~60 m island, plus the pure
+// convention, so positions pass through unchanged) with distances retuned for a ~100 m island, plus the pure
 // curves for Emekli Amca's radio (§14/§18: the music source fades and gets tinny with distance).
 
 import type { Vec3Like } from "../../../../shared/types";
 
-/** Inverse distance model: full volume within 3 m, ~6% at 60 m (the island is ~60 m across). */
+/** Inverse distance model: full volume within 3 m, ~5% at 60 m, ~3% at the far shore (the island is ~100 m across). */
 export const PANNER_REF_DISTANCE = 3;
-export const PANNER_MAX_DISTANCE = 60;
+export const PANNER_MAX_DISTANCE = 100;
 export const PANNER_ROLLOFF = 1.1;
 
 export function createPanner(ctx: BaseAudioContext, pos: Vec3Like, hrtf: boolean): PannerNode {
