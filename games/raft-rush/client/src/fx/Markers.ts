@@ -6,7 +6,7 @@
 import * as THREE from "three";
 import { PALETTE } from "../../../shared/constants";
 import type { MarkerKind } from "../../../shared/types";
-import { addOutline, createToonMaterial, glowMaterial } from "../render/Toon";
+import { addOutline, createToonMaterial, glowMaterial, OVERLAY_LAYER } from "../render/Toon";
 import type { MarkerVisual } from "./Fx";
 import type { Particles } from "./Particles";
 
@@ -272,6 +272,7 @@ export class Markers {
     const sprite = new THREE.Sprite(spriteMaterial);
     sprite.center.set(0.5, 0);
     sprite.renderOrder = 12;
+    sprite.layers.set(OVERLAY_LAYER);
     sprite.raycast = () => {};
     float.add(sprite);
 

@@ -4,8 +4,11 @@
 // up), rigging ropes with the sail stage, the sail unfurls when the sail is rigged (patched canvas once the
 // rudder is fitted), provision crates (cooked food) and water barrels stack up, and on the launch stage a pulsing
 // READY halo + pennant + sparkles. The raft shudders when it loses hp or a stage. During the launch phase the raft
-// slides off the sand and sails away (WorldFrame.launch), bobbing and rocking.
-// Owner: client-render.
+// slides off the sand and sails away (WorldFrame.launch) riding the drawn sea: the shared wave surface
+// (waves.ts) is sampled at four hull points (bow, stern, port, starboard) for heave, pitch and roll, each followed
+// by a critically damped spring (frame-rate independent), so the raft lags and settles like a heavy thing on
+// water; the push-off dips the bow into the water and the storm rocks it harder. The sail billows with the
+// same gust field the palms sway in (wind.ts). Owner: client-render.
 
 import * as THREE from "three";
 import { PALETTE, RAFT_LAUNCH_STAGE, WATER_Y, type Timings } from "../../../../shared/constants";
@@ -18,6 +21,8 @@ import { smoothing } from "../noise";
 import { ringTexture, sailTexture, WOOD } from "../textures";
 import { createToonMaterial, getOutlineMaterial, getSmoothOutlineGeometry, glowMaterial, vertexColorToon } from "../Toon";
 import { Sparkles } from "./Sparkles";
+import { waveAttenuation, waveHeightAt } from "./waves";
+import { gustAt } from "./wind";
 
 const LOGS = 8;
 const LOG_SPACING = 0.38;
@@ -30,12 +35,37 @@ const MAST_HEIGHT = 3.4;
 const POP_SEC = 0.4;
 /** How far the raft sails during the launch cinematic (m). */
 const LAUNCH_DISTANCE = 75;
+/** Buoyancy: hull sample half-length / half-width (m), spring rates (rad/s: higher = stiffer), angle limit. */
+const HULL_HALF_LENGTH = LOG_LENGTH * 0.5;
+const HULL_HALF_WIDTH = (LOGS * LOG_SPACING) * 0.5;
+const HEAVE_RATE = 3.2;
+const TILT_RATE = 2.6;
+const MAX_TILT = 0.32;
+/** How deep the loaded raft floats (m above its log axis at the waterline). */
+const FREEBOARD = 0.08;
 
 export interface RaftPose {
   x: number;
   y: number;
   z: number;
   yaw: number;
+  /** Bow-up pitch and starboard-down roll (rad) while afloat (optional: 0 on the slip). */
+  pitch?: number;
+  roll?: number;
+}
+
+/** A critically damped spring toward `target` (exact step, frame-rate independent). */
+export interface Spring {
+  x: number;
+  v: number;
+}
+
+export function stepSpring(s: Spring, target: number, rate: number, dt: number): void {
+  const d = s.x - target;
+  const e = Math.exp(-rate * dt);
+  const k = (s.v + rate * d) * dt;
+  s.x = target + (d + k) * e;
+  s.v = (s.v - rate * k) * e;
 }
 
 type ShownKey = "logs" | "ropes" | "crates" | "gourds";
@@ -154,7 +184,13 @@ export class Raft {
   private shudder = 0;
   private lastHull = -1;
   private primed = false;
-  private readonly pose: RaftPose = { x: 0, y: 0, z: 0, yaw: 0 };
+  private readonly pose: RaftPose = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0 };
+  private readonly heave: Spring = { x: 0, v: 0 };
+  private readonly pitch: Spring = { x: 0, v: 0 };
+  private readonly roll: Spring = { x: 0, v: 0 };
+  /** Afloat fraction last frame (the push-off splash-in impulse fires when it crosses ½). */
+  private lastAfloat = 0;
+  private wasLaunching = false;
 
   constructor(grid: Heightfield, site: IslandSite, bank: MaterialBank) {
     this.team = site.team;
@@ -331,10 +367,11 @@ export class Raft {
     const ready = pieces.ready;
     this.readyK += ((ready ? 1 : 0) - this.readyK) * smoothing(3, dt);
 
-    // Sail unfurl + billow (stronger at sea / in the storm).
+    // Sail unfurl + billow with the local gust (stronger at sea / in the storm).
     this.sail.visible = this.sailK > 0.02;
     if (this.sail.visible) {
-      const gust = 1 + Math.sin(elapsed * 1.7) * 0.06 + launch * 0.25 + waveAmp * 0.1;
+      const wind = Math.min(1, 0.25 + waveAmp * 0.6);
+      const gust = 0.94 + gustAt(this.pose.x, this.pose.z, elapsed, wind) * 0.16 + launch * 0.25 + waveAmp * 0.08;
       this.sail.scale.set(1, Math.max(0.02, this.sailK), gust);
     }
     this.pennant.visible = this.readyK > 0.05;
@@ -348,31 +385,90 @@ export class Raft {
     this.sparkles.update(elapsed, this.readyK);
     this.sparkles.setPixelRatio(pixelRatio);
     this.stepPops(dt);
+    this.stepPose(dt, elapsed, launch, waveAmp);
+  }
 
-    // Pose: rest on the slip, shudder when gnawed, sail away on launch.
-    this.shudder = Math.max(0, this.shudder - dt * 2.2);
+  /** Pose: rest on the slip, shudder when gnawed, slide off and ride the waves on launch. */
+  private stepPose(dt: number, elapsed: number, launch: number, waveAmp: number): void {
+    const step = Math.max(0, Math.min(dt, 0.1));
+    this.shudder = Math.max(0, this.shudder - step * 2.2);
     const shake = this.shudder > 0 ? Math.sin(elapsed * 46) * 0.035 * this.shudder : 0;
     const p = clamp01(launch);
+    const launching = p > 0;
+    if (launching && !this.wasLaunching) {
+      // Fresh launch: springs start at rest on the slip.
+      this.heave.x = this.restPos.y;
+      this.heave.v = 0;
+      this.pitch.x = this.pitch.v = this.roll.x = this.roll.v = 0;
+      this.lastAfloat = 0;
+    }
+    this.wasLaunching = launching;
+    if (!launching) {
+      this.root.position.copy(this.restPos);
+      this.root.rotation.set(shake, this.yaw, -shake, "YXZ");
+      this.writePose(0, 0);
+      return;
+    }
+
     const dist = p * p * (3 - 2 * p) * LAUNCH_DISTANCE;
     const fx = -Math.sin(this.yaw);
     const fz = -Math.cos(this.yaw);
+    // Right-hand side of the hull (log row axis) on XZ.
+    const rx = Math.cos(this.yaw);
+    const rz = -Math.sin(this.yaw);
     const x = this.restPos.x + fx * dist;
     const z = this.restPos.z + fz * dist;
     const ground = heightAt(this.grid, x, z);
-    const afloat = Math.min(1, Math.max(0, (WATER_Y - ground) / 0.4));
-    const bob = afloat * (Math.sin(elapsed * 1.6) * 0.08 + Math.sin(elapsed * 2.7 + 1) * 0.04) * (1 + waveAmp * 1.5);
-    const y = Math.max(ground + LOG_RADIUS * 0.85, WATER_Y + 0.08) + bob;
-    this.root.position.set(x, p > 0 ? y : this.restPos.y, z);
-    this.root.rotation.set(
-      afloat * Math.sin(elapsed * 1.3) * 0.05 * (1 + waveAmp) + shake,
-      this.yaw + afloat * Math.sin(elapsed * 0.5) * 0.04,
-      afloat * Math.sin(elapsed * 1.1 + 0.6) * 0.06 * (1 + waveAmp) - shake,
-      "YXZ",
-    );
+    const afloat = clamp01((WATER_Y - ground) / 0.45);
+
+    // Four hull samples of the drawn surface (bow, stern, port, starboard).
+    const bow = this.surface(x + fx * HULL_HALF_LENGTH, z + fz * HULL_HALF_LENGTH, elapsed, waveAmp);
+    const stern = this.surface(x - fx * HULL_HALF_LENGTH, z - fz * HULL_HALF_LENGTH, elapsed, waveAmp);
+    const port = this.surface(x - rx * HULL_HALF_WIDTH, z - rz * HULL_HALF_WIDTH, elapsed, waveAmp);
+    const star = this.surface(x + rx * HULL_HALF_WIDTH, z + rz * HULL_HALF_WIDTH, elapsed, waveAmp);
+    const water = (bow + stern + port + star) * 0.25;
+    const storm = Math.min(1, Math.max(0, (waveAmp - 0.25) / 0.85));
+    const gain = 1.1 + storm * 0.7;
+    const pitchT = clampAbs(Math.atan2(bow - stern, HULL_HALF_LENGTH * 2) * gain, MAX_TILT) * afloat;
+    const rollT = clampAbs(Math.atan2(port - star, HULL_HALF_WIDTH * 2) * gain, MAX_TILT) * afloat;
+    const floatY = water + LOG_RADIUS * 0.85 - FREEBOARD;
+    const sandY = ground + LOG_RADIUS * 0.85;
+    const heaveT = Math.max(sandY, floatY * afloat + sandY * (1 - afloat));
+
+    // Push-off: the moment the hull floats it shoves into the water (dip + bow down), then the springs bring it up.
+    if (afloat >= 0.5 && this.lastAfloat < 0.5) {
+      this.heave.v -= 0.9;
+      this.pitch.v -= 0.35;
+    }
+    this.lastAfloat = afloat;
+    stepSpring(this.heave, heaveT, HEAVE_RATE, step);
+    stepSpring(this.pitch, pitchT, TILT_RATE, step);
+    stepSpring(this.roll, rollT, TILT_RATE * 1.15, step);
+    // Never sink into the sand below the hull.
+    if (this.heave.x < sandY - 0.05) {
+      this.heave.x = sandY - 0.05;
+      if (this.heave.v < 0) this.heave.v = 0;
+    }
+
+    this.root.position.set(x, this.heave.x, z);
+    // Euler YXZ: +x raises the bow (local −Z), −z lowers the starboard side (local +X).
+    this.root.rotation.set(this.pitch.x + shake, this.yaw + afloat * Math.sin(elapsed * 0.45) * 0.03, -this.roll.x - shake, "YXZ");
+    this.writePose(this.pitch.x, this.roll.x);
+  }
+
+  /** The drawn water surface height under a hull point. */
+  private surface(x: number, z: number, t: number, amp: number): number {
+    const depth = WATER_Y - heightAt(this.grid, x, z);
+    return WATER_Y + waveHeightAt(x, z, t, amp) * waveAttenuation(depth);
+  }
+
+  private writePose(pitch: number, roll: number): void {
     this.pose.x = this.root.position.x;
     this.pose.y = this.root.position.y;
     this.pose.z = this.root.position.z;
     this.pose.yaw = this.yaw;
+    this.pose.pitch = pitch;
+    this.pose.roll = roll;
   }
 
   /* ------------------------------------------------------------------ build */
@@ -501,6 +597,10 @@ function indexCount(g: THREE.BufferGeometry): number {
 
 function clamp01(v: number): number {
   return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
+function clampAbs(v: number, max: number): number {
+  return v < -max ? -max : v > max ? max : v;
 }
 
 function createRopeMaterial(bank: MaterialBank): THREE.MeshToonMaterial {

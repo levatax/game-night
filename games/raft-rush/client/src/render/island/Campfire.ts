@@ -81,7 +81,7 @@ export class Campfire {
     coals.renderOrder = 3;
     this.group.add(coals);
     // Smoke + embers.
-    this.smoke = new RisingPuffs(bank, { count: 16, x: fire.x, y: y + 0.5, z: fire.z, jitter: 0.25, color: "#8C8A8E", additive: false, rise: 6.5, spread: 0.9, size: 40, life: 4.2, fadeIn: 0.12 });
+    this.smoke = new RisingPuffs(bank, { count: 16, x: fire.x, y: y + 0.5, z: fire.z, jitter: 0.25, color: "#85827F", additive: false, rise: 6.5, spread: 0.9, size: 40, life: 4.2, fadeIn: 0.12 });
     this.smoke.points.name = "campfireSmoke";
     this.embers = new RisingPuffs(bank, { count: 14, x: fire.x, y: y + 0.35, z: fire.z, jitter: 0.35, color: "#FFB347", additive: true, rise: 3.2, spread: 0.6, size: 7, life: 1.6, fadeIn: 0.02 });
     this.embers.points.name = "campfireEmbers";
@@ -121,7 +121,7 @@ export class Campfire {
     // Out = smoke only (thick for a while); lit = thin smoke + embers.
     this.smoke.update(elapsed, 0.16 + this.out * 0.4 + rain * 0.15, pixelRatio);
     this.embers.update(elapsed, Math.min(1, this.size) * (1 - rain * 0.6), pixelRatio);
-    this.ring.setOpacity(Math.min(1, this.size) * smoothstep(0.35, 0.8, dark) * (0.3 + 0.05 * flick));
+    this.ring.setOpacity(Math.min(1, this.size) * smoothstep(0.35, 0.8, dark) * (0.36 + 0.05 * flick));
     this.light.intensity = Math.min(1.4, this.size) * sputter * flick;
   }
 }

@@ -11,7 +11,10 @@
 // Lighting: one directional key light (the sun by day, the moon by night; the only shadow caster, a 60 m
 // ortho box following the camera, no shadows on low), a hemisphere ambient, and a fixed pool of point lights
 // for campfires / torches (constant count per tier so nothing recompiles mid-match). Fog 160 m day / 45 m
-// night (swamp 30, fog weather 25). Everything is driven by shared data (IslandDef + WorldFrame) only.
+// night (swamp 30, fog weather 25), linear from 13% (day) to 20% (night) of that: haze toward a muted horizon.
+// Color: a custom filmic grade (grade.ts: exposure, mild saturation trim, soft highlight shoulder) runs as the
+// renderer's tone mapping — inside each material on low / medium, in OutputPass on high — so no tier pays for
+// an extra full-screen pass. Everything is driven by shared data (IslandDef + WorldFrame) only.
 //
 // Context loss (GPU reset, long background): ContextWatch flags it, render() / prewarm() pause, `onContextChange`
 // tells the app (reload card); on restore three.js rebuilds its GL state and re-uploads everything lazily, and
@@ -27,6 +30,7 @@ import type { Quality } from "../app/settings";
 import { ContextWatch } from "./ContextWatch";
 import { FpCamera } from "./FpCamera";
 import { FrameGovernor } from "./FrameGovernor";
+import { GRADE_EXPOSURE, gradeToneMapping, installGrade } from "./grade";
 import type { LightRequest } from "./island/Campfire";
 import { IslandView } from "./island/IslandView";
 import type { RaftPose } from "./island/Raft";
@@ -36,6 +40,7 @@ import { PostFx } from "./PostFx";
 import { pixelRatioFor, QUALITY_PROFILES } from "./quality";
 import { computeLighting, createLighting, type Lighting, type WeatherWeights } from "./sky/DayNight";
 import { Sky } from "./sky/Sky";
+import { OVERLAY_LAYER } from "./Toon";
 import type { WorldFrame } from "./types";
 
 export { FpCamera } from "./FpCamera";
@@ -46,7 +51,9 @@ export type { Lighting } from "./sky/DayNight";
 const KEY_DISTANCE = 70;
 /** How fast weather fades in / out (per second). */
 const WEATHER_RATE = 0.45;
-const UNDERWATER_FOG = new THREE.Color("#0E4A5C");
+const UNDERWATER_FOG = new THREE.Color("#123C47");
+/** Peak sun-shadow darkness (scaled down as the key light dims). */
+const SHADOW_STRENGTH = 0.64;
 
 const tmpV = new THREE.Vector3();
 const tmpV2 = new THREE.Vector3();
@@ -95,10 +102,13 @@ export class Renderer {
     container.appendChild(this.canvas);
     this.container = container;
     this.quality = quality;
+    // Before any material compiles: the grade + toon shade tint are shader-chunk patches.
+    installGrade();
     try {
       this.gl = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: quality !== "low", powerPreference: "high-performance" });
       this.gl.outputColorSpace = THREE.SRGBColorSpace;
-      this.gl.toneMapping = THREE.NoToneMapping;
+      this.gl.toneMapping = gradeToneMapping();
+      this.gl.toneMappingExposure = GRADE_EXPOSURE;
       this.gl.shadowMap.type = THREE.PCFShadowMap;
       // After WebGLRenderer, so three's own restore runs before ours.
       this.glInfo = this.gl.info;
@@ -111,6 +121,7 @@ export class Renderer {
     this.scene.fog = this.fog;
     this.scene.background = this.fog.color.clone();
     this.camera.rotation.order = "YXZ";
+    this.camera.layers.enable(OVERLAY_LAYER);
     this.scene.add(this.camera);
     this.setupLights();
     this.sky = new Sky(quality);
@@ -187,6 +198,8 @@ export class Renderer {
     out.y = pose.y;
     out.z = pose.z;
     out.yaw = pose.yaw;
+    out.pitch = pose.pitch ?? 0;
+    out.roll = pose.roll ?? 0;
     return true;
   }
 
@@ -288,7 +301,7 @@ export class Renderer {
     // Key (sun / moon) + ambient + fog.
     this.key.color.copy(light.keyColor);
     this.key.intensity = light.keyIntensity + flash * 0.8;
-    this.key.shadow.intensity = 0.72 * Math.min(1, light.keyIntensity / 1.2);
+    this.key.shadow.intensity = SHADOW_STRENGTH * Math.min(1, light.keyIntensity / 1.2);
     this.hemi.color.copy(light.hemiSky);
     this.hemi.groundColor.copy(light.hemiGround);
     this.hemi.intensity = light.hemiIntensity + flash * 2.4;
@@ -326,9 +339,31 @@ export class Renderer {
     this.applyUnderwater();
     this.applyDesaturation();
     if (this.needsPrewarm) this.prewarm();
-    if (this.post) this.post.render();
+    if (this.post) this.renderPost(gl, this.post);
     else gl.render(this.scene, this.camera);
     this.governor.frame(now());
+  }
+
+  /**
+   * Post-FX tier: OutputPass grades the whole composited frame, so the depth-test-free overlay (OVERLAY_LAYER:
+   * marker labels, nameplates) is left out of the composer and drawn on top afterwards, ungraded, exactly as the
+   * direct path draws it. No clear, no matrix update (done by the composer's pass), no lights on that layer.
+   */
+  private renderPost(gl: THREE.WebGLRenderer, post: PostFx): void {
+    const layers = this.camera.layers;
+    const mask = layers.mask;
+    layers.disable(OVERLAY_LAYER);
+    post.render();
+    layers.set(OVERLAY_LAYER);
+    const autoClear = gl.autoClear;
+    const autoUpdate = this.scene.matrixWorldAutoUpdate;
+    gl.autoClear = false;
+    this.scene.matrixWorldAutoUpdate = false;
+    gl.setRenderTarget(null);
+    gl.render(this.scene, this.camera);
+    gl.autoClear = autoClear;
+    this.scene.matrixWorldAutoUpdate = autoUpdate;
+    layers.mask = mask;
   }
 
   resize(): void {
@@ -394,7 +429,7 @@ export class Renderer {
     shadow.bias = -0.0006;
     shadow.normalBias = 0.04;
     shadow.radius = 3;
-    shadow.intensity = 0.55;
+    shadow.intensity = SHADOW_STRENGTH * 0.75;
     this.hemi.name = "hemi";
     this.scene.add(this.key, this.key.target, this.hemi);
   }

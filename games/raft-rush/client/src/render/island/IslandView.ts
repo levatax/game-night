@@ -22,7 +22,10 @@ import { Terrain } from "./Terrain";
 import { Volcano } from "./Volcano";
 import { Water } from "./Water";
 
+/** Fireflies: at least this many, else ~0.3 per tree / bush (a bigger island gets more), capped. */
 const FIREFLIES = 90;
+const FIREFLIES_PER_HOST = 0.3;
+const FIREFLIES_MAX = 240;
 
 export class IslandView {
   readonly group = new THREE.Group();
@@ -54,14 +57,17 @@ export class IslandView {
     this.campfires = def.sites.map((s) => new Campfire(def.grid, s.campfire, this.bank));
     this.rafts = def.sites.map((s) => new Raft(def.grid, s, this.bank));
     this.structures = new Structures(def.grid, this.bank);
-    this.fireflies = new Fireflies(def, FIREFLIES * (def.layout === "duel" ? 2 : 1), this.bank);
+    let hosts = 0;
+    for (const n of def.nodes) if (n.kind === "tree" || n.kind === "bush") hosts++;
+    const perIsland = Math.min(FIREFLIES_MAX, Math.max(FIREFLIES, Math.round((hosts / Math.max(1, def.sites.length)) * FIREFLIES_PER_HOST)));
+    this.fireflies = new Fireflies(def, perIsland * (def.layout === "duel" ? 2 : 1), this.bank);
     this.volcano = def.biome === "volcanic" ? new Volcano(def, this.bank) : null;
     this.group.add(terrain.group, this.water.mesh, this.flora.mesh, this.flora.softMesh, this.grass.mesh, this.sites.group, this.structures.group, this.fireflies.points);
     for (const c of this.campfires) this.group.add(c.group);
     for (const r of this.rafts) this.group.add(r.group);
     if (this.volcano) this.group.add(this.volcano.group);
     this.setQuality(quality);
-    this.triangles = terrain.triangles + 4608 + this.flora.triangles + this.grass.triangles + this.sites.triangles;
+    this.triangles = terrain.triangles + Water.triangles + this.flora.triangles + this.grass.triangles + this.sites.triangles;
   }
 
   /** Grass density and other decorative counts for a tier (no rebuild). */

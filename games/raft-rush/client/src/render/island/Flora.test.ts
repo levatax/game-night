@@ -111,8 +111,12 @@ describe("Flora", () => {
     expect(slots.find((s) => s.node.kind === "tree")!.mesh).toBe(flora.mesh);
   });
 
-  it("stays inside the §20 flora budget (≈ 40k triangles on a solo island)", () => {
-    const { flora } = setup();
-    expect(flora.triangles).toBeLessThan(45000);
+  // §20 budgeted ≈ 40k flora triangles for the original ~290-node island (≈ 136 per node). The long-tide island
+  // has ~2.5x the nodes, so the budget is per node (archetypes were trimmed to stay under it) with a hard cap that
+  // keeps the whole solo scene inside docs/PERF_DRAWCALLS.md's 250k (dev/bench.mts).
+  it("stays inside the flora budget (≤ 130 triangles per node, < 95k on a solo island)", () => {
+    const { def, flora } = setup();
+    expect(flora.triangles / def.nodes.length).toBeLessThan(130);
+    expect(flora.triangles).toBeLessThan(95000);
   });
 });

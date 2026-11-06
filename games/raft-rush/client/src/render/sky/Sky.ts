@@ -27,16 +27,17 @@ export class Sky {
     this.object.add(this.dome.mesh);
     const rng = createRng(0x5ca1ab1e);
     const white = new THREE.Color(1, 1, 1);
-    const haze = new THREE.Color("#DCEFF7");
+    // Far clouds fade toward a muted horizon haze (the calmer 2026-11 palette: no icy cyan).
+    const haze = new THREE.Color("#CBD3D4");
     const fair = ringClouds(rng, scaledCount(22, quality), { rMin: 120, rMax: 200, yMin: 28, yMax: 80, wMin: 30, wMax: 64 }, (r) =>
       white.clone().lerp(haze, ((r - 120) / 80) * 0.35),
     );
-    this.clouds = new CloudLayer(fair, "#FFFFFF", "#C9D6E8", "clouds");
-    const dark = new THREE.Color("#B9C2CC");
+    this.clouds = new CloudLayer(fair, "#F4F3EF", "#AFB8C0", "clouds");
+    const dark = new THREE.Color("#A8AEB3");
     const heavy = ringClouds(rng, scaledCount(30, quality), { rMin: 70, rMax: 170, yMin: 26, yMax: 60, wMin: 46, wMax: 90 }, () =>
       white.clone().lerp(dark, rng() * 0.5),
     );
-    this.stormClouds = new CloudLayer(heavy, "#E6EAEE", "#8E98A6", "stormClouds");
+    this.stormClouds = new CloudLayer(heavy, "#D9DBDC", "#7B8187", "stormClouds");
     this.drift.add(this.clouds.mesh, this.stormClouds.mesh);
     this.object.add(this.drift);
     this.stars = new Stars(scaledCount(420, quality), pixelRatioFor(quality));

@@ -39,7 +39,7 @@ export const ROOM_NAME = "raft_rush";
  * Create/JoinOptions (a mismatch is rejected with JOIN_ERROR.OUTDATED) and the server echoes it in WelcomeMsg, so a
  * stale cached client after a deploy is told to refresh instead of failing at random.
  */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 /** Every message type name. Client→server and server→client share one namespace. */
 export const MSG = {

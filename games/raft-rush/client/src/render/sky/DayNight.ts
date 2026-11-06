@@ -4,9 +4,17 @@
 // wind and wave height, with weather (rain / fog / heat wave / full moon), biome (volcanic red sky, swamp fog)
 // and the storm layered on top. Pure math over reusable output objects (no allocation per frame); Renderer
 // pushes the result into lights, fog, SkyDome, Water and the rest. Owner: client-render.
+//
+// Look (2026-11 color pass): naturalistic, slightly desaturated tropics, not neon. The biome colors of
+// shared/constants.ts are muted here at parse time (mutedPalette: less saturation, lower value; the sea pulled
+// toward a deep teal-navy), daylight is softer (key 2.15, hemi 0.9, near-neutral sky fill instead of a cyan
+// one), dawn / dusk warm but restrained, nights a genuinely dark blue-black where the campfire, torches and
+// light rings carry the scene, rain / storm grey and desaturated. Fog starts at ~13% of its far distance by day
+// so the bigger island fades into a muted horizon haze with distance. The sky dome and fog are not tone mapped
+// on the direct render path (fog mixes after the grade), so these colors are close to final.
 
 import * as THREE from "three";
-import { BIOMES, FOG_DAY, FOG_NIGHT, FOG_WEATHER_DISTANCE, PALETTE, type Timings } from "../../../../shared/constants";
+import { BIOMES, FOG_DAY, FOG_NIGHT, FOG_WEATHER_DISTANCE, type Timings } from "../../../../shared/constants";
 import { clockAt } from "../../../../shared/rules/schedule";
 import type { Biome, Phase } from "../../../../shared/types";
 
@@ -121,7 +129,7 @@ export function createLighting(): Lighting {
 /** Lobby / menus show a sunny morning. */
 const LOBBY_CYCLE = 0.3;
 
-/** Per-biome color sets, parsed once (linear THREE colors). */
+/** Per-biome color sets, parsed once and muted (linear THREE colors). */
 interface BiomePalette {
   sky: THREE.Color;
   skyDusk: THREE.Color;
@@ -136,12 +144,12 @@ function biomePalette(b: Biome): BiomePalette {
   if (!p) {
     const c = BIOMES[b].colors;
     p = {
-      sky: new THREE.Color(c.sky),
-      skyDusk: new THREE.Color(c.skyDusk),
-      skyNight: new THREE.Color(c.skyNight),
-      sea: new THREE.Color(c.sea),
-      sand: new THREE.Color(c.sand),
-      grass: new THREE.Color(c.grass),
+      sky: mute(new THREE.Color(c.sky), 0.7, 0.78),
+      skyDusk: mute(new THREE.Color(c.skyDusk), 0.68, 0.84),
+      skyNight: mute(new THREE.Color(c.skyNight), 0.85, 0.72),
+      sea: new THREE.Color(c.sea).lerp(SEA_DAY, 0.84),
+      sand: mute(new THREE.Color(c.sand), 0.6, 0.78),
+      grass: mute(new THREE.Color(c.grass), 0.6, 0.72),
     };
     palettes.set(b, p);
   }
@@ -149,36 +157,53 @@ function biomePalette(b: Biome): BiomePalette {
 }
 
 const C = (hex: string) => new THREE.Color(hex);
-const WHITE = C("#FFFFFF");
-const SUN_DAY = C("#FFF4DC");
-const SUN_GOLD = C("#FFB070");
-const SUN_DAWN = C("#FFC6A8");
-const MOON_LIGHT = C("#9FB7FF");
-const MOON_DISC = C("#F4F1E2");
-const SEA_NIGHT = C(PALETTE.seaNight);
-const SHALLOW_TINT = C("#9FF0E6");
-const NIGHT_HORIZON = C("#24406E");
-const HEMI_NIGHT_SKY = C("#3A4C7A");
-const HEMI_NIGHT_GROUND = C("#1A2233");
-const HEMI_MOON_SKY = C("#7A8EC4");
-const RAIN_SKY_DAY = C("#7E8A96");
-const RAIN_SKY_NIGHT = C("#262C36");
-const FOG_DAY_COLOR = C("#C8D2D4");
-const FOG_NIGHT_COLOR = C("#3A4652");
-const HEAT_HORIZON = C("#FFE7B0");
-const STORM_TOP = C("#1E2230");
-const STORM_HORIZON = C("#3B4150");
-const STORM_HEMI = C("#4A5068");
-const STORM_SEA = C("#2C4A55");
-const FOAM_NIGHT = C("#9FB0D0");
-const CLOUD_DUSK = C("#FFC2A8");
-const CLOUD_NIGHT = C("#3A4666");
-const CLOUD_RAIN = C("#8A939E");
-const SWAMP_FOG = C("#A9C2B5");
-const VOLCANIC_GROUND = C("#5A2A22");
+/** Midday sun: warm white, not paper white. */
+const SUN_DAY = C("#FFF0D6");
+/** Golden hour / sunset key: warm amber, kept short of orange. */
+const SUN_GOLD = C("#F0AE7C");
+const SUN_DAWN = C("#ECC0A6");
+const MOON_LIGHT = C("#8C9FCF");
+const MOON_DISC = C("#E9E6D8");
+/** Daytime sea every biome's sea color is pulled toward (deep teal-navy, not cyan). */
+const SEA_DAY = C("#1B4F5E");
+const SEA_NIGHT = C("#0B1C2B");
+/** Shallow water over sand: muted turquoise. */
+const SHALLOW_TINT = C("#5E9E96");
+const NIGHT_HORIZON = C("#1A2B45");
+/** Daytime sky fill is mostly neutral (a cyan fill turned every surface minty). */
+const HEMI_DAY_NEUTRAL = C("#C9CCC4");
+const HEMI_NIGHT_SKY = C("#2C3A5C");
+const HEMI_NIGHT_GROUND = C("#11151E");
+const HEMI_MOON_SKY = C("#6878A2");
+/** Horizon haze the day sky melts into (warm grey; the fog color by day). */
+const DAY_HAZE = C("#CDD1CA");
+const RAIN_SKY_DAY = C("#7B8184");
+const RAIN_SKY_NIGHT = C("#1D2126");
+const FOG_DAY_COLOR = C("#B6BDBC");
+const FOG_NIGHT_COLOR = C("#29313A");
+const HEAT_HORIZON = C("#E6D6B2");
+const STORM_TOP = C("#1B1E25");
+const STORM_HORIZON = C("#383B42");
+const STORM_HEMI = C("#474B56");
+const STORM_SEA = C("#243840");
+const FOAM_DAY = C("#E2E5DF");
+const FOAM_NIGHT = C("#5D6A7E");
+const CLOUD_DAY = C("#E9EBE8");
+const CLOUD_DUSK = C("#D9AF9B");
+const CLOUD_NIGHT = C("#222937");
+const CLOUD_RAIN = C("#83888C");
+const SWAMP_FOG = C("#91A499");
+const VOLCANIC_GROUND = C("#4A2A24");
+const LUMA = new THREE.Vector3(0.2126, 0.7152, 0.0722);
 
 const tmp = new THREE.Color();
 const tmp2 = new THREE.Color();
+
+/** Pull a (linear) color toward its own luma by 1 - `sat`, then scale its value. Parse-time only. */
+function mute(c: THREE.Color, sat: number, value: number): THREE.Color {
+  const l = c.r * LUMA.x + c.g * LUMA.y + c.b * LUMA.z;
+  return c.lerp(new THREE.Color(l, l, l), 1 - sat).multiplyScalar(value);
+}
 
 function smooth(e0: number, e1: number, x: number): number {
   const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
@@ -230,48 +255,48 @@ export function computeLighting(input: DayNightInput, out: Lighting): Lighting {
   const moonUp = smooth(-0.02, 0.1, out.moonDir.y);
 
   // --- Key light.
-  const moonStrength = lerp(0.5, 1.25, wx.fullmoon);
+  const moonStrength = lerp(0.38, 1.0, wx.fullmoon);
   if (out.sunDir.y > -0.05) {
     out.keyDir.copy(out.sunDir);
-    out.keyColor.copy(SUN_DAY).lerp(SUN_GOLD, sunsetWarm * 0.85).lerp(SUN_DAWN, dawnWarm * 0.6);
-    out.keyIntensity = 2.6 * sunUp * (0.55 + 0.45 * dayness);
+    out.keyColor.copy(SUN_DAY).lerp(SUN_GOLD, sunsetWarm * 0.8).lerp(SUN_DAWN, dawnWarm * 0.6);
+    out.keyIntensity = 2.15 * sunUp * (0.55 + 0.45 * dayness);
   } else {
     out.keyDir.copy(out.moonDir);
     out.keyColor.copy(MOON_LIGHT);
     // Fade in as the sun sinks so the sun → moon hand-over never pops.
     out.keyIntensity = moonStrength * moonUp * nightness * smooth(-0.05, -0.25, out.sunDir.y);
   }
-  out.keyColor.lerp(SUN_GOLD, wx.heat * 0.25 * sunUp);
-  out.keyIntensity *= 1 + wx.heat * 0.1;
+  out.keyColor.lerp(SUN_GOLD, wx.heat * 0.2 * sunUp);
+  out.keyIntensity *= 1 + wx.heat * 0.08;
   out.keyIntensity *= 1 - 0.6 * wx.rain;
   out.keyIntensity *= 1 - 0.85 * storm;
   out.keyIntensity *= 1 - 0.35 * wx.fog;
 
   // --- Hemisphere (ambient).
-  tmp.copy(pal.sky).lerp(WHITE, 0.3);
-  tmp2.copy(pal.grass).lerp(pal.sand, 0.5).multiplyScalar(0.7);
-  out.hemiSky.copy(HEMI_NIGHT_SKY).lerp(HEMI_MOON_SKY, wx.fullmoon).lerp(tmp, dayness).lerp(pal.skyDusk, warm * 0.5);
+  tmp.copy(pal.sky).lerp(HEMI_DAY_NEUTRAL, 0.45);
+  tmp2.copy(pal.grass).lerp(pal.sand, 0.5).multiplyScalar(0.6);
+  out.hemiSky.copy(HEMI_NIGHT_SKY).lerp(HEMI_MOON_SKY, wx.fullmoon).lerp(tmp, dayness).lerp(pal.skyDusk, warm * 0.4);
   out.hemiGround.copy(HEMI_NIGHT_GROUND).lerp(tmp2, dayness);
   if (input.biome === "volcanic") out.hemiGround.lerp(VOLCANIC_GROUND, 0.35);
-  out.hemiIntensity = lerp(lerp(0.42, 0.8, wx.fullmoon), 1.08, dayness);
-  out.hemiSky.lerp(RAIN_SKY_DAY, wx.rain * 0.5);
-  out.hemiIntensity *= 1 - 0.2 * wx.rain;
+  out.hemiIntensity = lerp(lerp(0.34, 0.62, wx.fullmoon), 0.9, dayness);
+  out.hemiSky.lerp(RAIN_SKY_DAY, wx.rain * 0.65);
+  out.hemiIntensity *= 1 - 0.22 * wx.rain;
   out.hemiSky.lerp(STORM_HEMI, storm * 0.8);
   out.hemiIntensity *= 1 - 0.4 * storm;
 
   // --- Sky gradient.
-  const dayTop = tmp.copy(pal.sky).multiplyScalar(0.72);
+  const dayTop = tmp.copy(pal.sky).multiplyScalar(0.7);
   const nightTop = pal.skyNight;
   out.skyTop.copy(nightTop).lerp(dayTop, dayness);
   out.skyHorizon.copy(pal.skyNight).lerp(NIGHT_HORIZON, input.biome === "volcanic" ? 0.15 : 0.55);
   if (input.biome === "volcanic") out.skyHorizon.lerp(pal.skyDusk, 0.35);
-  out.skyHorizon.lerp(tmp2.copy(pal.sky).lerp(WHITE, 0.45), dayness);
+  out.skyHorizon.lerp(tmp2.copy(pal.sky).lerp(DAY_HAZE, 0.5), dayness);
   // Golden hour / dusk / dawn.
   out.skyTop.lerp(tmp2.copy(pal.sky).lerp(pal.skyNight, 0.5), warm * 0.55);
-  out.skyHorizon.lerp(pal.skyDusk, warm * 0.9);
+  out.skyHorizon.lerp(pal.skyDusk, warm * 0.8);
   // Heat wave: pale, hazy, warm.
   out.skyHorizon.lerp(HEAT_HORIZON, wx.heat * 0.45 * dayness);
-  out.skyTop.lerp(WHITE, wx.heat * 0.12 * dayness);
+  out.skyTop.lerp(DAY_HAZE, wx.heat * 0.15 * dayness);
   // Rain: grey sky.
   tmp2.copy(RAIN_SKY_NIGHT).lerp(RAIN_SKY_DAY, dayness);
   out.skyTop.lerp(tmp2, wx.rain * 0.75);
@@ -288,7 +313,8 @@ export function computeLighting(input: DayNightInput, out: Lighting): Lighting {
   far = lerp(far, Math.min(far, 55), storm);
   far = lerp(far, FOG_WEATHER_DISTANCE, wx.fog);
   out.fogFar = far;
-  out.fogNear = Math.max(2, far * lerp(0.22, 0.08, Math.max(wx.fog, biome.fog > 0 ? 0.6 : 0)));
+  // Haze starts early by day (aerial perspective across the island), a little later at night.
+  out.fogNear = Math.max(2, far * lerp(lerp(0.2, 0.13, dayness), 0.08, Math.max(wx.fog, biome.fog > 0 ? 0.6 : 0)));
   out.fogColor.copy(out.skyHorizon);
   if (biome.fog > 0) out.fogColor.lerp(tmp2.copy(SWAMP_FOG).multiplyScalar(lerp(0.25, 1, dayness)), 0.55);
   tmp2.copy(FOG_NIGHT_COLOR).lerp(FOG_DAY_COLOR, dayness);
@@ -299,7 +325,7 @@ export function computeLighting(input: DayNightInput, out: Lighting): Lighting {
   // --- Sun / moon discs.
   out.sunColor.copy(SUN_DAY).lerp(SUN_GOLD, warm);
   out.sunSize = lerp(0.9988, 0.9976, wx.heat);
-  out.sunGlow = sunUp * (1 - 0.75 * wx.rain) * (1 - 0.9 * storm) * (1 - 0.5 * wx.fog) * lerp(0.9, 1.3, warm);
+  out.sunGlow = sunUp * (1 - 0.75 * wx.rain) * (1 - 0.9 * storm) * (1 - 0.5 * wx.fog) * lerp(0.75, 1.1, warm);
   out.moonColor.copy(MOON_DISC);
   out.moonSize = lerp(0.9993, 0.9984, wx.fullmoon);
   out.moonGlow = moonUp * (1 - 0.8 * wx.rain) * (1 - storm) * (1 - 0.6 * wx.fog) * (0.6 + 0.4 * nightness);
@@ -307,16 +333,16 @@ export function computeLighting(input: DayNightInput, out: Lighting): Lighting {
   out.skyBelow.copy(out.fogColor);
 
   // --- Sea.
-  out.sea.copy(SEA_NIGHT).lerp(pal.sea, dayness).lerp(pal.skyDusk, warm * 0.12);
-  out.sea.lerp(STORM_SEA, storm * 0.7).lerp(RAIN_SKY_DAY, wx.rain * 0.15 * dayness);
-  out.seaShallow.copy(out.sea).lerp(SHALLOW_TINT, 0.45 * lerp(0.35, 1, dayness) * (1 - 0.6 * storm));
-  out.seaDeep.copy(out.sea).multiplyScalar(0.62);
-  out.foam.copy(FOAM_NIGHT).lerp(WHITE, dayness);
+  out.sea.copy(SEA_NIGHT).lerp(pal.sea, dayness).lerp(pal.skyDusk, warm * 0.1);
+  out.sea.lerp(STORM_SEA, storm * 0.7).lerp(RAIN_SKY_DAY, wx.rain * 0.25 * dayness);
+  out.seaShallow.copy(out.sea).lerp(SHALLOW_TINT, 0.55 * lerp(0.3, 1, dayness) * (1 - 0.6 * storm));
+  out.seaDeep.copy(out.sea).multiplyScalar(0.6);
+  out.foam.copy(FOAM_NIGHT).lerp(FOAM_DAY, dayness).lerp(RAIN_SKY_DAY, Math.max(wx.rain * 0.3, storm * 0.4));
   out.glint = Math.max(sunUp * 0.9, moonUp * nightness * lerp(0.9, 1.6, wx.fullmoon)) * (1 - 0.7 * wx.rain) * (1 - storm * 0.8) * (1 - wx.fog * 0.6);
 
   // --- Clouds, stars, fireflies, wind, waves, rain.
-  out.cloudTint.copy(CLOUD_NIGHT).lerp(WHITE, dayness).lerp(CLOUD_DUSK, warm * 0.7);
-  out.cloudTint.lerp(CLOUD_RAIN, wx.rain * 0.6 * lerp(0.4, 1, dayness)).lerp(STORM_HORIZON, storm * 0.7);
+  out.cloudTint.copy(CLOUD_NIGHT).lerp(CLOUD_DAY, dayness).lerp(CLOUD_DUSK, warm * 0.7);
+  out.cloudTint.lerp(CLOUD_RAIN, wx.rain * 0.7 * lerp(0.4, 1, dayness)).lerp(STORM_HORIZON, storm * 0.7);
   if (input.biome === "volcanic") out.cloudTint.lerp(pal.skyDusk, 0.25);
   out.stormClouds = Math.max(wx.rain * 0.85, storm);
   out.starAlpha = smooth(0.25, 0.85, nightness) * (1 - wx.rain) * (1 - storm) * (1 - wx.fog * 0.85) * lerp(1, 0.45, wx.fullmoon);

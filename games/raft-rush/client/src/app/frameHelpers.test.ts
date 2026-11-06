@@ -89,6 +89,20 @@ describe("small state helpers", () => {
     expect(seat.yaw).toBeCloseTo(Math.PI / 2);
   });
 
+  it("RaftRide lifts a seat with the raft's pitch and roll", () => {
+    const ride = new RaftRide();
+    ride.setRest({ x: 0, y: 0, z: 0, yaw: 0 });
+    // Bow seat (local −Z) rises with bow-up pitch; starboard seat (local +X) sinks with roll.
+    ride.setCurrent({ x: 0, y: 0, z: 0, yaw: 0, pitch: 0.1, roll: 0 });
+    const bow = { x: 0, y: 1, z: -2 };
+    ride.carry(bow);
+    expect(bow.y).toBeCloseTo(1 + 2 * Math.sin(0.1));
+    ride.setCurrent({ x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0.1 });
+    const star = { x: 1, y: 1, z: 0 };
+    ride.carry(star);
+    expect(star.y).toBeCloseTo(1 - Math.sin(0.1));
+  });
+
   it("LightBuffer pools entries; ease clamps", () => {
     const l = new LightBuffer();
     l.add(1, 2, 3, 4, 1);

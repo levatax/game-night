@@ -2,8 +2,9 @@
 //
 // Pipeline (every stage deterministic; gameplay data uses integer-hash noise, mulberry32, + − × ÷,
 // Math.floor / Math.sqrt / Math.fround only — the raft / wreck yaw and node yaw / variant are cosmetic):
-//   1. shape.ts      plan each island (elliptical mask, rational rotation, ring-noise coast, peak 8–10 m) and
-//                    rasterize it in island-local coordinates;
+//   1. shape.ts      plan each island (elliptical mask, rational rotation, ring-noise coast, low rolling lowland
+//                    with knolls / tors and a gentle main rise, peak 4–7 m) and rasterize it in island-local
+//                    coordinates;
 //      duel         solve the integer center distance that leaves a 26–30 m strait (team 0 left, team 1 right),
 //                    sometimes with a walkable sandbar across it;
 //   2. terrain.ts    compose the rasters into the grid, scale the hills to the planned peak, clamp slopes so the
@@ -49,8 +50,8 @@ import { clampSlopes, coastDistance, composeTerrain, solvePeaks, type Terrain } 
 import type { FishSpotDef, Heightfield, IslandDef, IslandSite, XZ } from "./types.js";
 import { reachableFrom } from "./walk.js";
 
-/** Raster half-size (m) of a duel island: land ≤ ~36 m from its center + the shelf and drop-off. */
-const DUEL_RASTER_HALF = 54;
+/** Raster half-size (m) of a duel island: land ≤ ~60 m from its center + the shelf and drop-off. */
+const DUEL_RASTER_HALF = 84;
 /** Chance that a duel strait has a walkable sandbar across it (game4.md §13). */
 const SANDBAR_CHANCE = 0.4;
 

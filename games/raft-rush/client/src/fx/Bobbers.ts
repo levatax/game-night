@@ -1,9 +1,11 @@
-// Fishing bobbers + lines (§8): a red-and-white toon float bobbing on the water with lazy ripples, tied to the rod
-// tip by a sagging line. When a fish bites the bobber yanks under, jitters and the line goes taut and twitches;
+// Fishing bobbers + lines (§8): a red-and-white toon float riding the drawn sea surface (render/island/waves.ts:
+// it heaves and tilts with the same swell the water shader shows) with lazy ripples, tied to the rod tip by a
+// sagging line. When a fish bites the bobber yanks under, jitters and the line goes taut and twitches;
 // a splash marks the cast landing and the line being reeled in. Owner: client-fx-audio.
 
 import * as THREE from "three";
-import { PALETTE } from "../../../shared/constants";
+import { PALETTE, WATER_Y } from "../../../shared/constants";
+import { sea, seaDepthAt, seaSurfaceY, waveAttenuation, waveSlopeAt } from "../render/island/waves";
 import { addOutline, vertexColorToon } from "../render/Toon";
 import type { Bobber } from "./Fx";
 import { PartBuilder, cylinder, hemisphere, sphere } from "./itemParts";
@@ -15,6 +17,10 @@ const RIPPLE_EVERY = 1.5;
 /** How far under the bobber yanks on a bite (m). */
 const DIP_DEPTH = 0.13;
 const DIP_EASE = 18;
+/** Tilt (rad) per unit of surface slope, capped. */
+const SLOPE_TILT = 0.9;
+const MAX_TILT = 0.35;
+const slope = { x: 0, z: 0 };
 
 const LINE_VERTEX = /* glsl */ `
   #include <fog_pars_vertex>
@@ -225,7 +231,7 @@ export class Bobbers {
 
   private animate(v: BobberVisual, b: Bobber, dt: number): void {
     v.age += dt;
-    v.water.set(b.pos.x, b.pos.y, b.pos.z);
+    v.water.set(b.pos.x, b.pos.y + seaSurfaceY(b.pos.x, b.pos.z) - WATER_Y, b.pos.z);
     if (b.biting && !v.biting) {
       // CHOMP: splash + ring + bubbles the moment the fish bites.
       this.particles.burst("splash", b.pos, { scale: 0.7, count: 9 });
@@ -242,12 +248,17 @@ export class Bobbers {
     const t = this.time + v.phase;
     // Drop in from the cast for the first 0.2 s.
     const land = Math.min(1, v.age / 0.2);
-    const idleBob = 0.018 * Math.sin(t * 2.3) + 0.008 * Math.sin(t * 5.1);
+    // Ride the drawn swell (heave + tilt with its slope), a small bob of its own on top.
+    const heave = seaSurfaceY(b.pos.x, b.pos.z) - WATER_Y;
+    waveSlopeAt(b.pos.x, b.pos.z, sea.time, sea.amp * waveAttenuation(seaDepthAt(b.pos.x, b.pos.z)), slope);
+    const tiltX = Math.max(-MAX_TILT, Math.min(MAX_TILT, -slope.z * SLOPE_TILT));
+    const tiltZ = Math.max(-MAX_TILT, Math.min(MAX_TILT, slope.x * SLOPE_TILT));
+    const idleBob = 0.012 * Math.sin(t * 2.3) + 0.006 * Math.sin(t * 5.1);
     const jitter = b.biting ? 0.035 * Math.sin(t * 31) + 0.02 * Math.sin(t * 47) : 0;
-    const y = b.pos.y + (1 - land) * 0.6 + idleBob * (1 - v.dip) - DIP_DEPTH * v.dip + jitter;
+    const y = b.pos.y + heave + (1 - land) * 0.6 + idleBob * (1 - v.dip) - DIP_DEPTH * v.dip + jitter;
     const jx = b.biting ? 0.03 * Math.sin(t * 23) : 0;
     v.mesh.position.set(b.pos.x + jx, y, b.pos.z);
-    v.mesh.rotation.set(0.12 * Math.sin(t * 1.7) + (b.biting ? 0.35 * Math.sin(t * 19) : 0), 0, 0.12 * Math.cos(t * 1.4));
+    v.mesh.rotation.set(tiltX + 0.06 * Math.sin(t * 1.7) + (b.biting ? 0.35 * Math.sin(t * 19) : 0), 0, tiltZ + 0.06 * Math.cos(t * 1.4));
     // Line: rod tip → top of the antenna, sagging (taut and twitchy on a bite).
     this.tip.set(b.from.x, b.from.y, b.from.z);
     const ex = v.mesh.position.x;

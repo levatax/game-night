@@ -12,8 +12,8 @@ import { createRng, hashString, randRange } from "./noise";
 
 type Ctx = CanvasRenderingContext2D;
 
-/** Driftwood / raft log tones (§16 pastel tropical palette). */
-export const WOOD = { light: "#C98F57", mid: "#B07A45", dark: "#7A4E2D" } as const;
+/** Driftwood / raft log tones (weathered, muted: the 2026-11 calmer palette). */
+export const WOOD = { light: "#BC9672", mid: "#9E7A56", dark: "#6C4F37" } as const;
 
 const cache = new Map<string, THREE.CanvasTexture>();
 
@@ -352,7 +352,7 @@ function paintSail(ctx: Ctx, size: number, old: boolean): void {
 
 function paintThatch(ctx: Ctx, size: number): void {
   const rng = createRng(hashString("thatch"));
-  ctx.fillStyle = "#B99A52";
+  ctx.fillStyle = "#A99062";
   ctx.fillRect(0, 0, size, size);
   ctx.lineCap = "round";
   for (let i = 0; i < 420; i++) {
@@ -360,7 +360,7 @@ function paintThatch(ctx: Ctx, size: number): void {
     const y = rng() * size;
     const len = randRange(rng, 18, 46);
     const tone = rng();
-    ctx.strokeStyle = tone < 0.33 ? "#8E7536" : tone < 0.66 ? "#D2B66C" : "#A8893F";
+    ctx.strokeStyle = tone < 0.33 ? "#82704A" : tone < 0.66 ? "#C2AC7E" : "#9A8455";
     ctx.lineWidth = randRange(rng, 1.5, 3.5);
     wrapped(size, x, y, len, (px, py) => {
       ctx.beginPath();
@@ -370,7 +370,7 @@ function paintThatch(ctx: Ctx, size: number): void {
     });
   }
   // Horizontal binding rows.
-  ctx.fillStyle = hexToRgba("#5E4A22", 0.5);
+  ctx.fillStyle = hexToRgba("#54462C", 0.5);
   for (let y = 0; y < size; y += size / 4) ctx.fillRect(0, y, size, 4);
 }
 

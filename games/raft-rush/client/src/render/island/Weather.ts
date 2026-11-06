@@ -48,8 +48,8 @@ const RAIN_FRAGMENT = /* glsl */ `
   varying float vFade;
   void main() {
     gl_FragColor = vec4(color, opacity * vFade);
-    #include <fog_fragment>
     #include <colorspace_fragment>
+    #include <fog_fragment>
   }
 `;
 
@@ -86,7 +86,8 @@ export class Weather {
           box: { value: BOX.clone() },
           wind: { value: new THREE.Vector2(1.5, 0.6) },
           speed: { value: FALL_SPEED },
-          color: { value: new THREE.Color("#C9D6E8") },
+          // Grey, desaturated streaks (read against the overcast sky without a blue cast).
+          color: { value: new THREE.Color("#AEB4B8") },
           opacity: { value: 0.45 },
         },
       ]),

@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { describe, expect, it } from "vitest";
 import { CAMERA_FOV, CAMERA_FOV_SPRINT, SPRINT_SPEED, WALK_SPEED } from "../../../shared/constants";
 import { FpCamera } from "./FpCamera";
+import { seaSurfaceY, setSeaState } from "./island/waves";
 import type { CameraFrame } from "./types";
 
 function frame(patch: Partial<CameraFrame> = {}): CameraFrame {
@@ -193,5 +194,27 @@ describe("FpCamera", () => {
     }
     expect(devA).toBeGreaterThan(0.01);
     expect(devB).toBeLessThan(devA * 0.5);
+  });
+
+  it("a swimmer's head rides the drawn swell (even with head-bob off) and is flat on land", () => {
+    setSeaState(3.7, 0.8, () => 10);
+    try {
+      const eye = { x: 4, y: 0.3, z: -2 };
+      const surf = seaSurfaceY(eye.x, eye.z);
+      expect(Math.abs(surf)).toBeGreaterThan(0.05);
+      for (const headBob of [true, false]) {
+        const cam = new THREE.PerspectiveCamera();
+        const fp = new FpCamera(cam);
+        run(fp, frame({ eye, swimming: true, grounded: false, headBob }), 2);
+        expect(Math.sign(cam.position.y - eye.y)).toBe(Math.sign(surf));
+        expect(Math.abs(cam.position.y - eye.y)).toBeLessThanOrEqual(0.7 + 0.05);
+      }
+      const cam = new THREE.PerspectiveCamera();
+      const fp = new FpCamera(cam);
+      run(fp, frame({ eye, swimming: false }), 2);
+      expect(cam.position.y).toBeCloseTo(eye.y, 3);
+    } finally {
+      setSeaState(0, 0.12, null);
+    }
   });
 });

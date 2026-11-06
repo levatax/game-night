@@ -52,18 +52,18 @@ export const MAX_FALL_SPEED = 30;
 export const WATER_Y = 0;
 /** Heightfield vertex spacing (meters). */
 export const CELL_SIZE = 1;
-/** Heightfield vertex counts. Solo: 96 m × 96 m centered on the origin; duel: 192 m × 128 m (two islands + strait). */
-export const SOLO_GRID = { cols: 97, rows: 97 } as const;
-export const DUEL_GRID = { cols: 193, rows: 129 } as const;
+/** Heightfield vertex counts. Solo: 160 m × 160 m centered on the origin; duel: 256 m × 176 m (two islands + strait). */
+export const SOLO_GRID = { cols: 161, rows: 161 } as const;
+export const DUEL_GRID = { cols: 257, rows: 177 } as const;
 /** Players can't walk/swim closer than this to the heightfield edge (invisible wall in the open sea). */
 export const WORLD_EDGE_MARGIN = 6;
 /** Ocean floor height far from the island. */
 export const SEA_FLOOR_Y = -4;
-/** Solo island: ~60 m across (radius before the coastline noise). Duel islands use the same radius. */
-export const ISLAND_RADIUS = 30;
-/** Highest terrain point, meters above the sea. */
-export const PEAK_MIN = 8;
-export const PEAK_MAX = 10;
+/** Solo island: ~95–100 m across (radius before the coastline noise). Duel islands use the same radius. */
+export const ISLAND_RADIUS = 48;
+/** Highest terrain point, meters above the sea: a low rolling island (per-biome range inside, volcanic highest). */
+export const PEAK_MIN = 4;
+export const PEAK_MAX = 7;
 /** Terrain below this (and above the water) is sand / beach. Render + placement. */
 export const BEACH_MAX_Y = 0.6;
 /** Duel: open water between the two coastlines. */
@@ -77,8 +77,8 @@ export const CAMP_FROM_WRECK_MAX = 12;
 /** Chest sits this far from the campfire (toward the wreck side). */
 export const CHEST_FROM_FIRE = 2.2;
 /** Fish spots per island (rocky biome adds more, see BIOMES). */
-export const FISH_SPOTS_MIN = 4;
-export const FISH_SPOTS_MAX = 6;
+export const FISH_SPOTS_MIN = 5;
+export const FISH_SPOTS_MAX = 7;
 
 /* ========================================================== player body */
 
@@ -292,7 +292,7 @@ export const SPRING_RECHARGE_TICKS = secToTicks(20);
 export const WRECK_SCRAP_BASE = 2;
 export const WRECK_SCRAP_PER_DAWN = 1;
 /** Base node counts for a solo island, × BIOMES[b].counts (§9). */
-export const BASE_NODE_COUNTS = { tree: 120, palm: 30, rock: 60, bush: 80 } as const;
+export const BASE_NODE_COUNTS = { tree: 300, palm: 75, rock: 150, bush: 200 } as const;
 /** Node collider radii / heights (trunks and boulders; bushes don't collide). */
 export const TREE_TRUNK_RADIUS = 0.35;
 export const PALM_TRUNK_RADIUS = 0.3;
@@ -837,7 +837,7 @@ export const CAMERA_FOV_MAX = 100;
 export const HEAD_BOB_AMPLITUDE = 0.045;
 export const HEAD_BOB_HZ = 1.9;
 /** Fog distance by time of day (§16) and in fog (weather / swamp). */
-export const FOG_DAY = 160;
+export const FOG_DAY = 200;
 export const FOG_NIGHT = 45;
 
 /* ============================================================ characters */

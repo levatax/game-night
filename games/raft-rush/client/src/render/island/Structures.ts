@@ -146,7 +146,7 @@ export class Structures {
       }
       case "collector": {
         add(this.geos.get("collector")!);
-        const water = new THREE.Mesh(this.geos.get("water")!, toonColor("#7FD9F0", { emissive: "#BDF3FF", emissiveIntensity: 0.15 }));
+        const water = new THREE.Mesh(this.geos.get("water")!, toonColor("#6FB4BE", { emissive: "#A9D8DC", emissiveIntensity: 0.15 }));
         water.position.y = 0.12;
         group.add(water);
         p.water = water;
@@ -326,13 +326,13 @@ function collectorBaker(): Baker {
     const a = (i / 3) * Math.PI * 2;
     b.addAt(new THREE.CylinderGeometry(0.02, 0.025, 1.3, 4), WOOD.dark, new THREE.Vector3(Math.cos(a) * 0.36, 0.65, Math.sin(a) * 0.36), new THREE.Euler(Math.sin(a) * 0.12, 0, -Math.cos(a) * 0.12), 1, true);
   }
-  b.addAt(doubleSided(new THREE.ConeGeometry(0.75, 0.4, 7, 1, true)), "#4FA36B", new THREE.Vector3(0, 1.15, 0), new THREE.Euler(Math.PI, 0, 0), 1, true);
+  b.addAt(doubleSided(new THREE.ConeGeometry(0.75, 0.4, 7, 1, true)), "#5D7A45", new THREE.Vector3(0, 1.15, 0), new THREE.Euler(Math.PI, 0, 0), 1, true);
   return b;
 }
 
 function krakenBase(): Baker {
   const b = new Baker();
-  b.addAt(new THREE.CylinderGeometry(0.55, 0.7, 0.14, 9), "#B99A6A", new THREE.Vector3(0, 0.05, 0), null, 1, true);
+  b.addAt(new THREE.CylinderGeometry(0.55, 0.7, 0.14, 9), "#A88F68", new THREE.Vector3(0, 0.05, 0), null, 1, true);
   return b;
 }
 

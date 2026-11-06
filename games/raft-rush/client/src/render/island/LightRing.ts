@@ -34,8 +34,8 @@ const FRAGMENT = /* glsl */ `
     a = a * a * opacity;
     if (a < 0.01) discard;
     gl_FragColor = vec4(color, a);
-    #include <fog_fragment>
     #include <colorspace_fragment>
+    #include <fog_fragment>
   }
 `;
 

@@ -225,6 +225,7 @@ export class Fx {
     const ground = island ? (x: number, z: number) => heightAt(island.grid, x, z) : null;
     this.shadows.setGround(ground);
     this.chunks.setGround(ground ? (x, z) => Math.max(WATER_Y, ground(x, z)) : null);
+    this.projectiles.setGround(ground);
   }
 
   /** Graphics quality → particle / debris budget. */

@@ -2,11 +2,11 @@
 // shape rasters and the strait solver, placement helpers. Owner: island.
 
 import { describe, expect, it } from "vitest";
-import { BASE_NODE_COUNTS, BIOMES, BIOME_IDS, ISLAND_RADIUS, MAX_WALK_NORMAL_Y, SEA_FLOOR_Y } from "../constants.js";
+import { BASE_NODE_COUNTS, BIOMES, BIOME_IDS, ISLAND_RADIUS, MAX_WALK_NORMAL_Y, PEAK_MAX, PEAK_MIN, SEA_FLOOR_Y, SOLO_GRID } from "../constants.js";
 import { createHeightfield, heightAt, normalAt } from "./heightfield.js";
 import { distToSegment, nodeTargets } from "./placement.js";
 import { DIRS16, DIRS32, DIRS8, ISLAND_ROTATIONS, diamondAngle, rotX, rotZ } from "./rational.js";
-import { coastPoints, planIsland, rasterizeIsland, solveStraitOffset } from "./shape.js";
+import { BIOME_STYLES, coastPoints, planIsland, rasterizeIsland, solveStraitOffset } from "./shape.js";
 import { clampSlopes, coastDistance, flattenArea, vertexIndex, vertexX, vertexZ } from "./terrain.js";
 import type { Heightfield } from "./types.js";
 import { reachableFrom, segmentWalkable } from "./walk.js";
@@ -164,8 +164,10 @@ describe("shape", () => {
           expect(p.ax).toBeLessThanOrEqual(ISLAND_RADIUS * 1.15 + 1e-9);
           expect(p.az).toBeGreaterThanOrEqual(ISLAND_RADIUS * 0.85 - 1e-9);
           expect(p.az).toBeLessThanOrEqual(ISLAND_RADIUS * 1.15 + 1e-9);
-          expect(p.peak).toBeGreaterThan(8.3);
-          expect(p.peak).toBeLessThan(9.7);
+          expect(p.peak).toBeGreaterThanOrEqual(BIOME_STYLES[biome].peakLo);
+          expect(p.peak).toBeLessThanOrEqual(BIOME_STYLES[biome].peakHi);
+          expect(p.peak).toBeGreaterThan(PEAK_MIN);
+          expect(p.peak).toBeLessThan(PEAK_MAX);
           if (duel) expect(p.az).toBeGreaterThanOrEqual(p.ax);
           expect(Number.isFinite(p.cliffThr)).toBe(BIOMES[biome].rugged >= 0.5);
         }
@@ -175,11 +177,13 @@ describe("shape", () => {
 
   it("rasters: land in the middle, coast within the soft cap, sea floor far out", () => {
     for (const biome of BIOME_IDS) {
-      const r = rasterizeIsland(planIsland(99, 0, biome, false), 48);
-      const mid = 48 * r.size + 48;
-      expect(r.delta[mid]!).toBeGreaterThan(15);
+      const half = (SOLO_GRID.cols - 1) / 2;
+      const r = rasterizeIsland(planIsland(99, 0, biome, false), half);
+      const mid = half * r.size + half;
+      expect(r.delta[mid]!).toBeGreaterThan(25);
       expect(r.base[0]!).toBeCloseTo(SEA_FLOOR_Y, 3);
-      for (const p of coastPoints(r)) expect(Math.hypot(p.x, p.z)).toBeLessThan(31 + 4 + 3 + 1e-6);
+      // Soft cap 51 + 6 m, plus the positional wiggle (≤ 3.4 m).
+      for (const p of coastPoints(r)) expect(Math.hypot(p.x, p.z)).toBeLessThan(51 + 6 + 3.4 + 1e-6);
       for (let i = 0; i < r.hill.length; i++) {
         expect(r.hill[i]!).toBeGreaterThanOrEqual(0);
         if (r.delta[i]! < 0) expect(r.hill[i]!).toBe(0);
@@ -192,7 +196,7 @@ describe("shape", () => {
       let cliffCoast = 0;
       let coast = 0;
       for (let seed = 1; seed <= 20; seed++) {
-        const r = rasterizeIsland(planIsland(seed * 31337, 0, biome, false), 48);
+        const r = rasterizeIsland(planIsland(seed * 31337, 0, biome, false), (SOLO_GRID.cols - 1) / 2);
         for (let i = 0; i < r.delta.length; i++) {
           if (r.delta[i]! < 0 || r.delta[i]! > 1) continue;
           coast++;
@@ -207,8 +211,8 @@ describe("shape", () => {
 
   it("solveStraitOffset hits the requested coast-to-coast gap within half a meter", () => {
     for (let seed = 1; seed <= 6; seed++) {
-      const a = rasterizeIsland(planIsland(seed, 0, "tropic", true), 54);
-      const b = rasterizeIsland(planIsland(seed, 1, "tropic", true), 54);
+      const a = rasterizeIsland(planIsland(seed, 0, "tropic", true), 84);
+      const b = rasterizeIsland(planIsland(seed, 1, "tropic", true), 84);
       for (const target of [26.5, 28, 29.5]) {
         const d = solveStraitOffset(a, b, 2, target);
         const pa = coastPoints(a);

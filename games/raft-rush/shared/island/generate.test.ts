@@ -507,6 +507,37 @@ describe(`solo island: ${SOLO_COUNT} seeds`, () => {
     }
   });
 
+  it("big and low: ~95–100 m across, mostly gentle lowland (not one big hill)", () => {
+    for (const def of defs) {
+      const g = def.grid;
+      let land = 0;
+      let low = 0;
+      let gentle = 0;
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let minZ = Infinity;
+      let maxZ = -Infinity;
+      for (let i = 0; i < g.heights.length; i++) {
+        const y = g.heights[i]!;
+        if (y < 0) continue;
+        const x = g.originX + (i % g.cols);
+        const z = g.originZ + Math.floor(i / g.cols);
+        land++;
+        if (y < PEAK_MAX * 0.5) low++;
+        if (normalAt(g, x, z).y >= 0.95) gentle++;
+        minX = Math.min(minX, x);
+        maxX = Math.max(maxX, x);
+        minZ = Math.min(minZ, z);
+        maxZ = Math.max(maxZ, z);
+      }
+      const label = `seed ${def.seed} ${def.biome}`;
+      expect((maxX - minX + (maxZ - minZ)) / 2, `${label} across`).toBeGreaterThan(80);
+      expect(land, `${label} land area`).toBeGreaterThan(5000);
+      expect(low / land, `${label} lowland share`).toBeGreaterThan(0.6);
+      expect(gentle / land, `${label} gentle share`).toBeGreaterThan(def.biome === "rocky" ? 0.75 : 0.85);
+    }
+  });
+
   it("varied: landmarks move around, caves exist on most islands", () => {
     const quadrant = (p: XZ): number => (p.x >= 0 ? 1 : 0) + (p.z >= 0 ? 2 : 0);
     expect(new Set(defs.map((d) => quadrant(d.sites[0]!.raft))).size).toBe(4);
@@ -595,9 +626,9 @@ describe("performance", () => {
  * server/client pair built before and after it disagrees on the island: bump it only on purpose.
  */
 const GOLDEN: [string, number, number][] = [
-  ["swamp", 3564759874, 1849935829],
-  ["swamp", 330088526, 1788469798],
-  ["rocky", 152634470, 1540110296],
-  ["volcanic", 3274731, 3042361994],
-  ["rocky", 471476578, 200819455],
+  ["swamp", 385637562, 10981314],
+  ["swamp", 409480433, 3853085307],
+  ["rocky", 3860713185, 4272093848],
+  ["volcanic", 1113130303, 669464891],
+  ["rocky", 992714961, 2874305184],
 ];

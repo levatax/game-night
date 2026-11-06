@@ -251,6 +251,9 @@ export interface Pose {
   y: number;
   z: number;
   yaw: number;
+  /** Bow-up pitch / starboard-down roll (rad) of the floating raft (render/island/Raft.ts RaftPose); 0 if absent. */
+  pitch?: number;
+  roll?: number;
 }
 
 /**
@@ -258,8 +261,8 @@ export interface Pose {
  * their seats. RaftRide carries a seat position along: rest pose (before the launch) → current pose.
  */
 export class RaftRide {
-  private readonly rest: Pose = { x: 0, y: 0, z: 0, yaw: 0 };
-  private readonly now: Pose = { x: 0, y: 0, z: 0, yaw: 0 };
+  private readonly rest: Pose = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0 };
+  private readonly now: Pose = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0 };
   private hasRest = false;
   private moving = false;
 
@@ -293,6 +296,13 @@ export class RaftRide {
     p.x = this.now.x + rx * c + rz * s;
     p.z = this.now.z - rx * s + rz * c;
     p.y += this.now.y - this.rest.y;
+    // Ride the swell: the seat's raft-local offset (bow = local −Z, starboard = local +X) rises / sinks with the
+    // hull's pitch and roll (rest pose is on the slip, normally level).
+    const cr = Math.cos(this.rest.yaw);
+    const sr = Math.sin(this.rest.yaw);
+    const lx = rx * cr - rz * sr;
+    const lz = rx * sr + rz * cr;
+    p.y += tiltLift(lx, lz, this.now) - tiltLift(lx, lz, this.rest);
     if (p.yaw !== undefined) p.yaw += dyaw;
   }
 
@@ -307,6 +317,13 @@ function copyPose(dst: Pose, src: Pose): void {
   dst.y = src.y;
   dst.z = src.z;
   dst.yaw = src.yaw;
+  dst.pitch = src.pitch ?? 0;
+  dst.roll = src.roll ?? 0;
+}
+
+/** Height change (m) of a raft-local point (lx, lz) under the pose's pitch and roll. */
+function tiltLift(lx: number, lz: number, p: Pose): number {
+  return -lz * Math.sin(p.pitch ?? 0) - lx * Math.sin(p.roll ?? 0);
 }
 
 /* ============================================================ misc */

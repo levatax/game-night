@@ -5,7 +5,6 @@
 // mesh for all sites. Owner: client-render.
 
 import * as THREE from "three";
-import { BIOMES } from "../../../../shared/constants";
 import { heightAt } from "../../../../shared/island/heightfield";
 import type { IslandDef } from "../../../../shared/island/types";
 import type { ArrayView, TeamView } from "../../../../shared/types";
@@ -13,12 +12,16 @@ import { Baker, composeMatrix } from "../kit/Baker";
 import type { MaterialBank } from "../kit/MaterialBank";
 import { letteringTexture } from "../textures";
 import { addOutline, createToonMaterial, vertexColorToon } from "../Toon";
+import { gradeVertexColors, groundPalette } from "./flora/palette";
 import { bakeCampChest, bakeCampfireBase, yawToward } from "./props/camp";
 import { bakeCave, bakeSpring, secretChestGeometries, SPRING_POOL_RADIUS, SPRING_WATER_HEIGHT } from "./props/landmarks";
 import { bakeWreck, wreckLetteringGeometry } from "./props/wreck";
 import { Sparkles } from "./Sparkles";
 
 const LID_OPEN = 1.9;
+/** Grade of the baked landmark mesh (wreck, camp, spring, cave): 1 = source colors. */
+const LANDMARK_SATURATION = 0.78;
+const LANDMARK_VALUE = 0.94;
 
 interface SecretChest {
   team: number;
@@ -40,7 +43,7 @@ export class Sites {
     this.group.name = "sites";
     const grid = def.grid;
     const ground = (x: number, z: number) => heightAt(grid, x, z);
-    const colors = BIOMES[def.biome].colors;
+    const colors = groundPalette(def.biome);
     const statics = new Baker();
     const letterGeos: THREE.BufferGeometry[] = [];
     def.sites.forEach((site, k) => {
@@ -69,7 +72,9 @@ export class Sites {
       this.addSecretChest(k, site.secretChest.x, ground(site.secretChest.x, site.secretChest.z), site.secretChest.z, yawToward(site.secretChest, site.center), bank);
     });
 
-    const geometry = bank.geo(statics.build());
+    // The props bake bright source colors (white hull, red funnel, beach chair): pull them toward the calmer
+    // island grade while keeping them the brightest, most readable things on the ground.
+    const geometry = bank.geo(gradeVertexColors(statics.build(), LANDMARK_SATURATION, LANDMARK_VALUE));
     const mesh = new THREE.Mesh(geometry, vertexColorToon());
     mesh.name = "landmarks";
     mesh.castShadow = true;
@@ -126,7 +131,7 @@ export class Sites {
   private addSpringWater(x: number, y: number, z: number, bank: MaterialBank): void {
     const geo = bank.geo(new THREE.CircleGeometry(SPRING_POOL_RADIUS * 0.98, 16));
     geo.rotateX(-Math.PI / 2);
-    const mat = bank.own(createToonMaterial("#7FD9F0", { emissive: "#BDF3FF", emissiveIntensity: 0.18, transparent: true, opacity: 0.85 }));
+    const mat = bank.own(createToonMaterial("#6FB4BE", { emissive: "#A9D8DC", emissiveIntensity: 0.18, transparent: true, opacity: 0.85 }));
     const water = new THREE.Mesh(geo, mat);
     water.name = "springWater";
     water.position.set(x, y + SPRING_WATER_HEIGHT, z);
