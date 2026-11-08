@@ -20,20 +20,31 @@ const MODELS: ModelRegistry = {
   gruff: { spec: gruffSpec, build: buildGruff, memento: gruffMemento },
 };
 
-/** Build the full rig for `character` under a fresh root (feet at the origin, facing -Z). */
-export function buildAnimalModel(character: CharacterId, b: PartBuilder, face: THREE.Texture): BuiltModel {
+/**
+ * Build the full rig for `character` under a fresh root (feet at the origin, facing -Z) and merge
+ * it (one mesh + one outline per pivot). `beforeFinish` sees the recorded primitives (tests).
+ */
+export function buildAnimalModel(character: CharacterId, b: PartBuilder, beforeFinish?: (b: PartBuilder) => void): BuiltModel {
   const entry = MODELS[character];
   const { root, skeleton } = buildSkeleton(b, entry.spec);
-  const extras = entry.build(b, skeleton, face);
-  return { root, skeleton, extras, spec: entry.spec };
+  const extras = entry.build(b, skeleton);
+  beforeFinish?.(b);
+  const finished = b.finish(root);
+  return { root, skeleton, extras, spec: entry.spec, springs: skeleton.springs.bones, finished };
 }
 
-/** The floating KO memento (hat / bow / bell / scarf), centered on its origin. */
+/** The floating KO memento (hat / bow / bell / scarf), centered on its origin, merged. */
 export function buildMemento(character: CharacterId, b: PartBuilder): THREE.Group {
   const group = new THREE.Group();
   group.name = `memento:${character}`;
   MODELS[character].memento(b, group);
+  b.finish(group);
   return group;
+}
+
+/** Body spec (dims, topY) of an animal. */
+export function bodySpec(character: CharacterId): ModelRegistry[CharacterId]["spec"] {
+  return MODELS[character].spec;
 }
 
 export { SPIN_PIVOT_Y } from "./common";

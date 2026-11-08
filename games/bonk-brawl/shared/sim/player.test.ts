@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  AIR_ACCEL,
+  AIR_DECEL,
   BELLY_BOUNCE_TICKS,
   BELLY_SLIDE_SPEED,
   BELLY_SLIDE_TICKS,
@@ -12,12 +14,14 @@ import {
   FLAP_DASH_END_SPEED,
   FLAP_DASH_END_VY,
   FLAP_DASH_TICKS,
+  GRAVITY,
   GROUND_POUND_SLAM_VY,
   HEADBUTT_TICKS,
+  JUMP_APEX_HANG_VY,
   JUMP_HEIGHT,
-  JUMP_VELOCITY,
   KNOCKBACK_STUN_TICKS,
   MAX_HEARTS,
+  PLAYER_FALL_GRAVITY_MULT,
   PLAYER_HEIGHT,
   PLAYER_RADIUS,
   RING_OUT_Y,
@@ -26,6 +30,10 @@ import {
   ROLL_TICKS,
   SLIDE_HEIGHT,
   THROW_RECOVER_TICKS,
+  TUMBLE_BOUNCE_KEEP,
+  TUMBLE_COVER_RESTITUTION,
+  TUMBLE_GRAVITY_MULT,
+  TUMBLE_RESTITUTION,
   WHIFF_TICKS,
   ZOOMIES_TICKS,
 } from "../constants.js";
@@ -133,8 +141,9 @@ describe("walking", () => {
     const z0 = p.z;
     runPlayer(p, simCtx("quacky"), 20, cmd());
     expect(horizontalSpeed(p)).toBe(0);
-    // Discrete coasting: v²/2a − v·dt/2 = 0.4 − 0.1 = 0.3 m
-    expect(z0 - p.z).toBeCloseTo(0.3, 9);
+    // Redesign: groundDecel 45 → 40. Discrete coasting at 40/30 m/s per tick:
+    // (4.667 + 3.333 + 2 + 0.667)·dt = 3.2/9 ≈ 0.35556 m.
+    expect(z0 - p.z).toBeCloseTo(0.35556, 4);
   });
 
   it("slides much further on slippery Bath Time tiles", () => {
@@ -154,11 +163,11 @@ describe("walking", () => {
     };
     const grass = coast("picnic");
     const tiles = coast("bath");
-    expect(grass.ticksToFull).toBe(3); // 60 m/s²
-    expect(tiles.ticksToFull).toBe(9); // 22 m/s²
-    expect(grass.slide).toBeCloseTo(0.3, 9); // 36 / (2·45) − 6·dt/2
-    expect(tiles.slide).toBeGreaterThan(2.3); // 36 / (2·7) − 0.1 ≈ 2.47
-    expect(tiles.slide).toBeLessThan(2.6);
+    // Redesign: grass accel 60 → 48, tiles 22 → 20.
+    expect(grass.ticksToFull).toBe(4); // 48 m/s²
+    expect(tiles.ticksToFull).toBe(9); // 20 m/s²
+    expect(grass.slide).toBeCloseTo(0.35556, 4); // decel 40
+    expect(tiles.slide).toBeCloseTo(2.4722, 3); // decel 7: 36 / 14 − 0.1
   });
 
   it("has reduced air control", () => {
@@ -166,30 +175,120 @@ describe("walking", () => {
     const results = runPlayer(p, simCtx("quacky"), 2, (t) => cmd({ buttons: t === 0 ? BTN.JUMP : 0 }));
     expect(results[0].jumped).toBe(true);
     stepPlayer(p, forward, simCtx("quacky"));
-    // airborne: 60 · 0.45 · dt = 0.9 m/s per tick
-    expect(horizontalSpeed(p)).toBeCloseTo(0.9, 9);
+    // airborne: AIR_ACCEL · dt = 18 / 30 = 0.6 m/s per tick (was 60 · 0.45 · dt = 0.9)
+    expect(horizontalSpeed(p)).toBeCloseTo(AIR_ACCEL * DT, 9);
+    expect(horizontalSpeed(p)).toBeCloseTo(0.6, 9);
+  });
+
+  it("keeps jump momentum in the air without input", () => {
+    const p = spawnPlayer();
+    const ctx = simCtx("quacky");
+    runPlayer(p, ctx, 20, forward);
+    stepPlayer(p, cmd({ moveZ: 1, buttons: BTN.JUMP | BTN.JUMP_HELD }), ctx);
+    stepPlayer(p, cmd({ buttons: BTN.JUMP_HELD }), ctx);
+    // No input mid-air: only AIR_DECEL (4 m/s²) — releasing W no longer stops you in the air.
+    expect(horizontalSpeed(p)).toBeCloseTo(6 - AIR_DECEL * DT, 9);
+  });
+
+  it("brakes into a turn skid when reversing, then runs the other way", () => {
+    const p = spawnPlayer();
+    const ctx = simCtx("quacky");
+    runPlayer(p, ctx, 20, cmd({ moveZ: -1 })); // running +Z (backwards input at yaw 0)
+    expect(p.vz).toBeCloseTo(6, 9);
+    const results = runPlayer(p, ctx, 6, forward); // reverse: wish −Z
+    expect(results[0].skidStarted).toBe(true);
+    expect(results[1].skidStarted).toBe(false);
+    expect(results.filter((r) => r.skidStarted)).toHaveLength(1);
+    // groundBrake 80 against the motion, then groundAccel 48: −6 within 6 ticks on Picnic.
+    expect(p.vz).toBeCloseTo(-6, 9);
+    expect(p.skid).toBe(false);
+  });
+
+  it("flags a skid only while the velocity points against the input on the ground", () => {
+    const p = spawnPlayer();
+    const ctx = simCtx("quacky");
+    runPlayer(p, ctx, 20, cmd({ moveZ: -1 }));
+    stepPlayer(p, forward, ctx);
+    expect(p.skid).toBe(true);
+    const air = spawnPlayer();
+    runPlayer(air, ctx, 20, cmd({ moveZ: -1 }));
+    stepPlayer(air, cmd({ moveZ: -1, buttons: BTN.JUMP | BTN.JUMP_HELD }), ctx);
+    stepPlayer(air, cmd({ moveZ: 1, buttons: BTN.JUMP_HELD }), ctx);
+    expect(air.grounded).toBe(false);
+    expect(air.skid).toBe(false);
+  });
+
+  it("carves turns: sideways velocity is removed by grip, not by acceleration", () => {
+    const p = spawnPlayer();
+    const ctx = simCtx("quacky");
+    runPlayer(p, ctx, 20, forward); // −Z at 6 m/s
+    stepPlayer(p, cmd({ moveX: 1 }), ctx); // turn 90° right (+X)
+    expect(p.vx).toBeCloseTo(0 + 48 * DT, 9); // along the new wish: groundAccel
+    expect(p.vz).toBeCloseTo(-(6 - 55 * DT), 9); // sideways: groundGrip
+    expect(p.skid).toBe(false);
   });
 });
 
 describe("jumping and falling", () => {
-  it("jumps 1.2 m high and lands", () => {
+  /** Jump on tick 0, hold the jump key for `holdTicks` ticks (Infinity = whole run). */
+  function jumpRun(holdTicks: number, ticks = 40) {
     const p = spawnPlayer();
     const ctx = simCtx("quacky");
     let apex = 0;
+    let hang = 0;
     const results = [];
-    for (let t = 0; t < 40; t++) {
-      results.push(stepPlayer(p, cmd({ buttons: t === 0 ? BTN.JUMP : 0 }), ctx));
+    for (let t = 0; t < ticks; t++) {
+      const held = t < holdTicks ? BTN.JUMP_HELD : 0;
+      results.push(stepPlayer(p, cmd({ buttons: (t === 0 ? BTN.JUMP : 0) | held }), ctx));
       apex = Math.max(apex, p.y);
+      if (!p.grounded && Math.abs(p.vy) <= JUMP_APEX_HANG_VY && held) hang++;
     }
+    return { p, apex, hang, results, landing: results.findIndex((res) => res.landed) };
+  }
+
+  it("jumps 1.2 m high with the key held and lands", () => {
+    const { p, apex, results, landing } = jumpRun(Infinity);
     expect(results[0].jumped).toBe(true);
-    expect(apex).toBeGreaterThan(JUMP_HEIGHT - 0.01);
+    // Redesign: rise ×1.2, apex hang ×0.5, fall ×1.45 gravity; JUMP_VELOCITY 7.48 → 1.199 m.
+    expect(apex).toBeGreaterThan(1.18);
+    expect(apex).toBeLessThan(1.21);
     expect(apex).toBeLessThanOrEqual(JUMP_HEIGHT + 1e-9);
-    const landing = results.findIndex((res) => res.landed);
-    expect(landing).toBeGreaterThan(18); // ≈ 2·v/g = 0.69 s ≈ 21 ticks
-    expect(landing).toBeLessThan(23);
-    expect(results[landing].landSpeed).toBeCloseTo(JUMP_VELOCITY, 0);
+    expect(landing).toBeGreaterThan(20); // 23 measured (was ≈ 21 with one gravity)
+    expect(landing).toBeLessThan(25);
+    expect(results[landing].landSpeed).toBeGreaterThan(0);
     expect(p.y).toBe(0);
     expect(p.grounded).toBe(true);
+    expect(p.jumping).toBe(false);
+  });
+
+  it("short-hops when the jump key is only tapped", () => {
+    const { p, apex, landing, results } = jumpRun(0);
+    expect(results[0].jumped).toBe(true);
+    expect(apex).toBeGreaterThan(0.25);
+    expect(apex).toBeLessThan(0.5);
+    expect(landing).toBeGreaterThan(0);
+    expect(landing).toBeLessThan(14);
+    expect(p.jumping).toBe(false);
+  });
+
+  it("releasing mid-rise cuts the jump between a short hop and a full jump", () => {
+    const tap = jumpRun(0).apex;
+    const mid = jumpRun(3).apex;
+    const full = jumpRun(Infinity).apex;
+    expect(mid).toBeGreaterThan(tap);
+    expect(mid).toBeLessThan(full);
+  });
+
+  it("hangs at the apex while held", () => {
+    const { hang } = jumpRun(Infinity);
+    expect(hang).toBeGreaterThanOrEqual(3);
+  });
+
+  it("falls faster than it rises (fall gravity ×1.45)", () => {
+    const p = spawnPlayer(0, 0, 0, 3);
+    p.grounded = false;
+    stepPlayer(p, cmd(), simCtx("quacky"));
+    expect(p.vy).toBeCloseTo(GRAVITY * PLAYER_FALL_GRAVITY_MULT * DT, 9);
   });
 
   it("can't double jump but allows a coyote jump just after walking off a ledge", () => {
@@ -220,8 +319,9 @@ describe("jumping and falling", () => {
     const p = spawnPlayer(13.5, 0);
     const results = runPlayer(p, simCtx("quacky", arena, rings), 40, cmd());
     const out = results.findIndex((r) => r.fellOut);
-    expect(out).toBeGreaterThan(20); // sqrt(2·6/20) = 0.77 s ≈ 23 ticks
-    expect(out).toBeLessThan(30);
+    // Redesign: falls use ×1.45 gravity: sqrt(2·6/29) = 0.64 s ≈ 19 ticks (was 0.77 s).
+    expect(out).toBeGreaterThan(15);
+    expect(out).toBeLessThan(24);
     expect(p.y).toBeLessThan(RING_OUT_Y);
 
     const safe = spawnPlayer(13.5, 0);
@@ -290,7 +390,9 @@ describe("cover", () => {
 
   it("can be jumped onto", () => {
     const p = spawnPlayer(basket.x, basket.z + 1.6);
-    runPlayer(p, simCtx("quacky", picnic), 30, (t) => cmd({ moveZ: t < 10 ? 1 : 0, buttons: t === 0 ? BTN.JUMP : 0 }));
+    // Full jump: the key is held (a tap is only a ~0.4 m short hop). Air momentum is kept now
+    // (AIR_DECEL 4), so a short push is enough to drift onto the top.
+    runPlayer(p, simCtx("quacky", picnic), 30, (t) => cmd({ moveZ: t < 5 ? 1 : 0, buttons: (t === 0 ? BTN.JUMP : 0) | BTN.JUMP_HELD }));
     expect(p.grounded).toBe(true);
     expect(p.y).toBe(basket.height);
   });
@@ -448,8 +550,22 @@ describe("knockback stun", () => {
     const ctx = simCtx("quacky");
     const r = stepPlayer(p, cmd({ moveZ: 1, buttons: BTN.JUMP }), ctx);
     expect(r.jumped).toBe(false);
-    expect(p.vx).toBeCloseTo(6 - 18 * DT, 9);
+    // Redesign: knockSlideDecel per map (Picnic 14, was STUN_GROUND_DECEL 18); no DI on the ground.
+    expect(p.vx).toBeCloseTo(6 - 14 * DT, 9);
     expect(p.vz).toBe(0);
+  });
+
+  it("slides with the map's knock-slide friction", () => {
+    const slide = (id: "picnic" | "bath" | "cake") => {
+      const p = spawnPlayer();
+      p.vx = 6;
+      p.stunTicks = KNOCKBACK_STUN_TICKS;
+      stepPlayer(p, cmd(), simCtx("quacky", openArena(id)));
+      return p.vx;
+    };
+    expect(slide("picnic")).toBeCloseTo(6 - 14 * DT, 9);
+    expect(slide("bath")).toBeCloseTo(6 - 5 * DT, 9);
+    expect(slide("cake")).toBeCloseTo(6 - 20 * DT, 9);
   });
 
   it("keeps the knockback arc in the air and cancels dashes", () => {
@@ -464,8 +580,114 @@ describe("knockback stun", () => {
     p.stunTicks = KNOCKBACK_STUN_TICKS;
     stepPlayer(p, cmd(), ctx);
     expect(p.abilityTicks).toBe(0);
-    expect(p.vx).toBe(9);
+    // Redesign: light tumble air drag (TUMBLE_AIR_DRAG 0.35/s), floaty ×0.9 gravity.
+    expect(p.vx).toBeCloseTo(9 * (1 - 0.35 * DT), 9);
+    expect(p.vy).toBeCloseTo(4 + GRAVITY * TUMBLE_GRAVITY_MULT * DT, 9);
     expect(p.grounded).toBe(false);
+  });
+
+  it("clears a running jump", () => {
+    const p = spawnPlayer();
+    const ctx = simCtx("quacky");
+    stepPlayer(p, cmd({ buttons: BTN.JUMP | BTN.JUMP_HELD }), ctx);
+    expect(p.jumping).toBe(true);
+    p.stunTicks = KNOCKBACK_STUN_TICKS;
+    stepPlayer(p, cmd({ buttons: BTN.JUMP_HELD }), ctx);
+    expect(p.jumping).toBe(false);
+  });
+
+  /** A stunned body flying +X at 9 m/s, 3 m up, ready for DI. */
+  function launched(): PlayerSim {
+    const p = spawnPlayer(0, 0, 0, 3);
+    p.grounded = false;
+    p.vx = 9;
+    p.vy = 2;
+    p.stunTicks = 20;
+    return p;
+  }
+
+  it("DI bends the flight sideways and can brake it, but never speeds it up", () => {
+    const ctx = simCtx("quacky");
+    const none = launched();
+    const side = launched();
+    const against = launched();
+    const along = launched();
+    for (let t = 0; t < 10; t++) {
+      stepPlayer(none, cmd(), ctx);
+      stepPlayer(side, cmd({ moveZ: 1 }), ctx); // camera yaw 0: forward = −Z, perpendicular to +X flight
+      stepPlayer(against, cmd({ moveX: -1 }), ctx);
+      stepPlayer(along, cmd({ moveX: 1 }), ctx);
+      expect(horizontalSpeed(side)).toBeLessThanOrEqual(horizontalSpeed(none) + 1e-9);
+      expect(horizontalSpeed(along)).toBeLessThanOrEqual(horizontalSpeed(none) + 1e-9);
+    }
+    expect(side.z).toBeLessThan(-0.1); // bent toward −Z
+    expect(none.z).toBe(0);
+    expect(against.x).toBeLessThan(none.x - 0.1);
+    expect(along.x).toBeCloseTo(none.x, 9); // already at launch speed: no boost
+    expect(horizontalSpeed(against)).toBeLessThan(horizontalSpeed(none));
+  });
+
+  it("bounces a hard stunned landing off the floor", () => {
+    const p = spawnPlayer(0, 0, 0, 0.1);
+    p.grounded = false;
+    p.vx = 8;
+    p.vy = -10;
+    p.stunTicks = 20;
+    const r = stepPlayer(p, cmd(), simCtx("quacky"));
+    expect(r.bounced).toBe(true);
+    expect(r.landed).toBe(false);
+    expect(r.bounceSpeed).toBeGreaterThan(10);
+    expect(p.vy).toBeGreaterThan(4); // ≈ 10.9 · TUMBLE_RESTITUTION
+    expect(p.vy).toBeCloseTo(r.bounceSpeed * TUMBLE_RESTITUTION, 9);
+    expect(p.vx).toBeCloseTo(8 * (1 - 0.35 * DT) * TUMBLE_BOUNCE_KEEP, 9);
+    expect(p.knockBounces).toBe(1);
+    expect(p.grounded).toBe(false);
+    expect(p.y).toBe(0);
+  });
+
+  it("lands normally when the stunned fall is soft, and wraps the bounce counter", () => {
+    const p = spawnPlayer(0, 0, 0, 0.05);
+    p.grounded = false;
+    p.vy = -3;
+    p.stunTicks = 20;
+    p.knockBounces = 255;
+    const r = stepPlayer(p, cmd(), simCtx("quacky"));
+    expect(r.bounced).toBe(false);
+    expect(r.landed).toBe(true);
+    expect(p.grounded).toBe(true);
+
+    const q = spawnPlayer(0, 0, 0, 0.1);
+    q.grounded = false;
+    q.vy = -10;
+    q.stunTicks = 20;
+    q.knockBounces = 255;
+    stepPlayer(q, cmd(), simCtx("quacky"));
+    expect(q.knockBounces).toBe(0);
+  });
+
+  it("bounces a stunned body off a cover side (TUMBLE_COVER_RESTITUTION)", () => {
+    const picnic = getArena("picnic");
+    const basket = picnic.cover[2] as CoverCylinder;
+    // Fly straight at the basket along −Z, starting just outside it, at chest-ish height.
+    const p = spawnPlayer(basket.x, basket.z + basket.radius + PLAYER_RADIUS + 0.2, 0, 0.3);
+    p.grounded = false;
+    p.vz = -9;
+    p.vy = 1;
+    p.stunTicks = 20;
+    const ctx = simCtx("quacky", picnic);
+    let bounced = false;
+    for (let t = 0; t < 4 && !bounced; t++) bounced = stepPlayer(p, cmd(), ctx).bounced;
+    expect(bounced).toBe(true);
+    expect(p.vz).toBeGreaterThan(0); // reversed
+    expect(p.vz).toBeCloseTo(9 * (1 - 0.35 * DT) * TUMBLE_COVER_RESTITUTION, 6);
+    expect(p.knockBounces).toBe(1);
+
+    // Not stunned: slides (no bounce) as before.
+    const w = spawnPlayer(basket.x, basket.z + basket.radius + PLAYER_RADIUS + 0.2, 0, 0.3);
+    w.grounded = false;
+    w.vz = -9;
+    for (let t = 0; t < 4; t++) expect(stepPlayer(w, cmd(), ctx).bounced).toBe(false);
+    expect(w.vz).toBe(0);
   });
 });
 
@@ -635,11 +857,13 @@ describe("determinism", () => {
     const bits = [BTN.THROW, BTN.CATCH, BTN.JUMP, BTN.ROLL, BTN.ABILITY];
     let yaw = 0;
     let throwHeld = false;
+    let jumpHeld = false;
     const script: Script = [];
     for (let t = 0; t < ticks; t++) {
       yaw += (rand() - 0.5) * 0.4;
       if (rand() < 0.08) throwHeld = !throwHeld;
-      let buttons = throwHeld ? BTN.THROW : 0;
+      if (rand() < 0.1) jumpHeld = !jumpHeld;
+      let buttons = (throwHeld ? BTN.THROW : 0) | (jumpHeld ? BTN.JUMP_HELD : 0);
       for (const bit of bits.slice(1)) if (rand() < 0.03) buttons |= bit;
       script.push(
         cmd({
@@ -670,8 +894,17 @@ describe("determinism", () => {
         const script = randomScript(id.length * 7919 + mapId.length, 300);
         const a = freshPlayer();
         const b = freshPlayer();
-        const ra = script.map((c) => stepPlayer(a, c, simCtx(id, arena)));
-        const rb = script.map((c) => stepPlayer(b, c, simCtx(id, arena)));
+        // Knock both identically every 70 ticks so tumbles, DI, bounces and slides are covered.
+        const knock = (p: PlayerSim, t: number) => {
+          if (t % 70 !== 35) return;
+          p.vx = 7 * Math.cos(t);
+          p.vz = 7 * Math.sin(t);
+          p.vy = 6;
+          p.grounded = false;
+          p.stunTicks = 26;
+        };
+        const ra = script.map((c, t) => (knock(a, t), stepPlayer(a, c, simCtx(id, arena))));
+        const rb = script.map((c, t) => (knock(b, t), stepPlayer(b, c, simCtx(id, arena))));
         expect(b).toStrictEqual(a);
         expect(rb).toStrictEqual(ra);
       }

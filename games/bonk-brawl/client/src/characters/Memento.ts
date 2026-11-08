@@ -3,9 +3,8 @@
 import * as THREE from "three";
 import { CHARACTERS } from "../../../shared/constants";
 import type { CharacterId, Vec3Like } from "../../../shared/types";
-import { addOutline } from "../render/Toon";
 import { buildMemento } from "./models";
-import { AnimalMaterials, OUTLINE_THICKNESS, PartBuilder } from "./parts";
+import { AnimalMaterials, PartBuilder } from "./parts";
 import { easeOutCubic } from "./pose";
 
 /** Pops up from the head, then drifts down to hover at this height above the KO spot. */
@@ -27,8 +26,8 @@ export class KoMemento {
 
   constructor(character: CharacterId, slotColor: string, at: Vec3Like) {
     this.materials = new AnimalMaterials(CHARACTERS[character].colors, slotColor);
-    this.item = buildMemento(character, new PartBuilder(this.materials));
-    for (const outline of addOutline(this.item, OUTLINE_THICKNESS)) outline.material = this.materials.outline;
+    // Batched like the animals: one merged mesh + one accessory outline, geometry cached per character.
+    this.item = buildMemento(character, new PartBuilder(this.materials, { detail: "hi", cacheKey: `memento:${character}` }));
     this.object.name = `memento:${character}`;
     this.item.scale.setScalar(MEMENTO_SCALE);
     this.object.add(this.item);

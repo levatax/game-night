@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  BALL_DEATH_KEEP,
+  BALL_DEATH_RESTITUTION,
   BALL_MAX_SPEED,
   BALL_RADIUS,
   BALL_RESTITUTION_FLOOR,
+  BALL_ROLL_DRAG,
   BALL_REST_TICKS,
   BALL_SPAWN_HEIGHT,
   BOOMERANG_MAX_RETURN_TICKS,
@@ -24,7 +27,7 @@ import {
   type StepBallResult,
 } from "./ball.js";
 import type { BallContext } from "./context.js";
-import { aimDirection, ballisticPoint } from "./throw.js";
+import { aimDirection, ballisticPoint, computeThrowVelocity } from "./throw.js";
 import { vec3, type Vec3 } from "./math.js";
 import { ball, ballCtx, lcg, openArena } from "./testkit.js";
 
@@ -102,13 +105,55 @@ describe("bounces and states", () => {
   });
 
   it("bounces with floor restitution and friction", () => {
+    // A DEAD ball: the arena's ballRestitution / ballBounceFriction (Picnic 0.55 / 0.75).
     const b = ball({ y: 0.5, vx: 4, vy: -10, state: "dead" });
     const r = stepBall(b, ballCtx());
     expect(r.bounced).toBe(true);
     expect(b.vy).toBeGreaterThan(0);
+    expect(b.vy).toBeCloseTo(r.impactSpeed * getArena("picnic").friction.ballRestitution, 9);
     expect(b.vy).toBeCloseTo(r.impactSpeed * BALL_RESTITUTION_FLOOR, 9);
     expect(b.vx).toBeCloseTo(4 * getArena("picnic").friction.ballBounceFriction, 9);
+    expect(b.vx).toBeCloseTo(4 * 0.75, 9);
     expect(b.y).toBeGreaterThanOrEqual(BALL_RADIUS);
+  });
+
+  it("damps the killing bounce of a live ball (BALL_DEATH_KEEP / BALL_DEATH_RESTITUTION)", () => {
+    const b = ball({ y: 0.5, vx: 3, vy: -10, state: "live" });
+    const r = stepBall(b, ballCtx());
+    expect(r.bounced).toBe(true);
+    expect(r.becameDead).toBe(true);
+    expect(b.vy).toBeCloseTo(r.impactSpeed * BALL_DEATH_RESTITUTION, 9);
+    expect(b.vx).toBeCloseTo(3 * BALL_DEATH_KEEP, 9);
+    // A boomerang turning around is not a killing bounce.
+    const boom = ball({ y: 0.5, vx: 3, vy: -10, state: "live", kind: "boomerang" });
+    stepBall(boom, ballCtx());
+    expect(boom.vx).toBeCloseTo(3 * getArena("picnic").friction.ballBounceFriction, 9);
+  });
+
+  it("uses each map's floor restitution for later bounces", () => {
+    for (const id of ["picnic", "bath", "cake"] as const) {
+      const b = ball({ y: 0.5, vy: -10, state: "dead" });
+      const r = stepBall(b, ballCtx(openArena(id)));
+      expect(b.vy).toBeCloseTo(r.impactSpeed * getArena(id).friction.ballRestitution, 9);
+    }
+  });
+
+  it("rolls with linear drag on top of the map's roll decel", () => {
+    const b = ball({ y: BALL_RADIUS, vx: 5, state: "dead" });
+    stepBall(b, ballCtx());
+    // (ballRollDecel 3 + BALL_ROLL_DRAG 1.1 · 5) · dt
+    expect(b.vx).toBeCloseTo(5 - (3 + BALL_ROLL_DRAG * 5) * DT, 9);
+  });
+
+  it("keeps a tap thrown flat from the center on the island (Picnic)", () => {
+    const origin = vec3(0.35, 1, -0.5);
+    const v = computeThrowVelocity(0, aimDirection(0, 0), "");
+    const b = ball({ x: origin.x, y: origin.y, z: origin.z, vx: v.x, vy: v.y, vz: v.z, state: "live" });
+    const ctx = ballCtx();
+    const tick = runUntil(b, ctx, 300, (r) => r.becameNeutral || r.lost);
+    expect(tick).toBeGreaterThan(0);
+    expect(b.state).toBe("neutral");
+    expect(Math.abs(b.z)).toBeLessThan(13);
   });
 
   it("brings a dead ball to rest and turns it neutral", () => {
@@ -161,12 +206,16 @@ describe("cover", () => {
 
   it("bounces live balls off cover sides and kills them", () => {
     const b = ball({ x: basket.x, y: 0.5, z: 0, vz: -20, state: "live" });
-    const results = run(b, ballCtx(picnic), 8);
-    const hit = results.findIndex((r) => r.bounced);
+    const ctx = ballCtx(picnic);
+    let first: StepBallResult | null = null;
+    const hit = runUntil(b, ctx, 8, (r) => ((first = r), r.bounced));
     expect(hit).toBeGreaterThanOrEqual(2);
-    expect(results[hit]).toMatchObject({ bounceSurface: 2, becameDead: true });
-    expect(results[hit].impactSpeed).toBeGreaterThan(19);
-    expect(b.vz).toBeGreaterThan(10); // reflected with restitution 0.6
+    expect(first).toMatchObject({ bounceSurface: 2, becameDead: true });
+    expect(first!.impactSpeed).toBeGreaterThan(19);
+    expect(b.state).toBe("dead");
+    // The killing bounce reflects with BALL_DEATH_RESTITUTION (0.4, was the cover's 0.6):
+    // a miss drops dead near the cover instead of flying back across the island.
+    expect(b.vz).toBeCloseTo(20 * BALL_DEATH_RESTITUTION, 9);
     expect(b.z).toBeGreaterThan(basket.z + basket.radius);
   });
 

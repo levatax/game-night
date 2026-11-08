@@ -103,6 +103,8 @@ function sampleInput(): InputCmd {
   let buttons = 0;
   if (jumpLatch) buttons |= BTN.JUMP;
   jumpLatch = false;
+  // Level bit like Input.sample: Space still down = full-height jump (early release = short hop).
+  if (keys.has("Space")) buttons |= BTN.JUMP_HELD;
   return { seq: ++seq, moveX, moveZ, yaw: look.yaw, pitch: look.pitch, buttons };
 }
 

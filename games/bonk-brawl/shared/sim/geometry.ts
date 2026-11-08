@@ -188,15 +188,30 @@ function clampAbs(v: number, half: number): number {
   return v < -half ? -half : v > half ? half : v;
 }
 
+/** Strongest inward speed of the cover contacts seen by resolveCoverCollision (caller resets it). */
+export interface CoverHit {
+  impact: number;
+}
+
 /**
  * Push a vertical capsule (feet at pos, given radius/height) horizontally out of every cover
  * piece it overlaps whose top is above pos.y + STEP_HEIGHT and whose bottom (0) is below
- * pos.y + height. Mutates pos.x/pos.z. If `vel` is given, removes the velocity component
- * going into the surface (slide along walls). Returns true if any push happened.
+ * pos.y + height. Mutates pos.x/pos.z. If `vel` is given and moving into the surface
+ * (vn = vel·n < 0): vel −= (1 + restitution)·vn·n — restitution 0 (default) slides along the
+ * wall, > 0 bounces off it. If `impact` is given, impact.impact = max(impact.impact, −vn).
+ * Returns true if any push happened.
  * Cylinders: radial push. Boxes: push along the axis of least penetration in the box frame
  * (rounded corners: treat the capsule as a circle vs. the box's closest point).
  */
-export function resolveCoverCollision(arena: ArenaDef, pos: Vec3, radius: number, height: number, vel?: Vec3): boolean {
+export function resolveCoverCollision(
+  arena: ArenaDef,
+  pos: Vec3,
+  radius: number,
+  height: number,
+  vel?: Vec3,
+  restitution = 0,
+  impact?: CoverHit,
+): boolean {
   let pushed = false;
   const cover = arena.cover;
   for (let i = 0; i < cover.length; i++) {
@@ -209,8 +224,10 @@ export function resolveCoverCollision(arena: ArenaDef, pos: Vec3, radius: number
     if (vel) {
       const vn = vel.x * push.nx + vel.z * push.nz;
       if (vn < 0) {
-        vel.x -= push.nx * vn;
-        vel.z -= push.nz * vn;
+        const k = (1 + restitution) * vn;
+        vel.x -= push.nx * k;
+        vel.z -= push.nz * k;
+        if (impact && -vn > impact.impact) impact.impact = -vn;
       }
     }
     pushed = true;
@@ -359,6 +376,73 @@ export function sphereCapsuleOverlap(
   const dz = center.z - capFeet.z;
   const reach = sphereRadius + r;
   return dx * dx + dy * dy + dz * dz <= reach * reach;
+}
+
+/**
+ * Swept sphere vs vertical capsule: does a sphere of `sphereRadius` moving along the segment a→b
+ * touch the capsule (same capsule definition as sphereCapsuleOverlap)? Closest points between
+ * segment ab and the capsule's axis segment, then a distance test. Closes the gaps between
+ * tick samples of a fast ball (34 m/s ≈ 1.13 m per tick). a === b degenerates to the point test.
+ * Allocation-free.
+ */
+export function segmentCapsuleOverlap(
+  a: Vec3,
+  b: Vec3,
+  sphereRadius: number,
+  capFeet: Vec3,
+  capRadius: number,
+  capHeight: number,
+): boolean {
+  const r = Math.min(capRadius, capHeight * 0.5);
+  const bottom = capFeet.y + r;
+  const top = capFeet.y + capHeight - r;
+  // Segment 1: P(s) = a + s·d1, s ∈ [0, 1]. Segment 2 (axis): Q(t) = (cx, bottom + t·h, cz), t ∈ [0, 1].
+  const d1x = b.x - a.x;
+  const d1y = b.y - a.y;
+  const d1z = b.z - a.z;
+  const h = top - bottom;
+  const rx = a.x - capFeet.x;
+  const ry = a.y - bottom;
+  const rz = a.z - capFeet.z;
+  const aa = d1x * d1x + d1y * d1y + d1z * d1z;
+  const ee = h * h;
+  const f = h * ry;
+  let s: number;
+  let t: number;
+  if (aa <= EPS && ee <= EPS) {
+    s = 0;
+    t = 0;
+  } else if (aa <= EPS) {
+    s = 0;
+    t = clamp01(f / ee);
+  } else {
+    const c = d1x * rx + d1y * ry + d1z * rz;
+    if (ee <= EPS) {
+      t = 0;
+      s = clamp01(-c / aa);
+    } else {
+      const bb = d1y * h;
+      const denom = aa * ee - bb * bb;
+      s = denom > EPS ? clamp01((bb * f - c * ee) / denom) : 0;
+      t = (bb * s + f) / ee;
+      if (t < 0) {
+        t = 0;
+        s = clamp01(-c / aa);
+      } else if (t > 1) {
+        t = 1;
+        s = clamp01((bb - c) / aa);
+      }
+    }
+  }
+  const dx = a.x + d1x * s - capFeet.x;
+  const dy = a.y + d1y * s - (bottom + h * t);
+  const dz = a.z + d1z * s - capFeet.z;
+  const reach = sphereRadius + r;
+  return dx * dx + dy * dy + dz * dz <= reach * reach;
+}
+
+function clamp01(v: number): number {
+  return v < 0 ? 0 : v > 1 ? 1 : v;
 }
 
 /* ================================================================ raycast */

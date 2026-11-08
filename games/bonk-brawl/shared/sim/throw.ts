@@ -9,14 +9,22 @@ import {
   GRAVITY,
   HAND_FORWARD,
   HAND_RIGHT,
+  KNOCK_GETUP_TICKS,
+  KNOCK_HEARTS_MULT,
+  KNOCK_MAX_SPEED,
+  KNOCK_STUN_MAX_TICKS,
+  KNOCK_STUN_MIN_TICKS,
   KNOCKBACK_FULL_CHARGE_MULT,
   KNOCKBACK_MEGA_MULT,
+  KNOCKBACK_STUN_TICKS,
+  MAX_HEARTS,
   THROW_PITCH_BIAS,
   THROW_SPEED_MAX,
   THROW_SPEED_MIN,
   TRIPLE_SPREAD_RAD,
+  TUMBLE_GRAVITY_MULT,
 } from "../constants.js";
-import type { BallKind, HeldPowerUp } from "../types.js";
+import type { BallKind, HeldPowerUp, Vec3Like } from "../types.js";
 import type { FloorQuery } from "./context.js";
 import { isFloorAt, sphereCoverContactInto, type Contact } from "./geometry.js";
 import { clamp, dirFromYawPitch, lerp, vec3, type Vec3 } from "./math.js";
@@ -110,6 +118,48 @@ export function computeThrowVelocities(charge: number, yaw: number, pitch: numbe
  */
 export function knockbackMultiplier(charge: number, kind: BallKind): number {
   return lerp(1, KNOCKBACK_FULL_CHARGE_MULT, clamp(charge, 0, 1)) * (kind === "mega" ? KNOCKBACK_MEGA_MULT : 1);
+}
+
+/**
+ * Hearts tension: KNOCK_HEARTS_MULT[clamp(MAX_HEARTS − heartsAfter, 0, 3)], where heartsAfter is
+ * the target's hearts after this hit's damage (3 → ×1, 2 → ×1.12, 1 or 0 → ×1.3).
+ */
+export function heartsKnockMultiplier(heartsAfter: number): number {
+  const lost = MAX_HEARTS - (Number.isFinite(heartsAfter) ? Math.round(heartsAfter) : MAX_HEARTS);
+  const i = lost < 0 ? 0 : lost > KNOCK_HEARTS_MULT.length - 1 ? KNOCK_HEARTS_MULT.length - 1 : lost;
+  return KNOCK_HEARTS_MULT[i];
+}
+
+/**
+ * Launch velocity of a knockback: (dirX·h·mult, up·mult, dirZ·h·mult) with (dirX, dirZ) a unit
+ * horizontal direction, its length clamped to KNOCK_MAX_SPEED (direction kept). Writes `out`.
+ */
+export function launchVelocity(dirX: number, dirZ: number, h: number, up: number, mult: number, out: Vec3): Vec3 {
+  out.x = dirX * h * mult;
+  out.y = up * mult;
+  out.z = dirZ * h * mult;
+  const len = Math.sqrt(out.x * out.x + out.y * out.y + out.z * out.z);
+  if (len > KNOCK_MAX_SPEED) {
+    const k = KNOCK_MAX_SPEED / len;
+    out.x *= k;
+    out.y *= k;
+    out.z *= k;
+  }
+  return out;
+}
+
+/**
+ * Stun of a launch: the time a TUMBLE_GRAVITY_MULT arc takes to come back down to launch height
+ * (2·vy / g) in ticks, plus KNOCK_GETUP_TICKS, clamped to
+ * [max(KNOCK_STUN_MIN_TICKS, KNOCKBACK_STUN_TICKS), KNOCK_STUN_MAX_TICKS]. The stun covers the whole
+ * flight (no mid-air control that erases the knockback), DI aside.
+ */
+export function knockStunTicks(launch: Vec3Like): number {
+  const g = -GRAVITY * TUMBLE_GRAVITY_MULT;
+  const flight = Math.ceil((2 * Math.max(0, launch.y)) / g / DT - 1e-9);
+  const min = Math.max(KNOCK_STUN_MIN_TICKS, KNOCKBACK_STUN_TICKS);
+  const ticks = flight + KNOCK_GETUP_TICKS;
+  return ticks < min ? min : ticks > KNOCK_STUN_MAX_TICKS ? KNOCK_STUN_MAX_TICKS : ticks;
 }
 
 /* ============================================================ trajectory */

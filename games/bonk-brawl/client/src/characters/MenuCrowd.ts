@@ -51,7 +51,7 @@ class CrowdMember {
 
   constructor(index: number, x: number, z: number) {
     const character = CHARACTER_IDS[index % CHARACTER_IDS.length];
-    this.animal = new Animal(character, playerColor(index));
+    this.animal = new Animal(character, playerColor(index), { detail: "mid" });
     this.animator = new Animator(this.animal, character);
     this.frame = createPuppetFrame(character, `crowd${index}`, index);
     this.frame.x = x;

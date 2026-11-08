@@ -8,7 +8,8 @@
 // allocation is the ThrowRequest on the tick a throw is released.
 
 import {
-  AIR_CONTROL,
+  AIR_ACCEL,
+  AIR_DECEL,
   BELLY_BOUNCE_TICKS,
   BELLY_SLIDE_SPEED,
   BELLY_SLIDE_TICKS,
@@ -19,6 +20,8 @@ import {
   CHARGE_FULL_TICKS,
   CHARGE_MOVE_MULT,
   COYOTE_TICKS,
+  DI_ACCEL_ALONG,
+  DI_ACCEL_PERP,
   FLAP_DASH_END_SPEED,
   FLAP_DASH_END_VY,
   FLAP_DASH_SPEED,
@@ -30,20 +33,32 @@ import {
   GROUND_POUND_SLAM_VY,
   HEADBUTT_SPEED,
   HEADBUTT_TICKS,
+  JUMP_APEX_GRAVITY_MULT,
+  JUMP_APEX_HANG_VY,
+  JUMP_CUT_VY,
   JUMP_VELOCITY,
   MAX_FALL_SPEED,
   MOVE_SPEED,
   PITCH_LIMIT,
+  PLAYER_FALL_GRAVITY_MULT,
   PLAYER_HEIGHT,
   PLAYER_RADIUS,
+  PLAYER_RISE_GRAVITY_MULT,
   RING_OUT_Y,
   ROLL_COOLDOWN_TICKS,
   ROLL_IFRAME_TICKS,
   ROLL_SPEED,
   ROLL_TICKS,
+  SKID_MIN_SPEED,
   SLIDE_HEIGHT,
-  STUN_GROUND_DECEL,
   THROW_RECOVER_TICKS,
+  TUMBLE_AIR_DRAG,
+  TUMBLE_BOUNCE_KEEP,
+  TUMBLE_BOUNCE_MIN_VY,
+  TUMBLE_COVER_BOUNCE_MIN,
+  TUMBLE_COVER_RESTITUTION,
+  TUMBLE_GRAVITY_MULT,
+  TUMBLE_RESTITUTION,
   WHIFF_MOVE_MULT,
   WHIFF_TICKS,
   ZOOMIES_MULT,
@@ -51,8 +66,8 @@ import {
 import { BTN, type InputCmd } from "../protocol.js";
 import type { CharacterId, HeldPowerUp, PlayerSimFields } from "../types.js";
 import type { SimContext } from "./context.js";
-import { groundHeightAt, resolveCoverCollision } from "./geometry.js";
-import { angleDelta, clamp, vec3, wrapAngle, type Vec3 } from "./math.js";
+import { groundHeightAt, resolveCoverCollision, type CoverHit } from "./geometry.js";
+import { angleDelta, approach, clamp, vec3, wrapAngle, type Vec3 } from "./math.js";
 import { throwOrigin } from "./throw.js";
 
 /** Plain mutable player sim state. PlayerState (schema) is assignable to and from it via copyPlayerSim. */
@@ -89,6 +104,9 @@ export const PLAYER_SIM_KEYS = [
   "dirX",
   "dirZ",
   "alive",
+  "jumping",
+  "skid",
+  "knockBounces",
 ] as const satisfies ReadonlyArray<keyof PlayerSimFields>;
 
 type MissingSimKeys = Exclude<keyof PlayerSimFields, (typeof PLAYER_SIM_KEYS)[number]>;
@@ -127,6 +145,9 @@ export function createPlayerSim(): PlayerSim {
     dirX: 0,
     dirZ: -1,
     alive: false,
+    jumping: false,
+    skid: false,
+    knockBounces: 0,
   };
 }
 
@@ -171,6 +192,12 @@ export interface StepPlayerResult {
   throw: ThrowRequest | null;
   /** Feet dropped below RING_OUT_Y this tick (server eliminates; client stops predicting). */
   fellOut: boolean;
+  /** A stunned (tumbling) body bounced off the floor or a cover side this tick (knockBounces advanced). */
+  bounced: boolean;
+  /** Speed into the surface of that bounce (m/s). */
+  bounceSpeed: number;
+  /** `skid` became true this tick (turn skid started). */
+  skidStarted: boolean;
 }
 
 export function emptyStepResult(): StepPlayerResult {
@@ -185,6 +212,9 @@ export function emptyStepResult(): StepPlayerResult {
     slamLanded: false,
     throw: null,
     fellOut: false,
+    bounced: false,
+    bounceSpeed: 0,
+    skidStarted: false,
   };
 }
 
@@ -200,6 +230,9 @@ export function resetStepResult(out: StepPlayerResult): StepPlayerResult {
   out.slamLanded = false;
   out.throw = null;
   out.fellOut = false;
+  out.bounced = false;
+  out.bounceSpeed = 0;
+  out.skidStarted = false;
   return out;
 }
 
@@ -224,8 +257,13 @@ const EXIT_FLAP = 2;
 
 /** Camera-relative wish direction of this tick (length ≤ 1). */
 const wish = { x: 0, z: 0, len: 0 };
-/** What the velocity phase decided for the integration phase. */
-const motion = { gravity: true, exit: EXIT_NONE };
+/**
+ * What the velocity phase decided for the integration phase. `held`: JUMP_HELD this tick (0 when
+ * locked); `bounced`: knockBounces already advanced this tick (one count per tick).
+ */
+const motion = { gravity: true, exit: EXIT_NONE, held: false, bounced: false };
+/** Strongest cover impact of a stunned body this tick (reset at the start of integrate). */
+const coverHit: CoverHit = { impact: 0 };
 /** Velocity view handed to resolveCoverCollision (PlayerSim stores it as vx/vy/vz). */
 const vel: Vec3 = vec3();
 /** Capsule feet handed to resolveCoverCollision. */
@@ -275,7 +313,8 @@ const MAX_MOVE_SUBSTEPS = 4;
  *     - CATCH: canAct && catchCooldown == 0 && catchTicks == 0 → catchTicks = CATCH_WINDOW_TICKS,
  *       catchCooldown = CATCH_COOLDOWN_TICKS, chargeTicks = 0. catchStarted.
  *     - JUMP: canAct && (grounded || airTicks <= COYOTE_TICKS) && vy <= 0 → vy = JUMP_VELOCITY,
- *       grounded = false, airTicks = COYOTE_TICKS + 1. jumped.
+ *       jumping = true, grounded = false, airTicks = COYOTE_TICKS + 1. jumped.
+ *     (Flap Dash and Ground Pound clear `jumping`; a stun clears it too.)
  *  6. Charge / throw (THROW is a level bit): if heldCount > 0 && canAct && throwTicks == 0 &&
  *     catchTicks == 0 (canAct already excludes Pip's slide):
  *       THROW held → chargeTicks = min(chargeTicks + 1, CHARGE_FULL_TICKS)
@@ -283,8 +322,11 @@ const MAX_MOVE_SUBSTEPS = 4;
  *         pitch, origin (computed after movement, step 10) }; heldCount -= 1; chargeTicks = 0;
  *         throwTicks = THROW_RECOVER_TICKS; powerUp = "" ; curveArmed = false.
  *     Otherwise (no ball, or can't act) → chargeTicks = 0 (no throw).
- *  7. Velocity (first matching case):
- *     - stunned: no control; grounded → decelerate by STUN_GROUND_DECEL; airborne → keep.
+ *  7. Velocity (first matching case; skid = false first):
+ *     - stunned: no walk control. Grounded → decelerate by arena.friction.knockSlideDecel.
+ *       Airborne → horizontal × max(0, 1 − TUMBLE_AIR_DRAG·dt), then DI: with move input, add
+ *       wish·û·DI_ACCEL_ALONG·dt along the flight û and (wish − (wish·û)û)·DI_ACCEL_PERP·dt across
+ *       it, then clamp the horizontal speed to its pre-DI value (DI steers/brakes, never boosts).
  *     - rolling: v = dir * ROLL_SPEED; rollTicks--.
  *     - flap dash: v = dir * FLAP_DASH_SPEED, vy = 0, no gravity; abilityTicks--.
  *     - ground pound phase 1: horizontal air control as normal; abilityTicks--; when vy <= 0 or
@@ -297,30 +339,44 @@ const MAX_MOVE_SUBSTEPS = 4;
  *     - headbutt: v = dir * HEADBUTT_SPEED; abilityTicks--. (The server ends it early on a hit by
  *       setting abilityTicks = 0.)
  *     - otherwise: wish = right(yaw) * moveX + forward(yaw) * moveZ, length clamped to 1;
- *       target speed = MOVE_SPEED × (charging ? CHARGE_MOVE_MULT : 1) × (whiff ? WHIFF_MOVE_MULT : 1)
- *       × (zoomiesTicks > 0 ? ZOOMIES_MULT : 1); move the horizontal velocity toward wish × speed
- *       by at most arena.friction.groundAccel (input) or groundDecel (no input) × dt, scaled by
- *       AIR_CONTROL when airborne.
+ *       speed = MOVE_SPEED × (charging ? CHARGE_MOVE_MULT : 1) × (whiff ? WHIFF_MOVE_MULT : 1)
+ *       × (zoomiesTicks > 0 ? ZOOMIES_MULT : 1).
+ *       No input: approach v_h → 0 by (grounded ? friction.groundDecel : AIR_DECEL) · dt.
+ *       Input: ŵ = wish/|wish|, target = |wish|·speed, vPar = v·ŵ, perp = v − vPar·ŵ.
+ *       Grounded: a = vPar < 0 ? groundBrake : vPar > target ? groundDecel : groundAccel,
+ *       grip = groundGrip, skid = vPar < −SKID_MIN_SPEED. Air: a = vPar > target ? AIR_DECEL :
+ *       AIR_ACCEL, grip = AIR_ACCEL. vPar = approach(vPar, target, a·dt); |perp| shrinks by
+ *       grip·dt (to 0 at most); v = vPar·ŵ + perp.
  *     - Mochi's belly bounce does not affect movement.
  *     Every dash covers exactly its documented distance: all of its ticks move at full dash
  *     speed (speed = distance / duration). The velocity it leaves behind is set right after the
  *     integration of its last tick: flap dash → v = dir * FLAP_DASH_END_SPEED,
  *     vy = FLAP_DASH_END_VY (a little hop, grounded = false); roll / belly slide (timer end) /
  *     headbutt → horizontal speed capped at DASH_EXIT_SPEED.
- *  8. Gravity: vy += GRAVITY * dt (not during flap dash, not in slam phase), vy >= -MAX_FALL_SPEED.
+ *  8. Variable jump (JUMP_HELD level bit, 0 when locked): if jumping and the bit is released while
+ *     vy > JUMP_CUT_VY → vy = JUMP_CUT_VY, jumping = false (short hop); jumping and
+ *     vy < −JUMP_APEX_HANG_VY → jumping = false.
+ *     Gravity: vy += GRAVITY · m · dt (not during flap dash, not in slam phase), vy >= −MAX_FALL_SPEED,
+ *     m = first match of: stunned → TUMBLE_GRAVITY_MULT; hopsworth abilityPhase 1 → 1; jumping &&
+ *     held && vy > JUMP_APEX_HANG_VY → PLAYER_RISE_GRAVITY_MULT; jumping && held →
+ *     JUMP_APEX_GRAVITY_MULT; vy > 0 → 1; else PLAYER_FALL_GRAVITY_MULT.
  *  9. Integrate: y += average(vy before, vy after gravity) * dt (exact for constant gravity, so
  *     the jump apex really is JUMP_HEIGHT); x/z += v * dt in sub-steps no longer than
  *     PLAYER_RADIUS with cover resolved between them (fast dashes can't tunnel through candles).
  *     Ground: g = groundHeightAt(q, x, z,
- *     SUPPORT_RADIUS, max(yBefore, y)); if y <= g and vy <= 0 → y = g, vy = 0, grounded (landed +
- *     landSpeed if it was airborne). Else grounded = false. Then resolveCoverCollision (capsule
- *     radius PLAYER_RADIUS, height playerHeight(p, character)) pushes the capsule out of cover
- *     sides; running it after the ground snap means a fast fall onto a cover top lands on it
- *     instead of being shoved off the side. Players stand on cover tops. Over a fallen ring /
- *     beyond the edge / once below the island top there is no floor.
+ *     SUPPORT_RADIUS, max(yBefore, y)). Stunned && y <= g && vy < −TUMBLE_BOUNCE_MIN_VY → tumble
+ *     bounce: vy = −vy·TUMBLE_RESTITUTION, vx/vz × TUMBLE_BOUNCE_KEEP, y = g, grounded = false,
+ *     bounced (NOT landed). Else if y <= g and vy <= 0 → y = g, vy = 0, grounded, jumping = false
+ *     (landed + landSpeed if it was airborne). Else grounded = false. Then resolveCoverCollision
+ *     (capsule radius PLAYER_RADIUS, height playerHeight(p, character)) pushes the capsule out of
+ *     cover sides (sliding; a stunned body instead reflects with TUMBLE_COVER_RESTITUTION and an
+ *     inward speed > TUMBLE_COVER_BOUNCE_MIN counts as a bounce); running it after the ground snap
+ *     means a fast fall onto a cover top lands on it instead of being shoved off the side. Players
+ *     stand on cover tops. Over a fallen ring / beyond the edge / once below the island top there
+ *     is no floor. Any bounce this tick advances knockBounces by 1 ((n + 1) & 255).
  *     airTicks = grounded ? 0 : min(255, airTicks + 1).
  * 10. Compute result.throw.origin = throwOrigin(p) if a throw was released.
- * 11. fellOut = y < RING_OUT_Y.
+ * 11. fellOut = y < RING_OUT_Y; skidStarted = skid && !skid at the start of the step.
  *
  * Must NOT: touch hearts/points/balls, pick anything up, apply knockback (the server world does
  * that by writing vx/vy/vz + stunTicks), or allocate per call beyond the result object.
@@ -345,6 +401,8 @@ export function stepPlayerInto(p: PlayerSim, input: InputCmd, ctx: SimContext, o
   const buttons = locked ? 0 : input.buttons | 0;
   if (locked) p.chargeTicks = 0;
   readWish(p.yaw, locked ? 0 : input.moveX, locked ? 0 : input.moveZ);
+  motion.held = (buttons & BTN.JUMP_HELD) !== 0;
+  const wasSkidding = p.skid;
 
   tickCatchWindow(p, out);
   if (p.stunTicks > 0) cancelMovement(p, ctx.character);
@@ -354,6 +412,7 @@ export function stepPlayerInto(p: PlayerSim, input: InputCmd, ctx: SimContext, o
 
   updateVelocity(p, ctx);
   integrate(p, ctx, out);
+  out.skidStarted = p.skid && !wasSkidding;
 
   if (out.throw) throwOrigin(p, out.throw.origin);
   out.fellOut = p.y < RING_OUT_Y;
@@ -469,6 +528,7 @@ function tickCatchWindow(p: PlayerSim, out: StepPlayerResult): void {
 
 function cancelMovement(p: PlayerSim, character: CharacterId): void {
   p.rollTicks = 0;
+  p.jumping = false;
   if (isMovementAbilityActive(p, character)) {
     p.abilityTicks = 0;
     p.abilityPhase = 0;
@@ -512,9 +572,11 @@ function startAbility(p: PlayerSim, character: CharacterId, out: StepPlayerResul
   switch (character) {
     case "quacky":
       p.abilityTicks = FLAP_DASH_TICKS;
+      p.jumping = false;
       lockDirection(p, true);
       break;
     case "hopsworth":
+      p.jumping = false;
       p.vy = GROUND_POUND_LEAP_VY;
       p.grounded = false;
       p.abilityPhase = 1;
@@ -551,6 +613,7 @@ function startCatch(p: PlayerSim, out: StepPlayerResult): void {
 
 function jump(p: PlayerSim, out: StepPlayerResult): void {
   p.vy = JUMP_VELOCITY;
+  p.jumping = true;
   p.grounded = false;
   p.airTicks = COYOTE_TICKS + 1;
   out.jumped = true;
@@ -590,8 +653,9 @@ function releaseThrow(p: PlayerSim, out: StepPlayerResult): void {
 function updateVelocity(p: PlayerSim, ctx: SimContext): void {
   motion.gravity = true;
   motion.exit = EXIT_NONE;
+  p.skid = false;
   if (p.stunTicks > 0) {
-    if (p.grounded) approachHorizontal(p, 0, 0, STUN_GROUND_DECEL * ctx.dt);
+    tumbleVelocity(p, ctx);
     return;
   }
   if (p.rollTicks > 0) {
@@ -681,6 +745,12 @@ function headbuttVelocity(p: PlayerSim): void {
   if (p.abilityTicks === 0) motion.exit = EXIT_CLAMP;
 }
 
+/**
+ * Walking / air control. With input the velocity splits into the part along the wish direction
+ * (driven toward the target speed: accelerate, brake hard when it points backwards, ease off when
+ * above target) and the sideways part (removed by grip), so turns carve and reversals skid.
+ * Without input: decelerate (ground: arena groundDecel; air: AIR_DECEL, a jump keeps momentum).
+ */
 function walkVelocity(p: PlayerSim, ctx: SimContext): void {
   const speed =
     MOVE_SPEED *
@@ -688,9 +758,73 @@ function walkVelocity(p: PlayerSim, ctx: SimContext): void {
     (p.whiffTicks > 0 ? WHIFF_MOVE_MULT : 1) *
     (p.zoomiesTicks > 0 ? ZOOMIES_MULT : 1);
   const friction = ctx.arena.friction;
-  const hasInput = wish.len > MOVE_EPS;
-  const accel = (hasInput ? friction.groundAccel : friction.groundDecel) * (p.grounded ? 1 : AIR_CONTROL);
-  approachHorizontal(p, wish.x * speed, wish.z * speed, accel * ctx.dt);
+  const dt = ctx.dt;
+  if (wish.len <= MOVE_EPS) {
+    approachHorizontal(p, 0, 0, (p.grounded ? friction.groundDecel : AIR_DECEL) * dt);
+    return;
+  }
+  const wx = wish.x / wish.len;
+  const wz = wish.z / wish.len;
+  const target = wish.len * speed;
+  let along = p.vx * wx + p.vz * wz;
+  let perpX = p.vx - along * wx;
+  let perpZ = p.vz - along * wz;
+  let accel: number;
+  let grip: number;
+  if (p.grounded) {
+    accel = along < 0 ? friction.groundBrake : along > target ? friction.groundDecel : friction.groundAccel;
+    grip = friction.groundGrip;
+    p.skid = along < -SKID_MIN_SPEED;
+  } else {
+    accel = along > target ? AIR_DECEL : AIR_ACCEL;
+    grip = AIR_ACCEL;
+  }
+  along = approach(along, target, accel * dt);
+  const perp = Math.sqrt(perpX * perpX + perpZ * perpZ);
+  const shrink = grip * dt;
+  if (perp <= shrink) {
+    perpX = 0;
+    perpZ = 0;
+  } else {
+    const k = (perp - shrink) / perp;
+    perpX *= k;
+    perpZ *= k;
+  }
+  p.vx = along * wx + perpX;
+  p.vz = along * wz + perpZ;
+}
+
+/**
+ * Knockback stun: no walk control. Grounded: slide to a stop at the arena's knockSlideDecel.
+ * Airborne: light horizontal drag plus directional influence (DI) from the move input: steer
+ * perpendicular to the flight (DI_ACCEL_PERP) and along/against it (DI_ACCEL_ALONG); DI can bend
+ * and brake the launch but never make it faster.
+ */
+function tumbleVelocity(p: PlayerSim, ctx: SimContext): void {
+  const dt = ctx.dt;
+  if (p.grounded) {
+    approachHorizontal(p, 0, 0, ctx.arena.friction.knockSlideDecel * dt);
+    return;
+  }
+  const drag = Math.max(0, 1 - TUMBLE_AIR_DRAG * dt);
+  p.vx *= drag;
+  p.vz *= drag;
+  const hs = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
+  if (wish.len <= MOVE_EPS || hs <= 1e-6) return;
+  const ux = p.vx / hs;
+  const uz = p.vz / hs;
+  const wd = wish.x * ux + wish.z * uz;
+  const along = wd * DI_ACCEL_ALONG * dt;
+  const perpScale = DI_ACCEL_PERP * dt;
+  let vx = p.vx + along * ux + (wish.x - wd * ux) * perpScale;
+  let vz = p.vz + along * uz + (wish.z - wd * uz) * perpScale;
+  const after = Math.sqrt(vx * vx + vz * vz);
+  if (after > hs) {
+    vx *= hs / after;
+    vz *= hs / after;
+  }
+  p.vx = vx;
+  p.vz = vz;
 }
 
 /** Move (vx, vz) toward (tx, tz) by at most maxDelta (vector length). */
@@ -711,8 +845,11 @@ function approachHorizontal(p: PlayerSim, tx: number, tz: number, maxDelta: numb
 
 function integrate(p: PlayerSim, ctx: SimContext, out: StepPlayerResult): void {
   const dt = ctx.dt;
+  motion.bounced = false;
+  coverHit.impact = 0;
+  variableJump(p);
   const vyStart = p.vy;
-  if (motion.gravity) p.vy = Math.max(p.vy + GRAVITY * dt, -MAX_FALL_SPEED);
+  if (motion.gravity) p.vy = Math.max(p.vy + GRAVITY * gravityMultiplier(p, ctx.character) * dt, -MAX_FALL_SPEED);
 
   const yBefore = p.y;
   p.y += (vyStart + p.vy) * 0.5 * dt;
@@ -720,10 +857,47 @@ function integrate(p: PlayerSim, ctx: SimContext, out: StepPlayerResult): void {
 
   resolveGround(p, ctx, yBefore, out);
   pushOutOfCover(p, ctx, p.y);
+  if (coverHit.impact > TUMBLE_COVER_BOUNCE_MIN) registerBounce(p, out, coverHit.impact);
 
   applyDashExit(p);
   if (ctx.character === "hopsworth") finishGroundPound(p, out);
   p.airTicks = p.grounded ? 0 : Math.min(255, p.airTicks + 1);
+}
+
+/**
+ * Variable jump height (before gravity, every tick): releasing JUMP_HELD while rising faster than
+ * JUMP_CUT_VY caps vy there (short hop); a jump ends once it falls past the apex hang.
+ */
+function variableJump(p: PlayerSim): void {
+  if (!p.jumping) return;
+  if (!motion.held && p.vy > JUMP_CUT_VY) {
+    p.vy = JUMP_CUT_VY;
+    p.jumping = false;
+  } else if (p.vy < -JUMP_APEX_HANG_VY) {
+    p.jumping = false;
+  }
+}
+
+/**
+ * Gravity multiplier of this tick (first match): stunned → TUMBLE_GRAVITY_MULT; Ground Pound
+ * rise → 1; held jump rising above the hang → PLAYER_RISE_GRAVITY_MULT; held jump in the hang →
+ * JUMP_APEX_GRAVITY_MULT; any other rise → 1; falling → PLAYER_FALL_GRAVITY_MULT.
+ */
+function gravityMultiplier(p: PlayerSim, character: CharacterId): number {
+  if (p.stunTicks > 0) return TUMBLE_GRAVITY_MULT;
+  if (character === "hopsworth" && p.abilityPhase === 1) return 1;
+  if (p.jumping && motion.held) return p.vy > JUMP_APEX_HANG_VY ? PLAYER_RISE_GRAVITY_MULT : JUMP_APEX_GRAVITY_MULT;
+  return p.vy > 0 ? 1 : PLAYER_FALL_GRAVITY_MULT;
+}
+
+/** A tumble bounce happened (floor or cover): count it once per tick, report the hardest impact. */
+function registerBounce(p: PlayerSim, out: StepPlayerResult, impact: number): void {
+  if (!motion.bounced) {
+    p.knockBounces = (p.knockBounces + 1) & 255;
+    motion.bounced = true;
+  }
+  out.bounced = true;
+  if (impact > out.bounceSpeed) out.bounceSpeed = impact;
 }
 
 /**
@@ -744,7 +918,10 @@ function moveHorizontally(p: PlayerSim, ctx: SimContext, probeY: number): void {
   }
 }
 
-/** resolveCoverCollision for the capsule with its feet at height `feetY`; slides the velocity. */
+/**
+ * resolveCoverCollision for the capsule with its feet at height `feetY`; slides the velocity, or
+ * (stunned) bounces it off the side with TUMBLE_COVER_RESTITUTION and records the impact.
+ */
 function pushOutOfCover(p: PlayerSim, ctx: SimContext, feetY: number): void {
   probe.x = p.x;
   probe.y = feetY;
@@ -752,7 +929,10 @@ function pushOutOfCover(p: PlayerSim, ctx: SimContext, feetY: number): void {
   vel.x = p.vx;
   vel.y = p.vy;
   vel.z = p.vz;
-  if (!resolveCoverCollision(ctx.arena, probe, PLAYER_RADIUS, playerHeight(p, ctx.character), vel)) return;
+  const stunned = p.stunTicks > 0;
+  const height = playerHeight(p, ctx.character);
+  const restitution = stunned ? TUMBLE_COVER_RESTITUTION : 0;
+  if (!resolveCoverCollision(ctx.arena, probe, PLAYER_RADIUS, height, vel, restitution, stunned ? coverHit : undefined)) return;
   p.x = probe.x;
   p.z = probe.z;
   p.vx = vel.x;
@@ -761,7 +941,19 @@ function pushOutOfCover(p: PlayerSim, ctx: SimContext, feetY: number): void {
 
 function resolveGround(p: PlayerSim, ctx: SimContext, yBefore: number, out: StepPlayerResult): void {
   const ground = groundHeightAt(ctx, p.x, p.z, SUPPORT_RADIUS, Math.max(yBefore, p.y));
+  if (p.stunTicks > 0 && p.y <= ground && p.vy < -TUMBLE_BOUNCE_MIN_VY) {
+    // Tumble bounce: a hard stunned landing pops back up (toy-like boing), not a landing.
+    const impact = -p.vy;
+    p.vy = impact * TUMBLE_RESTITUTION;
+    p.vx *= TUMBLE_BOUNCE_KEEP;
+    p.vz *= TUMBLE_BOUNCE_KEEP;
+    p.y = ground;
+    p.grounded = false;
+    registerBounce(p, out, impact);
+    return;
+  }
   if (p.y <= ground && p.vy <= 0) {
+    p.jumping = false;
     if (!p.grounded) {
       out.landed = true;
       out.landSpeed = -p.vy;

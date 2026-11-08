@@ -235,7 +235,7 @@ let sparkleMaterial: THREE.SpriteMaterial | null = null;
 /** Crown materials and geometries are shared by every crown and never disposed (a few KB). */
 function getCrownKit(): CrownKit {
   if (!crownKit) {
-    const band = new THREE.CylinderGeometry(0.15, 0.13, 0.085, 10, 1);
+    const band = new THREE.CylinderGeometry(0.17, 0.15, 0.085, 10, 1);
     band.translate(0, 0.0425, 0);
     crownKit = {
       gold: createToonMaterial(PALETTE.crownGold, { emissive: CROWN_EMISSIVE, emissiveIntensity: 0.45 }),
@@ -295,15 +295,15 @@ export function createCrown(): THREE.Object3D {
   const points = 5;
   for (let i = 0; i < points; i++) {
     const a = (i / points) * Math.PI * 2;
-    const x = Math.sin(a) * 0.125;
-    const z = Math.cos(a) * 0.125;
+    const x = Math.sin(a) * 0.142;
+    const z = Math.cos(a) * 0.142;
     const point = new THREE.Mesh(kit.point, kit.gold);
     point.position.set(x, 0.135, z);
     point.rotation.y = a;
     const ball = new THREE.Mesh(kit.ball, kit.gold);
     ball.position.set(x * 1.02, 0.198, z * 1.02);
     const jewel = new THREE.Mesh(kit.jewel, kit.jewels[i % kit.jewels.length]);
-    jewel.position.set(Math.sin(a) * 0.147, 0.044, Math.cos(a) * 0.147);
+    jewel.position.set(Math.sin(a) * 0.167, 0.044, Math.cos(a) * 0.167);
     jewel.scale.set(1, 1.1, 0.6);
     jewel.lookAt(jewel.position.x * 2, jewel.position.y, jewel.position.z * 2);
     spinner.add(point, ball, jewel);

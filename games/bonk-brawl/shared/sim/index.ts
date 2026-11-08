@@ -6,3 +6,5 @@ export * from "./player.js";
 export * from "./ball.js";
 export * from "./throw.js";
 export * from "./actions.js";
+export * from "./landing.js";
+export * from "./motion.js";

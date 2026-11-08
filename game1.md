@@ -253,7 +253,12 @@ Suggested repo layout (for later):
 | Charge time to full | 1.0 s |
 | Ball gravity | 1.0× world gravity (−20 m/s², slightly floaty-cartoony) |
 | Ball radius | 0.25 m (Mega: 0.5 m) |
-| Knockback on hit | 6 m/s horizontal + 4 m/s up (×1.5 at full charge, ×2 Mega) |
+| Knockback on hit | 5.6 m/s horizontal + 3.6 m/s up (×1.5 at full charge, ×2 Mega, ×1.12 / ×1.3 once you're down to 2 / 1 hearts), capped at 20 m/s |
+| Knockback flight | stun lasts the whole floaty arc (−18 m/s²) + 0.17 s get-up; steer it a little (DI); hard landings bounce |
+| Headbutt / shockwave knockback | 10.5 + 5.5 up / 7.5 + 4.5 up (same hearts scaling) |
+| Jump | 1.2 m with Space held (apex hang, faster fall), short hop ~0.4 m on a tap |
+| Ground feel | accel 48 m/s², brake 80 when reversing (skid), grip 55 in turns; air control 18 m/s², momentum kept in the air (Bath and Cake have their own friction) |
+| Missed balls | the first (killing) bounce keeps 35% of its speed, rolling drag: misses usually stay on the island |
 | Catch window / cooldown | 0.25 s / 1.0 s, whiff recovery 0.6 s |
 | Catch range | 1.2 m sphere in front of chest |
 | Dodge roll | 4 m distance, 0.2 s i-frames, 1.5 s cooldown |

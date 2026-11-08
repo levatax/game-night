@@ -10,7 +10,15 @@
 // - All cover footprints lie fully inside ring 0, so cover never falls.
 // - Pedestals sit in ring 1, spawns in the outer rings on the 4 diagonals + 4 axes, facing the center.
 
-import { DEFAULT_MAP, MAP_IDS } from "./constants.js";
+import {
+  BALL_BOUNCE_FRICTION,
+  BALL_RESTITUTION_FLOOR,
+  BALL_ROLL_DECEL,
+  DEFAULT_MAP,
+  GROUND_ACCEL,
+  GROUND_DECEL,
+  MAP_IDS,
+} from "./constants.js";
 import type { MapId } from "./types.js";
 
 /* ================================================================= types */
@@ -66,16 +74,24 @@ export interface SpawnPoint {
   yaw: number;
 }
 
-/** Ground handling. Bath Time is slippery (lower accel/decel → more momentum). */
+/** Ground handling. Bath Time is slippery (lower accel/decel → more momentum), Cake is sticky frosting. */
 export interface FrictionProfile {
   /** Player acceleration toward wish velocity on the ground (m/s²). */
   groundAccel: number;
-  /** Player deceleration with no input on the ground (m/s²). */
+  /** Player deceleration with no input (or above the target speed) on the ground (m/s²). */
   groundDecel: number;
-  /** Ball rolling deceleration (m/s²). */
+  /** Ground braking when the velocity points against the wish direction (turn skid / reversal, m/s²). */
+  groundBrake: number;
+  /** Ground grip: how fast velocity sideways to the wish direction is removed (carving, m/s²). */
+  groundGrip: number;
+  /** Deceleration of a stunned body sliding on the ground after a knockback (m/s²). */
+  knockSlideDecel: number;
+  /** Ball rolling deceleration (m/s²); BALL_ROLL_DRAG · speed is added on top. */
   ballRollDecel: number;
-  /** Fraction of tangential ball velocity kept on a floor bounce. */
+  /** Fraction of tangential ball velocity kept on a floor bounce (not the bounce that kills a live ball). */
   ballBounceFriction: number;
+  /** Normal restitution of a ball's floor bounce (not the bounce that kills a live ball). */
+  ballRestitution: number;
 }
 
 export type FloorKind = "grass" | "tile" | "frosting";
@@ -205,17 +221,38 @@ export function pedestalPosition(arena: ArenaDef, index: number): Pedestal {
 /* ========================================================== shared bits */
 
 const DEFAULT_FRICTION: FrictionProfile = {
-  groundAccel: 60,
-  groundDecel: 45,
-  ballRollDecel: 4,
-  ballBounceFriction: 0.85,
+  groundAccel: GROUND_ACCEL,
+  groundDecel: GROUND_DECEL,
+  groundBrake: 80,
+  groundGrip: 55,
+  knockSlideDecel: 14,
+  ballRollDecel: BALL_ROLL_DECEL,
+  ballBounceFriction: BALL_BOUNCE_FRICTION,
+  ballRestitution: BALL_RESTITUTION_FLOOR,
 };
 
+/** Bath Time tiles. */
 const SLIPPERY_FRICTION: FrictionProfile = {
-  groundAccel: 22,
+  groundAccel: 20,
   groundDecel: 7,
-  ballRollDecel: 1.5,
-  ballBounceFriction: 0.95,
+  groundBrake: 26,
+  groundGrip: 12,
+  knockSlideDecel: 5,
+  ballRollDecel: 1.2,
+  ballBounceFriction: 0.9,
+  ballRestitution: 0.6,
+};
+
+/** Cake frosting: grippy feet, dead bounces. */
+const STICKY_FRICTION: FrictionProfile = {
+  groundAccel: 52,
+  groundDecel: 48,
+  groundBrake: 85,
+  groundGrip: 60,
+  knockSlideDecel: 20,
+  ballRollDecel: 5,
+  ballBounceFriction: 0.6,
+  ballRestitution: 0.4,
 };
 
 /** Diagonal corners (slot 0/1 opposite, then 2/3), then the axes for slots 4..7 (4/5 and 6/7 opposite). */
@@ -364,7 +401,7 @@ export const ARENAS: Readonly<Record<MapId, ArenaDef>> = {
     pedestals: RING1_PEDESTALS,
     spawns: DIAGONAL_SPAWNS,
     ballDrop: { x: 0, z: 0 },
-    friction: DEFAULT_FRICTION,
+    friction: STICKY_FRICTION,
     theme: {
       skyTop: "#4B2E83",
       skyBottom: "#F5A3C7",

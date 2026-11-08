@@ -4,14 +4,16 @@
 // stepBallInto() allocates nothing (module scratch is written and read within one call).
 
 import {
+  BALL_DEATH_KEEP,
+  BALL_DEATH_RESTITUTION,
   BALL_KILL_Y,
   BALL_MAX_SPEED,
   BALL_MIN_BOUNCE_VY,
   BALL_RADIUS,
   BALL_RESTITUTION_COVER,
-  BALL_RESTITUTION_FLOOR,
   BALL_REST_SPEED,
   BALL_REST_TICKS,
+  BALL_ROLL_DRAG,
   BOOMERANG_MAX_RETURN_TICKS,
   BOOMERANG_RETURN_SPEED,
   BOOMERANG_RETURN_TICKS,
@@ -155,11 +157,14 @@ const touch = { support: false };
  *     ball) reflects the normal component with BALL_RESTITUTION_COVER and keeps tangential ×
  *     arena.friction.ballBounceFriction → bounced; a soft contact just removes the normal
  *     component (rolling on a top face / sliding along a side, no bounce event).
+ *     The KILLING bounce (state live, kind not boomerang) instead keeps tangential ×
+ *     BALL_DEATH_KEEP and normal × BALL_DEATH_RESTITUTION (floor and cover), so a missed throw
+ *     drops dead near where it landed instead of skidding off the island.
  *  5. Floor: if isFloorAt(x, z) and y - radius < 0 and the center was above the floor plane
  *     before this sub-step (i.e. it did not already drop below the island through a hole / past
  *     the edge) → y = radius; impact = the sub-step's mid-tick downward speed; hard contact
- *     (impact > BALL_MIN_BOUNCE_VY, or live): vy = impact * BALL_RESTITUTION_FLOOR, horizontal ×
- *     ballBounceFriction, bounced; else vy = 0 (rolling).
+ *     (impact > BALL_MIN_BOUNCE_VY, or live): vy = impact * arena.friction.ballRestitution,
+ *     horizontal × ballBounceFriction (killing bounce: see 4), bounced; else vy = 0 (rolling).
  *     A ball whose center is below y = 0 never gets floor support again.
  *     (A live ball therefore always dies on its first touch of any surface.)
  *  6. On any bounce: bounces++ (cap 255). Then, once per tick: live non-boomerang → state "dead",
@@ -167,7 +172,7 @@ const touch = { support: false };
  *     live). Live boomerang already returning → state "dead", returning = false, becameDead.
  *     bounceSurface/impactSpeed report the hardest bounce of the tick.
  *  7. Rolling on the floor/cover top (vy == 0 and supported): decelerate horizontal speed by
- *     arena.friction.ballRollDecel * dt. If speed < BALL_REST_SPEED → restTicks++ (cap 255) else
+ *     (arena.friction.ballRollDecel + BALL_ROLL_DRAG · speed) * dt (speed before the decel). If speed < BALL_REST_SPEED → restTicks++ (cap 255) else
  *     restTicks = 0 (also 0 whenever unsupported). Dead && restTicks >= BALL_REST_TICKS → state
  *     "neutral", v = 0, kind "normal" (bonus balls keep kind "bonus" so the server can remove
  *     them), radius = BALL_RADIUS (a resting mega ball sinks by the radius difference so it stays
@@ -291,6 +296,15 @@ function move(b: BallSim, ctx: BallContext, vyMove: number, out: StepBallResult)
   return touch.support && b.vy === 0;
 }
 
+/**
+ * This bounce turns a live ball dead (boomerangs turn around instead). Within one tick only the
+ * first contact is the killing one: b.state flips to "dead" after move(), so a second contact in a
+ * later sub-step of the same tick (corner) also counts as killing — harmless, it only damps more.
+ */
+function isKillingBounce(b: BallSim): boolean {
+  return b.state === "live" && b.kind !== "boomerang";
+}
+
 function isHard(b: BallSim, impact: number): boolean {
   return impact > BALL_MIN_BOUNCE_VY || b.state === "live";
 }
@@ -315,11 +329,12 @@ function collideCover(b: BallSim, ctx: BallContext, out: StepBallResult): boolea
   if (vn < 0) {
     const impact = -vn;
     if (isHard(b, impact)) {
-      const fr = ctx.arena.friction.ballBounceFriction;
+      const killing = isKillingBounce(b);
+      const fr = killing ? BALL_DEATH_KEEP : ctx.arena.friction.ballBounceFriction;
       const tx = b.vx - vn * nx;
       const ty = b.vy - vn * ny;
       const tz = b.vz - vn * nz;
-      const bounce = impact * BALL_RESTITUTION_COVER;
+      const bounce = impact * (killing ? BALL_DEATH_RESTITUTION : BALL_RESTITUTION_COVER);
       b.vx = tx * fr + nx * bounce;
       b.vy = ty * fr + ny * bounce;
       b.vz = tz * fr + nz * bounce;
@@ -351,8 +366,9 @@ function collideFloor(b: BallSim, ctx: BallContext, yStart: number, my: number, 
   }
   const impact = -my;
   if (isHard(b, impact)) {
-    const fr = ctx.arena.friction.ballBounceFriction;
-    b.vy = impact * BALL_RESTITUTION_FLOOR;
+    const killing = isKillingBounce(b);
+    const fr = killing ? BALL_DEATH_KEEP : ctx.arena.friction.ballBounceFriction;
+    b.vy = impact * (killing ? BALL_DEATH_RESTITUTION : ctx.arena.friction.ballRestitution);
     b.vx *= fr;
     b.vz *= fr;
     registerBounce(b, out, impact, -1);
@@ -380,8 +396,8 @@ function settle(b: BallSim, ctx: BallContext, supported: boolean, out: StepBallR
     b.restTicks = 0;
     return;
   }
-  const decel = ctx.arena.friction.ballRollDecel * ctx.dt;
   let speed = Math.sqrt(b.vx * b.vx + b.vz * b.vz);
+  const decel = (ctx.arena.friction.ballRollDecel + BALL_ROLL_DRAG * speed) * ctx.dt;
   if (speed <= decel) {
     b.vx = 0;
     b.vz = 0;

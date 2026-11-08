@@ -14,9 +14,12 @@ import {
   CHARGE_FULL_TICKS,
   FLAP_DASH_TICKS,
   GRAVITY,
+  HEADBUTT_KNOCK_H,
+  HEADBUTT_KNOCK_UP,
   HEADBUTT_TICKS,
   HURT_INVULN_TICKS,
   JUMP_VELOCITY,
+  KNOCK_MAX_SPEED,
   MAX_HEARTS,
   PALETTE,
   PLAYER_COLORS,
@@ -28,13 +31,14 @@ import {
 } from "../../shared/constants";
 import { getArena } from "../../shared/maps";
 import type { CharacterId, EmoteId } from "../../shared/types";
-import { countTriangles } from "../src/characters/Animal";
+import { type AnimalBudget, countTriangles, measureBudget } from "../src/characters/Animal";
 import { CharacterPreview } from "../src/characters/CharacterPreview";
 import { Characters } from "../src/characters/Characters";
-import { getFaceSheetCanvas } from "../src/characters/faces";
+import { FACE_COLUMNS, FACE_SHEET_HEIGHT, FACE_SHEET_SIZE, getFaceSheetCanvas } from "../src/characters/faces";
 import { createMenuCrowd } from "../src/characters/MenuCrowd";
 import { createPuppetFrame } from "../src/characters/puppet";
-import type { AnimTrigger, TriggerOptions } from "../src/characters/types";
+import type { SpringBone } from "../src/characters/rigTypes";
+import { FACE_EXPRESSIONS, type AnimTrigger, type TriggerOptions } from "../src/characters/types";
 import type { PlayerFrame } from "../src/net/types";
 import { createToonMaterial } from "../src/render/Toon";
 
@@ -120,7 +124,13 @@ type Program =
   | "tumble"
   | "dazed"
   | "knockback"
-  | "ability";
+  | "ability"
+  | "skid"
+  | "turnInPlace"
+  | "longFall"
+  | "megaKnockback"
+  | "headbuttKnock"
+  | "splat";
 
 const PROGRAMS: Program[] = [
   "idle",
@@ -136,6 +146,12 @@ const PROGRAMS: Program[] = [
   "dazed",
   "knockback",
   "ability",
+  "skid",
+  "turnInPlace",
+  "longFall",
+  "megaKnockback",
+  "headbuttKnock",
+  "splat",
 ];
 
 interface Mock {
@@ -177,6 +193,7 @@ function resetFrame(m: Mock): void {
   f.stunTicks = f.rollTicks = f.catchTicks = f.whiffTicks = f.chargeTicks = 0;
   f.abilityTicks = f.abilityPhase = 0;
   f.dirX = f.dirZ = 0;
+  f.skid = false;
 }
 
 function forward(f: PlayerFrame, speed: number): void {
@@ -233,7 +250,14 @@ function stepProgram(m: Mock, dt: number): void {
     resetFrame(m);
     return;
   }
-  const keepAir = m.program === "hop" || m.program === "knockback" || m.program === "ability";
+  const keepAir =
+    m.program === "hop" ||
+    m.program === "knockback" ||
+    m.program === "ability" ||
+    m.program === "longFall" ||
+    m.program === "megaKnockback" ||
+    m.program === "headbuttKnock" ||
+    m.program === "splat";
   const y = f.y;
   const vy = f.vy;
   resetFrame(m);
@@ -314,6 +338,70 @@ function stepProgram(m: Mock, dt: number): void {
     case "ability":
       abilityProgram(m, dt);
       return;
+    case "skid": {
+      // Run, then reverse every 1.2 s: the sim flags `skid` while braking against the new input.
+      const phase = Math.floor(m.t / 1.2);
+      const sign = phase % 2 === 0 ? 1 : -1;
+      const since = m.t - phase * 1.2;
+      const speed = since < 0.25 ? 6 * (1 - since / 0.125) : 6;
+      forward(f, sign * Math.max(-6, Math.min(6, speed)));
+      f.skid = since < 0.2 && phase > 0;
+      return;
+    }
+    case "turnInPlace":
+      f.yaw += dt * 3.5;
+      return;
+    case "longFall":
+      // Step off a ledge every 2.4 s and fall ~1.4 s (well past the flail threshold).
+      if (m.t > 2.4 || (!m.flag && f.grounded)) {
+        m.flag = true;
+        m.t = 0;
+        f.y = 6;
+        f.vy = 0;
+        f.grounded = false;
+      }
+      if (!f.grounded) fly(m, dt);
+      else if (m.t > 0.9) m.flag = false;
+      return;
+    case "megaKnockback":
+      launchProgram(m, dt, 12, 8);
+      return;
+    case "headbuttKnock":
+      launchProgram(m, dt, HEADBUTT_KNOCK_H * 1.33, HEADBUTT_KNOCK_UP);
+      return;
+    case "splat":
+      launchProgram(m, dt, 4, 9);
+      return;
+  }
+}
+
+/** Launch backwards with (vh, vy), stunned while airborne + a short skid; repeat every 3 s. */
+function launchProgram(m: Mock, dt: number, vh: number, vy: number): void {
+  const f = m.frame;
+  if (!m.flag) {
+    m.flag = true;
+    m.t = 0;
+    f.vy = vy;
+    f.y = 0.01;
+    f.grounded = false;
+    const strength = Math.min(1, Math.hypot(vh, vy) / KNOCK_MAX_SPEED);
+    characters.trigger(f.id, "hit", { dir: { x: Math.sin(f.yaw), y: 0, z: Math.cos(f.yaw) }, strength });
+  }
+  const airborne = !f.grounded;
+  if (airborne) {
+    forward(f, -vh);
+    f.stunTicks = 10;
+    fly(m, dt);
+    f.x = m.homeX + Math.sin(f.yaw) * vh * Math.min(m.t, 0.35);
+  } else if (m.t < 1.6) {
+    forward(f, -Math.max(0, vh * 0.3 * (1 - m.t)));
+    f.stunTicks = m.t < 1.2 ? 4 : 0;
+  }
+  if (m.t > 3) {
+    m.flag = false;
+    f.y = 0;
+    f.vy = 0;
+    f.x = m.homeX;
   }
 }
 
@@ -390,15 +478,28 @@ function abilityProgram(m: Mock, dt: number): void {
 
 /* --------------------------------------------------------------- cameras */
 
-type View = "lineup" | "closeup" | "crowd" | "top";
+type View = "lineup" | "lineupBack" | "closeup" | "closeupBack" | "crowd" | "top" | "behind20";
 
 function setView(v: View, who?: number): void {
   if (typeof who === "number") target = who;
   const crowdMode = v === "crowd";
   setCrowd(crowdMode);
-  if (v === "lineup") {
+  camera.fov = v === "behind20" ? 70 : 50;
+  camera.updateProjectionMatrix();
+  if (v === "behind20") {
+    // Over-the-shoulder offsets from 20 m behind the lineup (the animals face +Z here).
+    camera.position.set(0, 2.6, -20);
+    controls.target.set(0, 0.9, 0);
+  } else if (v === "lineup") {
     camera.position.set(0, 1.8, 8.2);
     controls.target.set(0, 0.75, 0);
+  } else if (v === "lineupBack") {
+    camera.position.set(0, 1.8, -8.2);
+    controls.target.set(0, 0.75, 0);
+  } else if (v === "closeupBack") {
+    const m = mocks[typeof target === "number" ? target : 0];
+    camera.position.set(m.homeX + 1.0, 1.5, -2.7);
+    controls.target.set(m.homeX, 0.8, 0);
   } else if (v === "closeup") {
     const m = mocks[typeof target === "number" ? target : 0];
     camera.position.set(m.homeX + 1.0, 1.3, 2.7);
@@ -450,6 +551,94 @@ function setPreviewCharacter(index: number, slot = index % 4): void {
 }
 
 /* --------------------------------------------------------------- panel UI */
+
+/* ------------------------------------------------- silhouette / springs */
+
+const silhouetteMaterial = new THREE.MeshBasicMaterial({ color: "#000000" });
+let silhouetteOn = false;
+function setSilhouette(on: boolean): void {
+  silhouetteOn = on;
+  scene.overrideMaterial = on ? silhouetteMaterial : null;
+  scene.background = new THREE.Color(on ? "#FFFFFF" : PALETTE.skyTop);
+  ground.visible = !on;
+  hitboxes.visible = hitboxes.visible && !on;
+}
+
+const springDots = new THREE.Group();
+springDots.visible = false;
+scene.add(springDots);
+const springDotGeometry = new THREE.SphereGeometry(0.025, 6, 4);
+const springDotMaterial = new THREE.MeshBasicMaterial({ color: "#FF2D95", depthTest: false });
+const springTip = new THREE.Vector3();
+function updateSpringDots(): void {
+  if (!springDots.visible) return;
+  let n = 0;
+  scene.traverse((o) => {
+    const bones = o.userData.springs as SpringBone[] | undefined;
+    if (!bones) return;
+    for (const bone of bones) {
+      let dot = springDots.children[n] as THREE.Mesh | undefined;
+      if (!dot) {
+        dot = new THREE.Mesh(springDotGeometry, springDotMaterial);
+        dot.renderOrder = 10;
+        springDots.add(dot);
+      }
+      bone.pivot.localToWorld(springTip.set(bone.tip[0], bone.tip[1], bone.tip[2]));
+      dot.position.copy(springTip);
+      dot.visible = true;
+      n++;
+    }
+  });
+  for (let i = n; i < springDots.children.length; i++) springDots.children[i].visible = false;
+}
+
+/** Per-animal budget (character spec §5): hi targets. */
+const BUDGET_HI = { meshes: 16, drawCalls: 28, triangles: 2400, casters: 5 };
+function budgets(): Record<string, AnimalBudget & { over: boolean }> {
+  const out: Record<string, AnimalBudget & { over: boolean }> = {};
+  for (const id of CHARACTER_IDS) {
+    const root = scene.getObjectByName(`animal:${id}`);
+    if (!root) continue;
+    const b = measureBudget(root);
+    out[id] = {
+      ...b,
+      over: b.meshes > BUDGET_HI.meshes || b.drawCalls > BUDGET_HI.drawCalls || b.triangles > BUDGET_HI.triangles || b.casters > BUDGET_HI.casters,
+    };
+  }
+  return out;
+}
+
+/** Eyes × mouth grid for one animal (independent face parts). */
+function faceGrid(id: CharacterId): HTMLCanvasElement {
+  const sheet = getFaceSheetCanvas(id);
+  const cell = FACE_SHEET_SIZE / FACE_COLUMNS;
+  const eyeH = 150;
+  const mouthH = cell - eyeH;
+  const s = 0.35;
+  const n = FACE_EXPRESSIONS.length;
+  const c = document.createElement("canvas");
+  c.width = Math.round(n * cell * s);
+  c.height = Math.round(n * cell * s);
+  c.style.width = "560px";
+  c.style.height = "auto";
+  const ctx = c.getContext("2d");
+  if (!ctx) return c;
+  ctx.fillStyle = CHARACTERS[id].colors.body;
+  ctx.fillRect(0, 0, c.width, c.height);
+  const src = (i: number): [number, number] => [(i % FACE_COLUMNS) * cell, Math.floor(i / FACE_COLUMNS) * cell];
+  for (let e = 0; e < n; e++) {
+    for (let m = 0; m < n; m++) {
+      const [ex, ey] = src(e);
+      const [mx, my] = src(m);
+      const dx = m * cell * s;
+      const dy = e * cell * s;
+      ctx.drawImage(sheet, ex, ey, cell, eyeH, dx, dy, cell * s, eyeH * s);
+      ctx.drawImage(sheet, mx, my + eyeH, cell, mouthH, dx, dy + eyeH * s, cell * s, mouthH * s);
+    }
+  }
+  void FACE_SHEET_HEIGHT;
+  return c;
+}
 
 const panel = document.getElementById("panel") as HTMLElement;
 const stats = document.getElementById("stats") as HTMLElement;
@@ -518,21 +707,39 @@ addButton(extrasRow, "turn 90°", () => selected().forEach((m) => (m.frame.yaw +
 const viewRow = section("View");
 addButton(viewRow, "lineup", () => setView("lineup"));
 addButton(viewRow, "closeup", () => setView("closeup"));
+addButton(viewRow, "lineup back", () => setView("lineupBack"));
+addButton(viewRow, "closeup back", () => setView("closeupBack"));
 addButton(viewRow, "top", () => setView("top"));
+addButton(viewRow, "behind @20 m", () => setView("behind20"));
+addButton(viewRow, "silhouette", () => setSilhouette(!silhouetteOn));
+addButton(viewRow, "spring tips", () => (springDots.visible = !springDots.visible));
+addButton(viewRow, "face parts grid", () => {
+  const id = CHARACTER_IDS[typeof target === "number" ? target : 0];
+  facesBox.replaceChildren(faceGrid(id));
+  facesBox.style.display = "flex";
+});
 addButton(viewRow, "menu crowd", () => setView("crowd"));
 addButton(viewRow, "hitboxes", () => (hitboxes.visible = !hitboxes.visible));
 addButton(viewRow, "held balls", () => (heldBalls.visible = !heldBalls.visible));
-addButton(viewRow, "face sheets", () => (facesBox.style.display = facesBox.style.display === "flex" ? "none" : "flex"));
+addButton(viewRow, "face sheets", () => {
+  showSheets();
+  facesBox.style.display = facesBox.style.display === "flex" ? "none" : "flex";
+});
 addButton(viewRow, "preview", () => showPreview(previewBox.style.display !== "block"));
 addButton(viewRow, "preview next", () => setPreviewCharacter(previewIndex + 1));
 addButton(viewRow, "slow-mo", () => (timeScale = timeScale === 1 ? 0.25 : 1));
 addButton(viewRow, "pause", () => (paused = !paused));
 
-for (const id of CHARACTER_IDS) {
-  const c = getFaceSheetCanvas(id);
-  c.title = id;
-  facesBox.appendChild(c);
+function showSheets(): void {
+  facesBox.replaceChildren(
+    ...CHARACTER_IDS.map((id) => {
+      const c = getFaceSheetCanvas(id);
+      c.title = id;
+      return c;
+    }),
+  );
 }
+showSheets();
 
 /* ------------------------------------------------------------------ loop */
 
@@ -590,6 +797,7 @@ function loop(now: number): void {
     });
   }
   controls.update();
+  updateSpringDots();
   renderer.render(scene, camera);
   updateStats();
 }
@@ -597,11 +805,14 @@ function loop(now: number): void {
 function updateStats(): void {
   const lines = [`fps ${fps.toFixed(0)}  calls ${renderer.info.render.calls}  tris ${renderer.info.render.triangles}`];
   if (!crowd) {
+    const b = budgetCache && performance.now() - budgetStamp < 1000 ? budgetCache : ((budgetStamp = performance.now()), (budgetCache = budgets()));
     for (const m of mocks) {
       const info = characters.inspect(m.frame.id);
       const tris = triangleCount(m.frame.character);
+      const x = b[m.frame.character];
+      const budget = x ? ` ${x.meshes}m ${x.drawCalls}dc ${x.triangles}△ ${x.casters}sh${x.over ? " OVER" : ""}` : "";
       lines.push(
-        `${m.frame.character.padEnd(9)} ${m.program.padEnd(9)} ${(info?.state ?? "-").padEnd(8)} ${(info?.expression ?? "-").padEnd(8)} ${tris}△`,
+        `${m.frame.character.padEnd(9)} ${m.program.padEnd(9)} ${(info?.state ?? "-").padEnd(8)} ${(info?.expression ?? "-").padEnd(8)} ${tris}△${budget}`,
       );
     }
   } else {
@@ -609,6 +820,9 @@ function updateStats(): void {
   }
   stats.textContent = lines.join("\n");
 }
+
+let budgetCache: ReturnType<typeof budgets> | null = null;
+let budgetStamp = 0;
 
 function triangleCount(character: CharacterId): number {
   let n = triangles.get(character);
@@ -621,7 +835,22 @@ function triangleCount(character: CharacterId): number {
 }
 
 requestAnimationFrame(loop);
-if (new URLSearchParams(location.search).get("ui") === "0") queueMicrotask(() => setPanels(false));
+{
+  // URL hooks for headless captures: ?ui=0&view=behind20&target=2&silhouette=1&program=run&springs=1
+  const q = new URLSearchParams(location.search);
+  if (q.get("ui") === "0") queueMicrotask(() => setPanels(false));
+  const t = q.get("target");
+  if (t !== null) target = t === "all" ? "all" : Number(t);
+  const v = q.get("view") as View | null;
+  if (v) setView(v);
+  if (q.get("silhouette") === "1") setSilhouette(true);
+  if (q.get("springs") === "1") springDots.visible = true;
+  if (q.get("hitboxes") === "1") hitboxes.visible = true;
+  const p = q.get("program") as Program | null;
+  if (p) setProgram(p);
+  const yaw = q.get("yaw");
+  if (yaw !== null) for (const m of mocks) m.frame.yaw = Number(yaw);
+}
 
 window.addEventListener("keydown", (e) => {
   if (e.key >= "1" && e.key <= "6") {
@@ -669,6 +898,13 @@ window.charHarness = {
   pitch: (index: number, pitch: number) => (mocks[index].frame.pitch = pitch),
   yaw: (index: number, yaw: number) => (mocks[index].frame.yaw = yaw),
   hitboxes: (on: boolean) => (hitboxes.visible = on),
+  silhouette: (on: boolean) => setSilhouette(on),
+  springs: (on: boolean) => (springDots.visible = on),
+  budget: () => budgets(),
+  faceGrid: (index: number) => {
+    facesBox.replaceChildren(faceGrid(CHARACTER_IDS[index]));
+    facesBox.style.display = "flex";
+  },
   balls: (on: boolean) => (heldBalls.visible = on),
   faces: (on: boolean) => (facesBox.style.display = on ? "flex" : "none"),
   preview: (on: boolean, index?: number) => {

@@ -13,6 +13,18 @@ import type { BallVisualContext } from "./types";
 /** Trail length (s) and how fast glow/trail fade once a ball turns dead. */
 const TRAIL_SEC = 0.25;
 const DEAD_FADE_SEC = 0.3;
+/** A live ball's killing bounce: faster glow fade and a heavier squash. */
+const DEATH_FADE_SEC = 0.15;
+const DEATH_SQUASH_MULT = 1.4;
+/** Flight spin of live balls: backspin rate (rad/s) = base + per-charge; curveballs add sidespin. */
+const BACKSPIN_BASE = 8;
+const BACKSPIN_CHARGE = 14;
+const SIDESPIN = 18;
+/** Flight stretch at THROW_SPEED_MAX (34 m/s). */
+const STRETCH_SPEED = 34;
+const MAX_STRETCH = 0.18;
+/** Halo pop when a ball lands a hit (cosmetic seconds; holds through the hit-stop). */
+const IMPACT_FLASH_SEC = 0.07;
 const LIVE_FADE_IN_SEC = 0.05;
 const SQUASH_SEC = 0.22;
 const REMOVE_SEC = 0.15;
@@ -70,6 +82,14 @@ interface BallVisual {
   /** > 0 while shrinking away after the ball left the state. */
   removing: number;
   heldIndex: number;
+  /** Was live last frame (detects the killing bounce). */
+  wasLive: boolean;
+  /** Glow fade time once dead (DEAD_FADE_SEC, or DEATH_FADE_SEC after a killing bounce). */
+  fadeSec: number;
+  /** Low-passed horizontal curvature sign (curveball sidespin). */
+  curl: number;
+  /** > 0 while the impact halo pop shows. */
+  flash: number;
 }
 
 /**
@@ -84,10 +104,16 @@ interface BallVisual {
  * - dead: glow + trail fade out over 0.3 s.
  * - kinds: mega = radius 0.5 red beach-ball stripes; boomerang = banana-shaped mesh spinning;
  *   bonus = smaller/faded variant of normal; curve = swirl sprite on the trail.
- * - bounced: squash along the impact normal for ~0.12 s.
+ * - bounced: squash along the impact normal for ~0.12 s (×1.4 + dust thud + 0.15 s glow fade on
+ *   the bounce that kills a live throw).
+ * - live flight: backspin (8 + 14·charge rad/s), curveballs add sidespin; stretch ≤ 0.18 at 34 m/s.
+ * - impactFlash(ballId): short halo pop when the ball lands a hit.
  * - opacity < 1 for fading predicted balls. castShadow on.
  */
 export class BallVisuals {
+  /** Called at a live ball's killing bounce with the ball position (Fx bursts a dust "thud"). */
+  onDeathBounce: ((x: number, y: number, z: number) => void) | null = null;
+
   private readonly scene: THREE.Scene;
   private readonly visuals = new Map<string, BallVisual>();
   private readonly pool: BallVisual[] = [];
@@ -134,6 +160,12 @@ export class BallVisuals {
     else this.charge.delete(playerId);
   }
 
+  /** A ball just landed a hit: one quick halo pop on it (no-op if the ball isn't shown). */
+  impactFlash(ballId: string): void {
+    const v = this.visuals.get(ballId);
+    if (v) v.flash = IMPACT_FLASH_SEC;
+  }
+
   /** World position of a ball visual (false if unknown). Handy for effects attached to balls. */
   getPosition(id: string, out: THREE.Vector3): boolean {
     const v = this.visuals.get(id);
@@ -168,6 +200,10 @@ export class BallVisuals {
     v.squashT = 0;
     v.removing = 0;
     v.bob = 0;
+    v.wasLive = frame.state === "live";
+    v.fadeSec = DEAD_FADE_SEC;
+    v.curl = 0;
+    v.flash = 0;
     v.prevV.set(frame.vx, frame.vy, frame.vz);
     v.root.position.set(frame.x, frame.y, frame.z);
     v.root.scale.setScalar(1);
@@ -211,7 +247,7 @@ export class BallVisuals {
       return;
     }
     v.root.scale.setScalar(k * (1 + 0.25 * Math.sin(k * Math.PI)));
-    v.glow = Math.max(0, v.glow - dt / DEAD_FADE_SEC);
+    v.glow = Math.max(0, v.glow - dt / v.fadeSec);
     v.trail.setStyle(v.color, v.radius * 1.4, v.glow * 0.85);
     v.trail.rebuild(v.root.position.x, v.root.position.y, v.root.position.z);
   }
@@ -288,6 +324,10 @@ export class BallVisuals {
       phase: Math.random() * Math.PI * 2,
       removing: 0,
       heldIndex: 0,
+      wasLive: false,
+      fadeSec: DEAD_FADE_SEC,
+      curl: 0,
+      flash: 0,
     };
   }
 
@@ -306,6 +346,7 @@ export class BallVisuals {
       v.root.visible = true;
       this.updateFree(v, frame, dt);
     }
+    v.wasLive = frame.state === "live";
     this.applyOpacity(v, frame.opacity);
   }
 
@@ -360,21 +401,43 @@ export class BallVisuals {
 
   private updateFree(v: BallVisual, frame: BallFrame, dt: number): void {
     const live = frame.state === "live";
-    if (live) v.glow = Math.min(1, v.glow + dt / LIVE_FADE_IN_SEC);
-    else v.glow = Math.max(0, v.glow - dt / DEAD_FADE_SEC);
+    if (live) {
+      v.glow = Math.min(1, v.glow + dt / LIVE_FADE_IN_SEC);
+      v.fadeSec = DEAD_FADE_SEC;
+    } else {
+      v.glow = Math.max(0, v.glow - dt / v.fadeSec);
+    }
 
     this.updateBob(v, frame, dt);
     v.root.position.set(frame.x, frame.y + v.bob * BOB_HEIGHT * (0.5 + 0.5 * Math.sin(this.time * 2.6 + v.phase)), frame.z);
     this.vel.set(frame.vx, frame.vy, frame.vz);
-    if (frame.bounced) this.startSquash(v, frame.bounceSpeed);
+    if (frame.bounced) {
+      // The bounce that killed a live throw: heavier squash, quick glow fade, dust thud.
+      const killing = v.wasLive && frame.state === "dead" && v.kind !== "boomerang";
+      this.startSquash(v, frame.bounceSpeed, killing ? DEATH_SQUASH_MULT : 1);
+      if (killing) {
+        v.fadeSec = DEATH_FADE_SEC;
+        this.onDeathBounce?.(frame.x, frame.y - v.radius * 0.8, frame.z);
+      }
+    }
     this.updateDeform(v, live, dt);
     this.updateSpin(v, frame, dt);
     v.prevV.copy(this.vel);
 
     this.setBodyScale(v);
     const strength = v.glow * (0.45 + 0.55 * frame.charge);
-    this.setEmissive(v, strength * 0.85);
-    this.setHalo(v, strength * 0.7, 1);
+    let haloAlpha = strength * 0.7;
+    let haloSize = 1;
+    let emissive = strength * 0.85;
+    if (v.flash > 0) {
+      const k = v.flash / IMPACT_FLASH_SEC;
+      haloAlpha = Math.max(haloAlpha, k);
+      haloSize = 1 + 0.9 * k;
+      emissive = Math.max(emissive, k);
+      v.flash = Math.max(0, v.flash - dt);
+    }
+    this.setEmissive(v, emissive);
+    this.setHalo(v, haloAlpha, haloSize);
     this.updateSwirl(v, frame, dt);
     this.updateTrail(v, frame, dt);
   }
@@ -394,6 +457,20 @@ export class BallVisuals {
     }
     const h = Math.hypot(frame.vx, frame.vz);
     if (h < 1e-3) return;
+    if (frame.state === "live") {
+      // Flight: backspin (axis = velocity × up), stronger with charge.
+      this.axis.set(-frame.vz / h, 0, frame.vx / h);
+      this.spinAround(v, this.axis, (BACKSPIN_BASE + BACKSPIN_CHARGE * frame.charge) * dt);
+      if (frame.curve) {
+        // Sidespin about the vertical, signed by the horizontal curvature (Magnus: +up curls left).
+        const ph = Math.hypot(v.prevV.x, v.prevV.z);
+        const turn = ph > 1e-3 ? (v.prevV.z * frame.vx - v.prevV.x * frame.vz) / (ph * h) : 0;
+        const target = Math.abs(turn) > 1e-4 ? Math.sign(turn) : 0;
+        v.curl += (target - v.curl) * Math.min(1, dt * 10);
+        this.spinAround(v, UP, SIDESPIN * v.curl * dt);
+      }
+      return;
+    }
     // Rolling: axis = up × velocity.
     this.axis.set(frame.vz / h, 0, -frame.vx / h);
     this.spinAround(v, this.axis, Math.min(MAX_SPIN, h / Math.max(0.05, v.radius)) * dt);
@@ -405,11 +482,11 @@ export class BallVisuals {
     v.spinner.quaternion.premultiply(this.spinQuat).normalize();
   }
 
-  private startSquash(v: BallVisual, impactSpeed: number): void {
+  private startSquash(v: BallVisual, impactSpeed: number, mult = 1): void {
     this.axis.subVectors(this.vel, v.prevV);
     if (this.axis.lengthSq() < 0.25) this.axis.copy(UP);
     v.squashAxis.copy(this.axis.normalize());
-    v.squashAmount = Math.min(1, Math.max(0.2, impactSpeed / 14)) * 0.38;
+    v.squashAmount = Math.min(0.55, Math.min(1, Math.max(0.2, impactSpeed / 14)) * 0.38 * mult);
     v.squashT = SQUASH_SEC;
   }
 
@@ -424,7 +501,7 @@ export class BallVisuals {
     }
     const speed = this.vel.length();
     if (live && speed > 1 && v.kind !== "boomerang") {
-      const k = Math.min(1, speed / 34) * 0.13;
+      const k = Math.min(1, speed / STRETCH_SPEED) * MAX_STRETCH;
       this.axis.copy(this.vel).divideScalar(speed);
       this.setDeform(v, this.axis, 1 + k, 1 - k * 0.45);
       return;
@@ -480,7 +557,8 @@ export class BallVisuals {
       return;
     }
     v.trail.record(dt, frame.x, frame.y, frame.z);
-    const width = v.radius * (v.kind === "mega" ? 1.5 : 1.4);
+    // Charged throws leave a fatter ribbon.
+    const width = v.radius * (v.kind === "mega" ? 1.6 : 1.1 + 0.55 * frame.charge);
     v.trail.setStyle(v.color, width, v.glow * 0.85 * frame.opacity);
     v.trail.rebuild(frame.x, frame.y, frame.z);
   }

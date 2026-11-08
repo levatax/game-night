@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { DT, ROUND_END_CARD_TICKS, TICK_MS } from "../../../shared/constants";
 import { getArena } from "../../../shared/maps";
 import type { InputCmd, RoundStartEvent } from "../../../shared/protocol";
-import { createPlayerSim } from "../../../shared/sim/player";
+import { createPlayerSim, emptyStepResult } from "../../../shared/sim/player";
 import type { BonkStateView, MapId, PlayerView } from "../../../shared/types";
 import type { AudioEngine } from "../audio/AudioEngine";
 import type { Characters } from "../characters/Characters";
@@ -143,6 +143,7 @@ function setup(initial: BonkStateView | null) {
     modes: [] as CameraUpdate["mode"][],
     ghosts: [] as Array<{ x: number; y: number; z: number }>,
     shakes: [] as number[],
+    kicks: [] as Array<{ fov?: number; back?: number; dip?: number }>,
     cuts: 0,
     setFloorQuery() {},
     update(_dt: number, u: CameraUpdate) {
@@ -153,6 +154,9 @@ function setup(initial: BonkStateView | null) {
     },
     shake(intensity: number) {
       this.shakes.push(intensity);
+    },
+    kick(k: { fov?: number; back?: number; dip?: number }) {
+      this.kicks.push({ ...k });
     },
     koCut() {
       this.cuts++;
@@ -170,13 +174,28 @@ function setup(initial: BonkStateView | null) {
     clear() {},
   };
 
-  const feel = { hitStops: 0, slowMos: 0, hitStop() { this.hitStops++; }, slowMo() { this.slowMos++; }, update: (dt: number) => dt, timeScale: 1 };
-  const noop = { sync() {}, setChargeGlow() {}, clear() {}, burst() {}, emit() {}, update() {}, show() {}, setArena() {} };
+  const feel = {
+    hitStops: 0,
+    slowMos: 0,
+    stopMs: [] as number[],
+    onShake: null as ((intensity: number, durationSec: number) => void) | null,
+    hitStop(ms: number) {
+      this.hitStops++;
+      this.stopMs.push(ms);
+    },
+    slowMo() {
+      this.slowMos++;
+    },
+    update: (dt: number) => dt,
+    timeScale: 1,
+  };
+  const noop = { sync() {}, setChargeGlow() {}, impactFlash() {}, clear() {}, burst() {}, emit() {}, feed() {}, update() {}, show() {}, setArena() {} };
   const fx = {
     balls: noop,
     particles: noop,
     popText: noop,
     powerUps: noop,
+    trails: noop,
     arc: { update() {} },
     shadows: { update() {}, setFloorQuery() {} },
     feel,
@@ -329,17 +348,93 @@ describe("GameController feedback", () => {
       targetId: ME,
       pos: { x: 0, y: 1, z: 0 },
       knockback: { x: 6, y: 4, z: 0 },
+      launchSpeed: Math.hypot(6, 4),
       charge: 0.5,
       kind: "normal",
       heartsLeft: 2,
       fullCharge: false,
     });
+    // Launch 7.2 m/s → intensity s = (7.2 - 5) / 10 ≈ 0.22.
+    const s = (Math.hypot(6, 4) - 5) / 10;
     expect(t.feel.hitStops).toBe(1);
-    expect(t.cam.shakes).toEqual([0.35]);
+    expect(t.feel.stopMs[0]).toBeCloseTo(60 + 70 * s, 6);
+    expect(t.cam.shakes).toHaveLength(1);
+    expect(t.cam.shakes[0]).toBeCloseTo(0.25 + 0.45 * s, 6);
+    expect(t.cam.kicks).toEqual([{ fov: 4 + 6 * s }]);
     expect(t.sounds).toContain("bonk");
     expect(t.sounds).not.toContain("ding");
     expect(t.triggers).toContain(`${ME}:hit`);
     expect(t.ui.feed[0]).toMatchObject({ kind: "bonk", actor: { name: "Foe" }, victim: { name: "Me" } });
+  });
+
+  it("scales hit-stop, shake and FOV punch with the launch; the thrower gets a zoom-in", () => {
+    const t = setup(makeState("playing", 100, "picnic"));
+    t.game.enter();
+    const hit = {
+      tick: 100,
+      ballId: "b1",
+      pos: { x: 0, y: 1, z: 0 },
+      knockback: { x: 0, y: 8, z: -18 },
+      launchSpeed: 20,
+      charge: 1,
+      kind: "mega" as const,
+      heartsLeft: 1,
+      fullCharge: true,
+    };
+    t.events.emit("hit", { ...hit, throwerId: FOE, targetId: ME });
+    expect(t.feel.stopMs[0]).toBeCloseTo(130, 6);
+    expect(t.cam.shakes[0]).toBeCloseTo(0.7, 6);
+    expect(t.cam.kicks[0].fov).toBeCloseTo(10, 6);
+    t.events.emit("hit", { ...hit, throwerId: ME, targetId: FOE });
+    expect(t.cam.kicks[1]).toEqual({ fov: -3 });
+    expect(t.feel.hitStops).toBe(2);
+  });
+
+  it("falls back to |knockback| when a hit has no launchSpeed", () => {
+    const t = setup(makeState("playing", 100, "picnic"));
+    t.game.enter();
+    const ev = { tick: 1, ballId: "b", throwerId: FOE, targetId: ME, pos: { x: 0, y: 1, z: 0 }, knockback: { x: 0, y: 9, z: 12 }, charge: 1, kind: "normal" as const, heartsLeft: 2, fullCharge: true };
+    t.events.emit("hit", ev as unknown as NetEventMap["hit"]);
+    expect(t.feel.stopMs[0]).toBeCloseTo(60 + 70 * 1, 6);
+  });
+
+  it("bumps: short hit-stop for the involved, boing for everyone", () => {
+    const t = setup(makeState("playing", 100, "picnic"));
+    t.game.enter();
+    t.step();
+    t.events.emit("bump", { tick: 1, playerId: FOE, targetId: ME, pos: { x: 0, y: 1, z: 0 }, impulse: 5 });
+    expect(t.feel.stopMs).toEqual([40]);
+    expect(t.sounds).toContain("bounce");
+    expect(t.triggers).toContain(`${ME}:hit`);
+  });
+
+  it("a ring-out credited to me gets a short hit-stop; shockwave shake fades with distance", () => {
+    const t = setup(makeState("playing", 100, "picnic"));
+    t.game.enter();
+    t.step();
+    t.events.emit("ringOut", { tick: 1, playerId: FOE, creditId: ME, pos: { x: 14, y: 0, z: 0 } });
+    expect(t.feel.stopMs).toEqual([80]);
+    const me = t.net.state!.players.get(ME)!;
+    t.events.emit("shockwave", { tick: 2, playerId: FOE, pos: { x: me.x + 3, y: me.y, z: me.z }, radius: 3, affected: [ME], knockbacks: [{ x: 7.5, y: 4.5, z: 0 }] });
+    expect(t.cam.shakes.at(-1)).toBeCloseTo(0.25, 6);
+    t.events.emit("shockwave", { tick: 3, playerId: FOE, pos: { x: me.x + 9, y: me.y, z: me.z }, radius: 3, affected: [], knockbacks: [] });
+    expect(t.cam.shakes).toHaveLength(1);
+  });
+
+  it("local tumble bounce dips the camera; a turn skid squeaks", () => {
+    const t = setup(makeState("playing", 100, "picnic"));
+    t.game.enter();
+    t.step();
+    (t.net as { localSim: unknown }).localSim = createPlayerSim();
+    const result = { ...emptyStepResult(), bounced: true, bounceSpeed: 10 };
+    t.events.emit("localStep", { seq: 1, result });
+    expect(t.cam.kicks).toEqual([{ dip: -0.1 }]);
+    expect(t.cam.shakes).toEqual([0.15]);
+    expect(t.sounds).toContain("bounce");
+    t.events.emit("localStep", { seq: 2, result: { ...emptyStepResult(), skidStarted: true } });
+    expect(t.sounds).toContain("land");
+    t.events.emit("localStep", { seq: 3, result: { ...emptyStepResult(), landed: true, landSpeed: 7 } });
+    expect(t.cam.kicks.at(-1)?.dip).toBeCloseTo(-0.03, 6);
   });
 
   it("skips my own server throw (already predicted) but plays others'", () => {

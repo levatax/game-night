@@ -230,7 +230,16 @@ export class GameController {
     this.deps = deps;
     const { net, characters, fx, audio } = deps;
     this.directory = new PlayerDirectory(() => net.state);
-    this.effects = new PlayerEffects({ characters, fx, audio, colorOf: (id) => this.directory.color(id) });
+    this.effects = new PlayerEffects({
+      characters,
+      fx,
+      audio,
+      colorOf: (id) => this.directory.color(id),
+      shake: (intensity, durationSec) => deps.camera.shake(intensity, durationSec),
+      floor: () => (this.activeFlag ? this.floor : null),
+    });
+    // One shake entry point: fx-side trauma requests go to the camera rig.
+    fx.feel.onShake = (intensity, durationSec) => deps.camera.shake(intensity, durationSec);
     this.feedback = new GameFeedback(deps, this.directory, this.effects, {
       get localId() {
         return net.sessionId;
@@ -523,6 +532,7 @@ export class GameController {
     const u = this.camUpdate;
     u.mode = mode;
     u.charge = 0;
+    u.tumble = false;
     if (mode === "follow") {
       const local = this.local;
       if (local && local.alive && !local.spectator) {
@@ -534,6 +544,7 @@ export class GameController {
         t.pitch = local.pitch;
         this.hasFollowTarget = true;
         u.charge = chargeFraction(local);
+        u.tumble = local.stunTicks > 0 && !local.grounded;
       }
       u.target = this.followTarget;
     } else if (mode === "ghost") {

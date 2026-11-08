@@ -21,6 +21,11 @@ import {
   BALL_SPAWN_SPACING,
   BELLY_BOUNCE_DEFLECT_SPEED,
   BOOMERANG_CATCH_RADIUS,
+  BUMP_MIN_SPEED,
+  BUMP_POP_VY,
+  BUMP_RESTITUTION,
+  BUMP_STUN_MIN_IMPULSE,
+  BUMP_STUN_TICKS,
   CATCH_WINDOW_TICKS,
   CHARACTERS,
   CHEST_HEIGHT,
@@ -31,7 +36,6 @@ import {
   HEADBUTT_KNOCK_UP,
   HIT_DAMAGE,
   HURT_INVULN_TICKS,
-  KNOCKBACK_STUN_TICKS,
   LAG_COMP_MAX_TICKS,
   MAX_HEARTS,
   PEDESTAL_HEIGHT,
@@ -55,7 +59,14 @@ import { pedestalPosition, type ArenaDef } from "../../shared/maps.js";
 import type { InputCmd } from "../../shared/protocol.js";
 import { stepBall } from "../../shared/sim/ball.js";
 import type { BallContext, FloorQuery, SimContext } from "../../shared/sim/context.js";
-import { isFloorAt, pointInCover, resolveCoverCollision, ringIndexAt, sphereCapsuleOverlap } from "../../shared/sim/geometry.js";
+import {
+  isFloorAt,
+  pointInCover,
+  resolveCoverCollision,
+  ringIndexAt,
+  segmentCapsuleOverlap,
+  sphereCapsuleOverlap,
+} from "../../shared/sim/geometry.js";
 import { vec3, type Vec3 } from "../../shared/sim/math.js";
 import {
   copyPlayerSim,
@@ -70,14 +81,23 @@ import {
   type StepPlayerResult,
   type ThrowRequest,
 } from "../../shared/sim/player.js";
-import { aimDirection, ballKindForPowerUp, chestPosition, computeThrowVelocities, throwOrigin } from "../../shared/sim/throw.js";
+import {
+  aimDirection,
+  ballKindForPowerUp,
+  chestPosition,
+  computeThrowVelocities,
+  heartsKnockMultiplier,
+  knockStunTicks,
+  launchVelocity,
+  throwOrigin,
+} from "../../shared/sim/throw.js";
 import type { BallKind, CharacterId, PowerUpType, Vec3Like } from "../../shared/types.js";
 import { BallEntity, PowerUpEntity, type BonkState, type PlayerState } from "../schema.js";
 import { ballIdNumber, bounceOffTarget, deflectAway, launch, makeHeld, makeLoose } from "./balls.js";
 import type { GameEvent } from "./events.js";
-import { BallHistory } from "./history.js";
+import { BallHistory, type BallSample } from "./history.js";
 import { InputQueues, sanitizeInput } from "./inputs.js";
-import { ballHitKnockback, catchDistance, maxHeldBalls, radialKnockback, ringOutCredit, SHOCKWAVE_MAX_DY } from "./rules.js";
+import { ballHitKnockback, catchDistance, catchDistanceSwept, maxHeldBalls, radialKnockback, ringOutCredit, SHOCKWAVE_MAX_DY } from "./rules.js";
 
 export interface WorldOptions {
   /** RNG for cosmetic jitter only (e.g. dead-ball scatter). Default Math.random. */
@@ -177,19 +197,29 @@ function dist2D(ax: number, az: number, bx: number, bz: number): number {
   return Math.sqrt(dx * dx + dz * dz);
 }
 
-/** Knockback from a shockwave/headbutt (no damage): velocity, airborne, stunned; dashes and charge cancelled. */
-function applyKnockback(p: PlayerState, v: Vec3Like): void {
+/**
+ * Launch a player (ball hit, shockwave, headbutt): velocity = v, airborne, stunned for
+ * knockStunTicks(v) (the whole flight + a short get-up), jump/skid cleared, roll, charge and
+ * movement abilities cancelled. Ball hits add damage-specific bits on top (see applyHit).
+ */
+function applyLaunch(p: PlayerState, v: Vec3Like): void {
   p.vx = v.x;
   p.vy = v.y;
   p.vz = v.z;
   p.grounded = false;
-  p.stunTicks = KNOCKBACK_STUN_TICKS;
+  p.stunTicks = knockStunTicks(v);
+  p.jumping = false;
+  p.skid = false;
   p.rollTicks = 0;
   p.chargeTicks = 0;
   if (isMovementAbilityActive(p, p.character)) {
     p.abilityTicks = 0;
     p.abilityPhase = 0;
   }
+}
+
+function speedOf(v: Vec3Like): number {
+  return Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
 }
 
 function clampHorizontalSpeed(p: PlayerState, max: number): void {
@@ -221,6 +251,11 @@ export class GameWorld {
   private readonly steer = vec3();
   private readonly returnTarget = vec3();
   private readonly scratch = vec3();
+  /** Each loose ball's position before this tick's stepBall (swept hit tests), by ball id. */
+  private readonly prevPos = new Map<string, Vec3>();
+  /** separatePlayers scratch (reused every tick, no per-tick allocation). */
+  private readonly sepAlive: RosterEntry[] = [];
+  private readonly sepMoved: boolean[] = [];
 
   constructor(state: BonkState, arena: ArenaDef, opts: WorldOptions = {}) {
     this.state = state;
@@ -236,7 +271,7 @@ export class GameWorld {
   /**
    * Validate and enqueue one input for a player. Drop it if the player doesn't exist, isn't
    * alive, or seq <= the last queued/consumed seq. Clamp: moveX/moveZ to [-1,1] (and the vector
-   * length to 1), pitch to ±PITCH_LIMIT, yaw finite (wrap), buttons & 31. Non-finite numbers → drop.
+   * length to 1), pitch to ±PITCH_LIMIT, yaw finite (wrap), buttons & 63. Non-finite numbers → drop.
    * If the queue already holds INPUT_QUEUE_MAX inputs, drop the OLDEST first — but OR its edge
    * bits (EDGE_BUTTONS) into the next remaining input so a press is never lost.
    */
@@ -311,6 +346,7 @@ export class GameWorld {
     this.state.balls.clear();
     this.state.powerUps.clear();
     this.history.clear();
+    this.prevPos.clear();
     this.pendingHits = [];
     this.runtime.clear();
     this.inputs.resetQueues();
@@ -482,17 +518,20 @@ export class GameWorld {
    *     - whiffStarted: emit `whiff`.
    *     - abilityStarted: emit `ability` (all 6). Whiskers' curveball just arms.
    *     - slamLanded: shockwave — every OTHER alive player whose feet are within SHOCKWAVE_RADIUS
-   *       (horizontal) and |dy| < 1.5: knockback away from the center (SHOCKWAVE_KNOCK_H, +
-   *       SHOCKWAVE_KNOCK_UP), stunTicks = KNOCKBACK_STUN_TICKS, record last-hitter credit; no damage.
-   *       Roll i-frames dodge it. Emit `shockwave` with the affected ids.
+   *       (horizontal) and |dy| < 1.5: applyLaunch(radialKnockback(SHOCKWAVE_KNOCK_H,
+   *       SHOCKWAVE_KNOCK_UP, × heartsKnockMultiplier(their hearts))), record last-hitter credit; no
+   *       damage. Roll i-frames dodge it. Emit `shockwave` with the affected ids and their knockbacks.
    *     - fellOut (combat): eliminate with `ringOut` (creditId = last hitter if within
    *       RING_OUT_CREDIT_TICKS, else ""); pos = last grounded position.
    *  3. Headbutt: for each alive Gruff with abilityTicks > 0: the first other alive player whose
    *     capsule is within HEADBUTT_HIT_RANGE in front of Gruff's chest (front half-space) gets
-   *     knockback along Gruff's dir (HEADBUTT_KNOCK_H, HEADBUTT_KNOCK_UP), stun, credit; Gruff's
-   *     abilityTicks = 0. Roll i-frames dodge it; Mochi's Belly Bounce does NOT. Emit `headbutt`.
+   *     applyLaunch(launchVelocity(Gruff's dir, HEADBUTT_KNOCK_H, HEADBUTT_KNOCK_UP,
+   *     heartsKnockMultiplier(target hearts))), credit; Gruff's abilityTicks = 0. Roll i-frames
+   *     dodge it; Mochi's Belly Bounce does NOT. Emit `headbutt` (+ launchSpeed).
    *  4. Player separation: push overlapping alive capsules apart horizontally (half each) so their
-   *     centers are >= PLAYER_SEPARATION apart; skip pairs with |dy| > PLAYER_HEIGHT.
+   *     centers are >= PLAYER_SEPARATION apart; skip pairs with |dy| > PLAYER_HEIGHT. With combat on,
+   *     a pair where at least one is stunned and the relative normal speed > BUMP_MIN_SPEED bumps
+   *     (momentum exchange, pop/stun of the non-stunned one, credit inherited; see bump()). `bump`.
    *  5. Held balls: position at the holder's throwOrigin, zero velocity.
    *  6. Pickups (combat): neutral ball within PICKUP_RADIUS horizontally and feet-0.3 ≤ ball.y ≤
    *     feet+PICKUP_MAX_HEIGHT of an alive player with heldCount < max (MAX_HELD_BALLS, or
@@ -519,7 +558,7 @@ export class GameWorld {
    *        press with rewind r = that player's rewind ticks, covers ticks [S, S + CATCH_WINDOW_TICKS)
    *        with S = T - r. On opening, test the history of every live ball at ticks S..T; each tick
    *        after, test current positions while tick < S + CATCH_WINDOW_TICKS. A ball is caught when
-   *        its center is within CATCH_RANGE (+ ball radius) of catchCenter = chest + forward(yaw) *
+   *        its center (swept between consecutive in-window history samples) is within CATCH_RANGE (+ ball radius) of catchCenter = chest + forward(yaw) *
    *        CATCH_FORWARD_OFFSET AND it is in the front half-space (dot(ballPos - chest, forward) > 0).
    *        Catch result: ball → a plain HELD ball of the catcher exactly like a pickup (a caught
    *        mega/boomerang/bonus ball becomes kind "normal"; the arena may then briefly hold more
@@ -535,18 +574,20 @@ export class GameWorld {
    *        CATCH_WINDOW_TICKS ticks (or are pending hits on them) bounce off harmlessly exactly
    *        like a Belly Bounce deflect (dead, emit `deflect`), so one catch never costs the
    *        thrower more than 1 heart and the catcher isn't hit right after a perfect catch.
-   *     b. HIT: sphereCapsuleOverlap(ball, radius, player feet, PLAYER_RADIUS, playerHeight(p, char)).
+   *     b. HIT: segmentCapsuleOverlap(ball position before this tick's step → now, radius, player
+   *        feet, PLAYER_RADIUS, playerHeight(p, char)) (swept, so a fast ball can't skip the capsule).
    *        - isInvulnerable (roll i-frames or hurtTicks): the ball passes through, no effect.
    *        - Mochi bouncy: reflect the ball's horizontal velocity away from Mochi at
    *          BELLY_BOUNCE_DEFLECT_SPEED, state dead, emit `deflect`. No damage.
    *        - otherwise: if the target's rewind r == 0 apply now; else record a PendingHit
    *          { ball, target, tick, knockback } resolved at tick + r unless a catch converts it
    *          (the ball is set dead immediately and bounces off as usual so visuals stay prompt).
-   *          Applying a hit: hearts -= HIT_DAMAGE; knockback velocity = horizontal ball direction *
-   *          KNOCKBACK_H + up KNOCKBACK_UP, both × knockbackMultiplier(charge, kind); write
-   *          vx/vy/vz, grounded = false, stunTicks = KNOCKBACK_STUN_TICKS, hurtTicks =
-   *          HURT_INVULN_TICKS; cancel roll, ability (abilityTicks = 0, abilityPhase = 0), charge,
-   *          catch window; last-hitter = thrower @ tick. Ball → dead with its velocity reflected
+   *          Applying a hit: hearts -= HIT_DAMAGE; knockback = ballHitKnockback(ball, target, hearts
+   *          after the hit) (launchVelocity of the ball's horizontal direction, KNOCKBACK_H/UP ×
+   *          knockbackMultiplier(charge, kind) × heartsKnockMultiplier, ≤ KNOCK_MAX_SPEED);
+   *          applyLaunch (velocity, airborne, stunTicks = knockStunTicks), hurtTicks =
+   *          max(HURT_INVULN_TICKS, stunTicks) (no juggling a tumbling body); cancel roll, ability
+   *          (abilityTicks = 0, abilityPhase = 0), charge, catch window; last-hitter = thrower @ tick. Ball → dead with its velocity reflected
    *          and halved. Emit `hit` (then `ko` cause "hits" if hearts == 0).
    *        A live ball never hits its own thrower (OWNER_IMMUNE).
    *  9. Eliminations (combat): alive = false; held balls dropped as dead balls at the chest
@@ -570,7 +611,7 @@ export class GameWorld {
     const roster = this.roster();
     this.stepPlayers(roster, tick, dt, opts);
     if (opts.combat) this.resolveHeadbutts(roster, tick);
-    this.separatePlayers(roster);
+    this.separatePlayers(roster, tick, opts.combat);
     this.pinHeldBalls();
     if (opts.combat) {
       this.pickUpBalls(roster, tick);
@@ -705,6 +746,7 @@ export class GameWorld {
   /** Ground Pound landed: knock nearby players away (no damage). Knockback only with combat on. */
   private shockwave(id: string, p: PlayerState, roster: RosterEntry[], tick: number, combat: boolean): void {
     const affected: string[] = [];
+    const knockbacks: Vec3Like[] = [];
     if (combat) {
       const facing = { x: -Math.sin(p.yaw), z: -Math.cos(p.yaw) };
       for (const other of roster) {
@@ -712,12 +754,14 @@ export class GameWorld {
         if (other.id === id || !q.alive || hasRollIFrames(q)) continue;
         if (Math.abs(q.y - p.y) >= SHOCKWAVE_MAX_DY) continue;
         if (dist2D(q.x, q.z, p.x, p.z) > SHOCKWAVE_RADIUS) continue;
-        applyKnockback(q, radialKnockback(p, q, facing, SHOCKWAVE_KNOCK_H, SHOCKWAVE_KNOCK_UP));
+        const knockback = radialKnockback(p, q, facing, SHOCKWAVE_KNOCK_H, SHOCKWAVE_KNOCK_UP, heartsKnockMultiplier(q.hearts));
+        applyLaunch(q, knockback);
         this.creditKnock(other.id, id, tick);
         affected.push(other.id);
+        knockbacks.push(knockback);
       }
     }
-    this.emit({ type: "shockwave", tick, playerId: id, pos: posOf(p), radius: SHOCKWAVE_RADIUS, affected });
+    this.emit({ type: "shockwave", tick, playerId: id, pos: posOf(p), radius: SHOCKWAVE_RADIUS, affected, knockbacks });
   }
 
   private ringOut(id: string, p: PlayerState, tick: number): void {
@@ -735,13 +779,14 @@ export class GameWorld {
       if (!p.alive || p.character !== "gruff" || p.abilityTicks <= 0) continue;
       const target = this.headbuttTarget(id, p, roster);
       if (!target) continue;
-      const knockback = point(p.dirX * HEADBUTT_KNOCK_H, HEADBUTT_KNOCK_UP, p.dirZ * HEADBUTT_KNOCK_H);
-      applyKnockback(target.p, knockback);
+      const mult = heartsKnockMultiplier(target.p.hearts);
+      const knockback = posOf(launchVelocity(p.dirX, p.dirZ, HEADBUTT_KNOCK_H, HEADBUTT_KNOCK_UP, mult, this.scratch));
+      applyLaunch(target.p, knockback);
       this.creditKnock(target.id, id, tick);
       p.abilityTicks = 0;
       clampHorizontalSpeed(p, DASH_EXIT_SPEED);
       const pos = posOf(chestPosition(target.p));
-      this.emit({ type: "headbutt", tick, attackerId: id, targetId: target.id, pos, knockback });
+      this.emit({ type: "headbutt", tick, attackerId: id, targetId: target.id, pos, knockback, launchSpeed: speedOf(knockback) });
     }
   }
 
@@ -766,9 +811,13 @@ export class GameWorld {
 
   /* ============================================================ 4. separation */
 
-  private separatePlayers(roster: RosterEntry[]): void {
-    const alive = roster.filter((e) => e.p.alive);
-    const moved = new Set<PlayerState>();
+  private separatePlayers(roster: RosterEntry[], tick: number, combat: boolean): void {
+    const alive = this.sepAlive;
+    const moved = this.sepMoved;
+    alive.length = 0;
+    for (const e of roster) if (e.p.alive) alive.push(e);
+    moved.length = alive.length;
+    moved.fill(false);
     for (let i = 0; i < alive.length; i++) {
       for (let j = i + 1; j < alive.length; j++) {
         const a = alive[i].p;
@@ -790,11 +839,65 @@ export class GameWorld {
         a.z -= nz * push;
         b.x += nx * push;
         b.z += nz * push;
-        moved.add(a);
-        moved.add(b);
+        moved[i] = true;
+        moved[j] = true;
+        if (combat && (a.stunTicks > 0 || b.stunTicks > 0)) this.bump(alive[i], alive[j], nx, nz, tick);
       }
     }
-    for (const p of moved) this.pushOutOfCover(p);
+    for (let i = 0; i < alive.length; i++) if (moved[i]) this.pushOutOfCover(alive[i].p);
+  }
+
+  /**
+   * Body bump: a stunned (tumbling) body crashing into another player at a relative normal speed
+   * above BUMP_MIN_SPEED exchanges momentum (equal masses, restitution BUMP_RESTITUTION). A
+   * non-stunned player that gets bumped pops up (BUMP_POP_VY) and, on a hard bump, is stunned for
+   * BUMP_STUN_TICKS. Its ring-out credit goes to whoever launched the tumbling body (or that body
+   * itself). A non-stunned player in roll i-frames is skipped (no exchange, no event). Walk-vs-walk pairs never get here (positional push only: no prediction mismatch).
+   * (nx, nz) = unit horizontal normal from a to b.
+   */
+  private bump(ea: RosterEntry, eb: RosterEntry, nx: number, nz: number, tick: number): void {
+    const a = ea.p;
+    const b = eb.p;
+    // Roll i-frames dodge body bumps like every other knockback (positional push still applies).
+    if ((!a.stunTicks && hasRollIFrames(a)) || (!b.stunTicks && hasRollIFrames(b))) return;
+    const vRel = (a.vx - b.vx) * nx + (a.vz - b.vz) * nz;
+    if (vRel <= BUMP_MIN_SPEED) return;
+    const j = ((1 + BUMP_RESTITUTION) / 2) * vRel;
+    a.vx -= j * nx;
+    a.vz -= j * nz;
+    b.vx += j * nx;
+    b.vz += j * nz;
+    const aStunned = a.stunTicks > 0;
+    const bStunned = b.stunTicks > 0;
+    if (!aStunned) this.bumped(ea, eb, j, tick);
+    if (!bStunned) this.bumped(eb, ea, j, tick);
+    // The tumbling body (or, both tumbling, the faster one) is the "bumper".
+    const aFirst = aStunned !== bStunned ? aStunned : a.vx * a.vx + a.vz * a.vz >= b.vx * b.vx + b.vz * b.vz;
+    const bumper = aFirst ? ea : eb;
+    const target = aFirst ? eb : ea;
+    const pos = point((a.x + b.x) * 0.5, (a.y + b.y) * 0.5 + CHEST_HEIGHT, (a.z + b.z) * 0.5);
+    this.emit({ type: "bump", tick, playerId: bumper.id, targetId: target.id, pos, impulse: j });
+  }
+
+  /** `victim` (not stunned) was hit by the tumbling `by`: pop, maybe stun, inherit the knock credit. */
+  private bumped(victim: RosterEntry, by: RosterEntry, impulse: number, tick: number): void {
+    const p = victim.p;
+    p.vy = Math.max(p.vy, BUMP_POP_VY);
+    p.grounded = false;
+    if (impulse > BUMP_STUN_MIN_IMPULSE) {
+      p.stunTicks = Math.max(p.stunTicks, BUMP_STUN_TICKS);
+      p.jumping = false;
+      p.skid = false;
+      p.rollTicks = 0;
+      p.chargeTicks = 0;
+      if (isMovementAbilityActive(p, p.character)) {
+        p.abilityTicks = 0;
+        p.abilityPhase = 0;
+      }
+    }
+    const rt = this.runtime.get(by.id);
+    const inherited = rt ? ringOutCredit(by.id, rt.lastHitBy, rt.lastHitTick, tick, RING_OUT_CREDIT_TICKS) : "";
+    this.creditKnock(victim.id, inherited || by.id, tick);
   }
 
   private pushOutOfCover(p: PlayerState): void {
@@ -891,9 +994,22 @@ export class GameWorld {
     for (const id of [...this.state.balls.keys()]) {
       const ball = this.state.balls.get(id);
       if (!ball) continue;
+      this.rememberPrev(id, ball);
       if (ball.state !== "held" && !this.stepOneBall(id, ball, tick)) continue;
       this.history.record(id, tick, ball, ball.state === "live");
     }
+  }
+
+  /** Ball position before this tick's step (start of its swept segment). */
+  private rememberPrev(id: string, ball: BallEntity): void {
+    let prev = this.prevPos.get(id);
+    if (!prev) {
+      prev = vec3();
+      this.prevPos.set(id, prev);
+    }
+    prev.x = ball.x;
+    prev.y = ball.y;
+    prev.z = ball.z;
   }
 
   /** Steps one loose ball; returns false when it left play (removed). */
@@ -953,21 +1069,36 @@ export class GameWorld {
     }
   }
 
+  /**
+   * Best catch among the ball-history samples not tested yet (and pending hits on this player).
+   * Each live sample is tested swept from the previous in-window live sample (the ball's path
+   * during that tick), so a fast ball can't skip the catch sphere between samples; the first
+   * sample of the window is tested as a point.
+   */
   private findCatchCandidate(id: string, p: PlayerState, window: CatchWindow, lastTick: number): CatchCandidate | null {
     let best: CatchCandidate | null = null;
-    const consider = (ballId: string, pos: Vec3Like, radius: number, pending: PendingHit | null) => {
-      const distance = catchDistance(p, pos, radius);
+    const consider = (ballId: string, pos: Vec3Like, distance: number, pending: PendingHit | null) => {
       if (distance >= 0 && (!best || distance < best.distance)) best = { ballId, pos: posOf(pos), distance, pending };
     };
+    const at = vec3();
+    const from = Math.max(window.start, window.nextTest - 1);
     this.state.balls.forEach((ball, ballId) => {
       if (ball.state !== "live" || ball.ownerId === id) return;
-      for (const sample of this.history.range(ballId, window.nextTest, lastTick)) {
-        if (sample.live) consider(ballId, sample, ball.radius, null);
+      let prev: BallSample | null = null;
+      for (const sample of this.history.range(ballId, from, lastTick)) {
+        if (sample.tick >= window.nextTest && sample.live) {
+          if (prev && prev.live && prev.tick === sample.tick - 1) {
+            consider(ballId, at, catchDistanceSwept(p, prev, sample, ball.radius, at), null);
+          } else {
+            consider(ballId, sample, catchDistance(p, sample, ball.radius), null);
+          }
+        }
+        prev = sample;
       }
     });
     for (const hit of this.pendingHits) {
       if (hit.targetId === id && hit.hitTick >= window.start && this.state.balls.has(hit.ballId)) {
-        consider(hit.ballId, hit.pos, hit.radius, hit);
+        consider(hit.ballId, hit.pos, catchDistance(p, hit.pos, hit.radius), hit);
       }
     }
     return best;
@@ -1026,9 +1157,10 @@ export class GameWorld {
   private resolveHits(roster: RosterEntry[], tick: number): void {
     this.state.balls.forEach((ball, ballId) => {
       if (ball.state !== "live") return;
+      const prev = this.prevPos.get(ballId) ?? ball;
       for (const { id, p } of roster) {
         if (!p.alive || id === ball.ownerId) continue;
-        if (!sphereCapsuleOverlap(ball, ball.radius, p, PLAYER_RADIUS, playerHeight(p, p.character))) continue;
+        if (!segmentCapsuleOverlap(prev, ball, ball.radius, p, PLAYER_RADIUS, playerHeight(p, p.character))) continue;
         const sibling = this.isGuardedSibling(id, ball, tick);
         if (!sibling && (isInvulnerable(p) || this.hasPendingHit(id))) continue;
         if (sibling || isBouncy(p, p.character)) {
@@ -1062,7 +1194,7 @@ export class GameWorld {
       applyAt: tick + rewind,
       pos: posOf(ball),
       radius: ball.radius,
-      knockback: ballHitKnockback(ball, target),
+      knockback: ballHitKnockback(ball, target, Math.max(0, target.hearts - HIT_DAMAGE)),
       charge: ball.charge,
       kind: ball.kind,
     };
@@ -1075,16 +1207,11 @@ export class GameWorld {
     const p = this.state.players.get(hit.targetId);
     if (!p || !p.alive) return;
     p.hearts = Math.max(0, p.hearts - HIT_DAMAGE);
-    p.vx = hit.knockback.x;
-    p.vy = hit.knockback.y;
-    p.vz = hit.knockback.z;
-    p.grounded = false;
-    p.stunTicks = KNOCKBACK_STUN_TICKS;
-    p.hurtTicks = HURT_INVULN_TICKS;
-    p.rollTicks = 0;
+    applyLaunch(p, hit.knockback);
+    // Mercy covers the whole helpless flight: a tumbling body can't be juggled by a second ball.
+    p.hurtTicks = Math.max(HURT_INVULN_TICKS, p.stunTicks);
     p.abilityTicks = 0;
     p.abilityPhase = 0;
-    p.chargeTicks = 0;
     p.catchTicks = 0;
     this.runtimeOf(hit.targetId).window = null;
     this.creditKnock(hit.targetId, hit.throwerId, tick);
@@ -1096,6 +1223,7 @@ export class GameWorld {
       targetId: hit.targetId,
       pos: hit.pos,
       knockback: hit.knockback,
+      launchSpeed: speedOf(hit.knockback),
       charge: hit.charge,
       kind: hit.kind,
       heartsLeft: p.hearts,
@@ -1257,6 +1385,7 @@ export class GameWorld {
   private removeBall(id: string): void {
     this.state.balls.delete(id);
     this.history.delete(id);
+    this.prevPos.delete(id);
   }
 
   private firstHeldBall(id: string): BallEntity | null {

@@ -45,5 +45,8 @@ export function createPuppetFrame(character: CharacterId, id = "puppet", slot = 
     dirX: 0,
     dirZ: 0,
     alive: true,
+    jumping: false,
+    skid: false,
+    knockBounces: 0,
   };
 }
