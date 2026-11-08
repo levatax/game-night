@@ -1,6 +1,13 @@
 // Own-player client-side prediction + server reconciliation. Owner: client-net.
 
-import { DT, MAX_PENDING_INPUTS, PREDICTION_SMOOTH_MS, PREDICTION_SNAP_DIST } from "../../../shared/constants";
+import {
+  DT,
+  MAX_PENDING_INPUTS,
+  PREDICTION_KNOCK_SMOOTH_MS,
+  PREDICTION_KNOCK_SNAP_DIST,
+  PREDICTION_SMOOTH_MS,
+  PREDICTION_SNAP_DIST,
+} from "../../../shared/constants";
 import type { InputCmd } from "../../../shared/protocol";
 import type { SimContext } from "../../../shared/sim/context";
 import { lerp } from "../../../shared/sim/math";
@@ -16,6 +23,7 @@ import {
 import type { PlayerSimFields, PlayerView } from "../../../shared/types";
 
 const SMOOTH_TAU_SEC = PREDICTION_SMOOTH_MS / 1000;
+const KNOCK_SMOOTH_TAU_SEC = PREDICTION_KNOCK_SMOOTH_MS / 1000;
 
 /** An input the server has not acknowledged yet, plus the lock it was predicted with. */
 interface PendingInput {
@@ -33,7 +41,12 @@ interface PendingInput {
  *   error = old current position - replayed position; if |error| > PREDICTION_SNAP_DIST snap
  *   (offset = 0), else offset += error. current = replayed. If the server says !alive, stop.
  * - render: lerp(prev, current, alpha) for position + offset; offset decays as
- *   offset *= exp(-dt / (PREDICTION_SMOOTH_MS/1000)) each frame. Discrete fields from current.
+ *   offset *= exp(-dt / tau) each frame. Discrete fields from current.
+ * - knockback onset (server.stunTicks > 0 while the pre-reconcile prediction had stunTicks 0):
+ *   the knockback only reaches the victim through reconciliation, so at launch speeds the error
+ *   easily exceeds PREDICTION_SNAP_DIST. Then errors up to PREDICTION_KNOCK_SNAP_DIST blend
+ *   (instead of teleporting) and the offset decays faster: tau = PREDICTION_KNOCK_SMOOTH_MS until
+ *   the offset is gone, else PREDICTION_SMOOTH_MS.
  *
  * Input lock on replay: each pending input remembers the `ctx.locked` it was predicted with, and
  * is replayed with `reconcileCtx.locked && thatLock`. Net predicts the countdown → playing
@@ -54,6 +67,8 @@ export class Prediction {
   /** Reused replay context (a per-input copy of the reconcile context with its own lock). */
   private replayCtx: SimContext | null = null;
   private activeFlag = false;
+  /** Current offset decay time constant (seconds): faster right after a knockback onset. */
+  private smoothTau = SMOOTH_TAU_SEC;
 
   /** True between reset() and stop(). */
   get active(): boolean {
@@ -94,11 +109,15 @@ export class Prediction {
     const oldX = this.current.x;
     const oldY = this.current.y;
     const oldZ = this.current.z;
+    const oldStun = this.current.stunTicks;
 
     copyPlayerSim(server, this.current);
     this.dropAcknowledged(server.lastSeq);
     this.replay(ctx);
-    this.absorbError(oldX - this.current.x, oldY - this.current.y, oldZ - this.current.z);
+    // A knockback the prediction never saw: a fresh stun, or a re-launch of an already stunned body
+    // (stun only counts down in prediction, so a replayed stun above the old one is a new server launch).
+    const knockOnset = server.stunTicks > 0 && (oldStun === 0 || this.current.stunTicks > oldStun);
+    this.absorbError(oldX - this.current.x, oldY - this.current.y, oldZ - this.current.z, knockOnset);
   }
 
   /**
@@ -155,21 +174,25 @@ export class Prediction {
     }
   }
 
-  private absorbError(ex: number, ey: number, ez: number): void {
+  private absorbError(ex: number, ey: number, ez: number, knockOnset: boolean): void {
     const o = this.offset;
-    if (ex * ex + ey * ey + ez * ez > PREDICTION_SNAP_DIST * PREDICTION_SNAP_DIST) {
+    if (knockOnset) this.smoothTau = KNOCK_SMOOTH_TAU_SEC;
+    const snap = knockOnset ? PREDICTION_KNOCK_SNAP_DIST : PREDICTION_SNAP_DIST;
+    if (ex * ex + ey * ey + ez * ez > snap * snap) {
       this.clearOffset();
       return;
     }
     o.x += ex;
     o.y += ey;
     o.z += ez;
-    if (o.x * o.x + o.y * o.y + o.z * o.z > PREDICTION_SNAP_DIST * PREDICTION_SNAP_DIST) this.clearOffset();
+    // While an onset blend is still decaying, the accumulated offset may stay above the normal snap distance.
+    const limit = this.smoothTau === KNOCK_SMOOTH_TAU_SEC ? PREDICTION_KNOCK_SNAP_DIST : PREDICTION_SNAP_DIST;
+    if (o.x * o.x + o.y * o.y + o.z * o.z > limit * limit) this.clearOffset();
   }
 
   private decayOffset(dtSec: number): void {
     if (!(dtSec > 0)) return;
-    const k = Math.exp(-dtSec / SMOOTH_TAU_SEC);
+    const k = Math.exp(-dtSec / this.smoothTau);
     const o = this.offset;
     o.x *= k;
     o.y *= k;
@@ -187,5 +210,6 @@ export class Prediction {
     this.offset.x = 0;
     this.offset.y = 0;
     this.offset.z = 0;
+    this.smoothTau = SMOOTH_TAU_SEC;
   }
 }

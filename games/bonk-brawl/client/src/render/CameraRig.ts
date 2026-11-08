@@ -1,4 +1,5 @@
-// Over-the-shoulder camera, spectator ghost cam, KO cut, shake, FOV zoom. Owner: client-render.
+// Over-the-shoulder camera, spectator ghost cam, KO cut, shake, FOV zoom, impact kicks, tumble
+// follow and ring-out framing. Owner: client-render.
 
 import * as THREE from "three";
 import {
@@ -34,6 +35,21 @@ export interface CameraUpdate {
   ghostLook?: { yaw: number; pitch: number };
   /** orbit: point to slowly circle (menu backdrop, round-end, match-end). */
   orbitCenter?: Vec3Like;
+  /**
+   * follow: the local player is tumbling (knocked back, airborne). The camera pulls back a little
+   * and low-passes the pivot height so the launch arc reads; yaw/pitch stay player-controlled.
+   */
+  tumble?: boolean;
+}
+
+/** Additive camera punch (see CameraRig.kick): each channel is a damped spring kicked by an impulse. */
+export interface CameraKick {
+  /** Peak FOV offset in degrees (+ = outward punch, − = zoom in). */
+  fov?: number;
+  /** Peak follow-distance offset in meters (+ = pull back). */
+  back?: number;
+  /** Peak pivot-height offset in meters (− = dip). */
+  dip?: number;
 }
 
 /* ---------------------------------------------------------------- tuning */
@@ -53,6 +69,42 @@ const GHOST_ACCEL_TAU = 0.18;
 const GHOST_MAX_RADIUS = 25;
 const GHOST_BOB = 0.06;
 const GHOST_DEFAULT_PITCH = -0.35;
+
+/** Kick springs: natural frequency (rad/s) and damping ratio. */
+const KICK_OMEGA = 18;
+const KICK_ZETA = 0.5;
+/**
+ * Impulse → peak displacement of an underdamped spring at rest: x(t) = v0/ωd·e^(−ζωt)·sin(ωd t)
+ * peaks at ωd·t = atan(√(1−ζ²)/ζ). Kicks are expressed as the peak, so this converts back to v0.
+ */
+const KICK_OMEGA_D = KICK_OMEGA * Math.sqrt(1 - KICK_ZETA * KICK_ZETA);
+const KICK_PEAK_PER_V0 = (() => {
+  const phase = Math.atan2(Math.sqrt(1 - KICK_ZETA * KICK_ZETA), KICK_ZETA);
+  return (Math.exp((-KICK_ZETA * KICK_OMEGA * phase) / KICK_OMEGA_D) * Math.sin(phase)) / KICK_OMEGA_D;
+})();
+/** Kick springs integrate in substeps no longer than this (stable at any frame rate). */
+const KICK_MAX_STEP = 1 / 240;
+/** Clamp so stacked kicks can't throw the camera around. */
+const KICK_MAX_FOV = 14;
+const KICK_MAX_BACK = 1.2;
+const KICK_MAX_DIP = 0.4;
+
+/** Tumble follow: extra distance (m) eased in/out with TUMBLE_EASE_TAU, pivot height low-passed with TUMBLE_Y_TAU. */
+const TUMBLE_EXTRA_BACK = 0.9;
+const TUMBLE_EASE_TAU = 0.15;
+const TUMBLE_Y_TAU = 0.12;
+
+/**
+ * Ring-out: the follow pivot never goes below this feet height (the camera stays above the slab
+ * edge), and the view tilts toward the falling body over RING_OUT_LOOK_RANGE further meters.
+ */
+const RING_OUT_FREEZE_Y = -1.2;
+const RING_OUT_LOOK_RANGE = 0.8;
+/** Look at the falling body's chest. */
+const RING_OUT_LOOK_UP = 0.8;
+
+/** prefers-reduced-motion: shakes and kicks are scaled by this. */
+const REDUCED_MOTION_SCALE = 0.35;
 
 const ORBIT_RADIUS = 8.5;
 const ORBIT_HEIGHT = 3.6;
@@ -137,16 +189,27 @@ export class CameraRig {
 
   private readonly shaker = new CameraShake();
 
+  /** Kick springs [fov, back, dip]: displacement + velocity. */
+  private readonly kickX = new Float32Array(3);
+  private readonly kickV = new Float32Array(3);
+  /** 0..1 eased tumble-follow weight and the low-passed pivot height it blends toward. */
+  private tumbleW = 0;
+  private smoothY = 0;
+  private smoothYValid = false;
+  private motionScale = 1;
+
   private readonly v1 = new THREE.Vector3();
   private readonly v2 = new THREE.Vector3();
   private readonly v3 = new THREE.Vector3();
   private readonly euler = new THREE.Euler(0, 0, 0, "YXZ");
   private readonly lookMatrix = new THREE.Matrix4();
+  private readonly lookQuat = new THREE.Quaternion();
 
   constructor(camera: THREE.PerspectiveCamera) {
     this.camera = camera;
     this.shown.position.copy(camera.position);
     this.shown.quaternion.copy(camera.quaternion);
+    this.watchReducedMotion();
   }
 
   /** Arena + rings for cover collision (null disables collision). */
@@ -178,6 +241,7 @@ export class CameraRig {
     if (resumed || first) this.resetEasing();
     if (u.mode !== this.mode) this.changeMode(u, resumed || first);
 
+    this.stepKicks(dt);
     this.computeModePose(u, dt);
     if (this.koLeft > 0) this.updateKoCut(dt);
     this.applyBlend(dt);
@@ -192,7 +256,18 @@ export class CameraRig {
 
   /** Screen shake. intensity 0..1 (0.3 = victim of a normal hit, 0.6 = mega/shockwave). */
   shake(intensity: number, durationSec: number): void {
-    this.shaker.add(intensity, durationSec);
+    this.shaker.add(intensity * this.motionScale, durationSec);
+  }
+
+  /**
+   * Camera punch: each given channel gets an impulse whose spring response peaks at the given
+   * value (~65 ms later) and settles in ~0.3 s. FOV applies in every mode; back/dip only in follow.
+   */
+  kick(k: CameraKick): void {
+    const s = this.motionScale / KICK_PEAK_PER_V0;
+    if (k.fov) this.kickV[0] += k.fov * s;
+    if (k.back) this.kickV[1] += k.back * s;
+    if (k.dip) this.kickV[2] += k.dip * s;
   }
 
   /** Cut to a KO point for durationSec (final KO of a round). */
@@ -233,7 +308,7 @@ export class CameraRig {
   private computeModePose(u: CameraUpdate, dt: number): void {
     switch (u.mode) {
       case "follow":
-        if (u.target) this.followPose(u.target, dt);
+        if (u.target) this.followPose(u.target, dt, u.tumble === true);
         else this.holdPose();
         return;
       case "ghost":
@@ -250,10 +325,22 @@ export class CameraRig {
     this.pose.quaternion.copy(this.shown.quaternion);
   }
 
-  private followPose(t: NonNullable<CameraUpdate["target"]>, dt: number): void {
+  private followPose(t: NonNullable<CameraUpdate["target"]>, dt: number, tumble: boolean): void {
     const yaw = t.yaw;
     const pitch = clamp(t.pitch, -PITCH_LIMIT, PITCH_LIMIT);
-    const head = this.v1.set(t.x, t.y + CAMERA_OFFSET_UP, t.z);
+
+    // Tumble follow: ease the weight, low-pass the pivot height, freeze it above the slab on a ring-out.
+    this.tumbleW += ((tumble ? 1 : 0) - this.tumbleW) * smoothFactor(dt, TUMBLE_EASE_TAU);
+    const feetY = Math.max(t.y, RING_OUT_FREEZE_Y);
+    if (!this.smoothYValid) {
+      this.smoothY = feetY;
+      this.smoothYValid = true;
+    } else {
+      this.smoothY += (feetY - this.smoothY) * smoothFactor(dt, TUMBLE_Y_TAU);
+    }
+    const pivotFeetY = feetY + (this.smoothY - feetY) * this.tumbleW;
+
+    const head = this.v1.set(t.x, pivotFeetY + CAMERA_OFFSET_UP + this.kickX[2], t.z);
     const right = this.v2.set(Math.cos(yaw), 0, -Math.sin(yaw));
 
     // Shoulder offset shrinks if cover sits right next to the player's head.
@@ -266,13 +353,26 @@ export class CameraRig {
     // back = -aimDirection(yaw, pitch)
     const cp = Math.cos(pitch);
     const back = this.v3.set(Math.sin(yaw) * cp, -Math.sin(pitch), Math.cos(yaw) * cp);
+    const wanted = CAMERA_OFFSET_BACK + TUMBLE_EXTRA_BACK * this.tumbleW + Math.max(0, this.kickX[1]);
     const room = this.floor
-      ? Math.max(MIN_FOLLOW_DIST, sphereCastDistance(this.floor, pivot, back, CAMERA_OFFSET_BACK, CAMERA_COLLISION_RADIUS))
-      : CAMERA_OFFSET_BACK;
+      ? Math.max(MIN_FOLLOW_DIST, sphereCastDistance(this.floor, pivot, back, wanted, CAMERA_COLLISION_RADIUS))
+      : wanted;
     this.followDist = this.easeDistance(this.followDist, room, dt);
+    // A forward (negative) back-kick may push in, never past the minimum.
+    const dist = Math.max(MIN_FOLLOW_DIST, this.followDist + Math.min(0, this.kickX[1]));
 
-    this.pose.position.copy(pivot).addScaledVector(back, this.followDist);
+    this.pose.position.copy(pivot).addScaledVector(back, dist);
     this.pose.quaternion.setFromEuler(this.euler.set(pitch, yaw, 0, "YXZ"));
+
+    // Ring-out: the pivot stays frozen above the slab; tilt the view down toward the falling body.
+    const depth = RING_OUT_FREEZE_Y - t.y;
+    if (depth > 0) {
+      const w = smoothstep01(depth / RING_OUT_LOOK_RANGE);
+      this.lookQuat.copy(this.pose.quaternion);
+      this.lookAt(this.v2.set(t.x, t.y + RING_OUT_LOOK_UP, t.z));
+      this.lookQuat.slerp(this.pose.quaternion, w);
+      this.pose.quaternion.copy(this.lookQuat);
+    }
   }
 
   /** Pull in instantly (never clip), let out smoothly. */
@@ -408,8 +508,9 @@ export class CameraRig {
     if (this.koLeft > 0) target = this.baseFov * KO_FOV_SCALE;
     else if (u.mode === "follow") target = this.baseFov * (1 + (CAMERA_FOV_CHARGE / CAMERA_FOV - 1) * clamp(u.charge, 0, 1));
     this.fov += (target - this.fov) * smoothFactor(dt, FOV_TAU);
-    if (Math.abs(this.camera.fov - this.fov) > 1e-3) {
-      this.camera.fov = this.fov;
+    const shown = clamp(this.fov + this.kickX[0], 20, 150);
+    if (Math.abs(this.camera.fov - shown) > 1e-3) {
+      this.camera.fov = shown;
       this.camera.updateProjectionMatrix();
     }
   }
@@ -420,5 +521,50 @@ export class CameraRig {
     this.fov = this.baseFov;
     this.blendLeft = 0;
     this.shaker.reset();
+    this.kickX.fill(0);
+    this.kickV.fill(0);
+    this.tumbleW = 0;
+    this.smoothYValid = false;
+  }
+
+  /* -------------------------------------------------------------- kicks */
+
+  /** Semi-implicit damped springs toward 0, substepped for frame-rate independence. */
+  private stepKicks(dt: number): void {
+    if (dt <= 0) return;
+    const n = Math.min(24, Math.ceil(dt / KICK_MAX_STEP));
+    const h = dt / n;
+    const k = KICK_OMEGA * KICK_OMEGA;
+    const c = 2 * KICK_ZETA * KICK_OMEGA;
+    for (let ch = 0; ch < 3; ch++) {
+      let x = this.kickX[ch];
+      let v = this.kickV[ch];
+      if (x === 0 && v === 0) continue;
+      for (let i = 0; i < n; i++) {
+        v += (-k * x - c * v) * h;
+        x += v * h;
+      }
+      const limit = ch === 0 ? KICK_MAX_FOV : ch === 1 ? KICK_MAX_BACK : KICK_MAX_DIP;
+      x = clamp(x, -limit, limit);
+      if (Math.abs(x) < 1e-4 && Math.abs(v) < 1e-3) {
+        x = 0;
+        v = 0;
+      }
+      this.kickX[ch] = x;
+      this.kickV[ch] = v;
+    }
+  }
+
+  /** Honour the OS "reduce motion" preference for shakes and kicks (browser only). */
+  private watchReducedMotion(): void {
+    const mm = typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia("(prefers-reduced-motion: reduce)")
+      : null;
+    if (!mm) return;
+    const apply = (): void => {
+      this.motionScale = mm.matches ? REDUCED_MOTION_SCALE : 1;
+    };
+    apply();
+    mm.addEventListener?.("change", apply);
   }
 }

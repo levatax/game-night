@@ -11,7 +11,7 @@ import { EDGE_BUTTONS, type InputCmd } from "../../shared/protocol.js";
 import { clamp, wrapAngle } from "../../shared/sim/math.js";
 
 /** Every defined BTN bit. */
-const BUTTON_MASK = 31;
+const BUTTON_MASK = 63;
 /** player.lastSeq is a uint32 in the schema. */
 const MAX_SEQ = 0xffffffff;
 

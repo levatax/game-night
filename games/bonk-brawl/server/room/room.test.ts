@@ -43,13 +43,13 @@ describe("scoring", () => {
     const find = (id: string) => players.get(id);
     const events: GameEvent[] = [
       { type: "throw", tick: 1, ownerId: "a", character: "quacky", throwSeq: 1, ballIds: ["b1", "b2", "b3"], charge: 0, kind: "normal", powerUp: "triple", curve: false, origin: at, velocities: [at, at, at] },
-      { type: "hit", tick: 2, ballId: "b1", throwerId: "a", targetId: "b", pos: at, knockback: at, charge: 0, kind: "normal", heartsLeft: 2, fullCharge: false },
+      { type: "hit", tick: 2, ballId: "b1", throwerId: "a", targetId: "b", pos: at, knockback: at, launchSpeed: 0, charge: 0, kind: "normal", heartsLeft: 2, fullCharge: false },
       { type: "catch", tick: 3, ballId: "b2", catcherId: "b", throwerId: "a", pos: at, throwerHeartsLeft: 2, rewindTicks: 0, kept: true },
       { type: "ringOut", tick: 4, playerId: "b", creditId: "a", pos: at },
       { type: "ringOut", tick: 5, playerId: "a", creditId: "", pos: at },
       { type: "ko", tick: 6, playerId: "b", byId: "a", cause: "hits", pos: at },
       { type: "ko", tick: 7, playerId: "a", byId: "", cause: "disconnect", pos: at },
-      { type: "hit", tick: 8, ballId: "b1", throwerId: "gone", targetId: "b", pos: at, knockback: at, charge: 0, kind: "normal", heartsLeft: 1, fullCharge: false },
+      { type: "hit", tick: 8, ballId: "b1", throwerId: "gone", targetId: "b", pos: at, knockback: at, launchSpeed: 0, charge: 0, kind: "normal", heartsLeft: 1, fullCharge: false },
     ];
     for (const ev of events) scoreEvent(ev, find);
     const a = players.get("a");

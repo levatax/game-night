@@ -5,14 +5,17 @@ import {
   CATCH_WINDOW_TICKS,
   HEADBUTT_KNOCK_H,
   HEADBUTT_KNOCK_UP,
+  BUMP_POP_VY,
+  BUMP_STUN_TICKS,
   HURT_INVULN_TICKS,
+  KNOCK_MAX_SPEED,
   KNOCKBACK_H,
-  KNOCKBACK_STUN_TICKS,
   KNOCKBACK_UP,
   MAX_HEARTS,
   MEGA_BALL_RADIUS,
   RING_FALLEN,
   RING_SHAKING,
+  ROLL_TICKS,
   THROW_SPEED_MAX,
   TRIPLE_SPREAD_RAD,
   WHIFF_TICKS,
@@ -24,10 +27,12 @@ import type { ArenaDef } from "../../shared/maps.js";
 import { BTN, type InputCmd } from "../../shared/protocol.js";
 import { ringIndexAt } from "../../shared/sim/geometry.js";
 import { lcg, openArena } from "../../shared/sim/testkit.js";
-import { throwSpeed } from "../../shared/sim/throw.js";
+import { knockStunTicks, throwSpeed } from "../../shared/sim/throw.js";
 import type { CharacterId } from "../../shared/types.js";
 import { BallEntity, BonkState, PlayerState } from "../schema.js";
 import { toMessage, type GameEvent, type GameEventOf, type GameEventType } from "./events.js";
+import { sanitizeInput } from "./inputs.js";
+import { catchDistance, catchDistanceSwept } from "./rules.js";
 import { GameWorld, type WorldStepOptions } from "./World.js";
 
 const PLAY: WorldStepOptions = { dtScale: 1, locked: false, combat: true };
@@ -259,13 +264,43 @@ describe("GameWorld: hits", () => {
     const ball = b.live("t", { x: 0, y: 1, z: 4.9, vz: -20 });
     const hit = b.of("hit", b.tick())[0];
     expect(hit).toMatchObject({ throwerId: "t", targetId: "v", heartsLeft: 2, fullCharge: false, kind: "normal" });
+    // Redesign: × heartsKnockMultiplier(2 hearts left) = 1.12; stun covers the flight; mercy ≥ stun.
     expect(hit.knockback.x).toBeCloseTo(0, 6);
-    expect(hit.knockback.y).toBeCloseTo(KNOCKBACK_UP, 6);
-    expect(hit.knockback.z).toBeCloseTo(-KNOCKBACK_H, 6);
+    expect(hit.knockback.y).toBeCloseTo(KNOCKBACK_UP * 1.12, 6);
+    expect(hit.knockback.z).toBeCloseTo(-KNOCKBACK_H * 1.12, 6);
+    expect(hit.launchSpeed).toBeCloseTo(speedOf(hit.knockback), 9);
+    const stun = knockStunTicks(hit.knockback);
+    expect(stun).toBe(19);
     const v = b.p("v");
     expect(v.hearts).toBe(2);
-    expect(v).toMatchObject({ vy: KNOCKBACK_UP, stunTicks: KNOCKBACK_STUN_TICKS, hurtTicks: HURT_INVULN_TICKS, grounded: false });
-    expect(v.vz).toBeCloseTo(-KNOCKBACK_H, 6);
+    expect(v).toMatchObject({ stunTicks: stun, hurtTicks: Math.max(HURT_INVULN_TICKS, stun), grounded: false, jumping: false });
+    expect(v.vy).toBeCloseTo(KNOCKBACK_UP * 1.12, 5);
+    expect(v.vz).toBeCloseTo(-KNOCKBACK_H * 1.12, 5);
+    expect(ball.state).toBe("dead");
+  });
+
+  it("a second hit launches further than the first (hearts tension)", () => {
+    const launch = (hearts: number) => {
+      const b = new Bench([["t"], ["v"]]);
+      b.place("v", 0, 4);
+      b.p("v").hearts = hearts;
+      b.live("t", { x: 0, y: 1, z: 4.9, vz: -20 });
+      return b.of("hit", b.tick())[0].launchSpeed;
+    };
+    expect(launch(2)).toBeGreaterThan(launch(3));
+    expect(launch(2) / launch(3)).toBeCloseTo(1.3 / 1.12, 6);
+  });
+
+  it("hits a fast ball that grazes the capsule between two tick samples (swept test)", () => {
+    const b = new Bench([["t"], ["v"]]);
+    b.place("v", 0, 0);
+    // 34 m/s along −Z, 0.6 m beside the axis: the samples at z = 0.57 and −0.56 both miss.
+    const ball = b.live("t", { x: -0.6, y: 1, z: 0.57 + 34 / 30, vz: -34 });
+    b.p("v").hurtTicks = 0;
+    // Ball samples this tick: start (z ≈ 1.70) → end (z ≈ 0.57), next tick → −0.56.
+    expect(b.of("hit", b.tick())).toHaveLength(0);
+    const hits = b.of("hit", b.tick());
+    expect(hits).toHaveLength(1);
     expect(ball.state).toBe("dead");
   });
 
@@ -275,8 +310,12 @@ describe("GameWorld: hits", () => {
     b.live("t", { x: 0, y: 1, z: 4.9, vz: -20, charge: 1, kind: "mega", radius: MEGA_BALL_RADIUS });
     const hit = b.of("hit", b.tick())[0];
     expect(hit.fullCharge).toBe(true);
-    expect(hit.knockback.z).toBeCloseTo(-KNOCKBACK_H * 3, 6);
-    expect(hit.knockback.y).toBeCloseTo(KNOCKBACK_UP * 3, 6);
+    // ×1.5 × 2 × 1.12 = 3.36 → |v| 22.4, capped at KNOCK_MAX_SPEED keeping the direction.
+    expect(speedOf(hit.knockback)).toBeCloseTo(KNOCK_MAX_SPEED, 6);
+    expect(hit.launchSpeed).toBeCloseTo(KNOCK_MAX_SPEED, 6);
+    const dir = Math.hypot(KNOCKBACK_UP, KNOCKBACK_H);
+    expect(hit.knockback.z).toBeCloseTo((-KNOCKBACK_H / dir) * KNOCK_MAX_SPEED, 6);
+    expect(hit.knockback.y).toBeCloseTo((KNOCKBACK_UP / dir) * KNOCK_MAX_SPEED, 6);
   });
 
   it("never hits its own thrower and passes through during post-hit mercy", () => {
@@ -485,6 +524,8 @@ describe("GameWorld: abilities", () => {
     const evs = b.run(60);
     const wave = b.of("shockwave", evs)[0];
     expect(wave).toMatchObject({ playerId: "h", radius: 3, affected: ["near"] });
+    expect(wave.knockbacks).toHaveLength(1);
+    expect(wave.knockbacks[0].x).toBeGreaterThan(0);
     expect(b.p("near").hearts).toBe(3);
     expect(b.p("far").vx).toBe(0);
     expect(b.p("near").x).toBeGreaterThan(2.5);
@@ -546,9 +587,11 @@ describe("GameWorld: abilities", () => {
     b.send("g", { buttons: BTN.ABILITY });
     const ev = b.of("headbutt", b.tick())[0];
     expect(ev).toMatchObject({ attackerId: "g", targetId: "v" });
+    // Target at 3 hearts → ×1.
     expect(ev.knockback.z).toBeCloseTo(-HEADBUTT_KNOCK_H, 6);
     expect(ev.knockback.y).toBeCloseTo(HEADBUTT_KNOCK_UP, 6);
-    expect(b.p("v")).toMatchObject({ hearts: 3, stunTicks: KNOCKBACK_STUN_TICKS });
+    expect(ev.launchSpeed).toBeCloseTo(speedOf(ev.knockback), 9);
+    expect(b.p("v")).toMatchObject({ hearts: 3, stunTicks: knockStunTicks(ev.knockback) });
     expect(b.p("g").abilityTicks).toBe(0);
   });
 });
@@ -743,6 +786,81 @@ describe("GameWorld: players", () => {
     b.place("b", 0.2, 5);
     b.tick();
     expect(Math.abs(b.p("a").x - b.p("b").x)).toBeGreaterThanOrEqual(0.9 - 1e-9);
+    expect(b.of("bump")).toHaveLength(0); // walk-vs-walk: positional push only
+  });
+
+  it("a tumbling body bumps another player, passes momentum and the knock credit on", () => {
+    const b = new Bench([["t"], ["v"], ["w"]]);
+    b.place("t", 0, 12);
+    b.place("v", 0, 4);
+    b.place("w", 0, 2.6);
+    // t's ball launches v toward w (−Z).
+    b.live("t", { x: 0, y: 1, z: 4.9, vz: -20 });
+    expect(b.of("hit", b.tick())).toHaveLength(1);
+    const evs = b.run(6);
+    const bump = b.of("bump", evs)[0];
+    expect(bump).toMatchObject({ playerId: "v", targetId: "w" });
+    expect(bump.impulse).toBeGreaterThan(0);
+    const w = b.p("w");
+    expect(w.vz).toBeLessThan(-1); // pushed away from the tumbling body
+    expect(w.stunTicks > 0 || w.vy > 0 || !w.grounded || w.y > 0).toBe(true);
+    // w gets rung out: credit goes to t (who launched v), not to v.
+    Object.assign(w, { x: 0, z: 16, y: 0, vx: 0, vy: 0, vz: 0, grounded: false });
+    const out = b.of("ringOut", b.run(60))[0];
+    expect(out).toMatchObject({ playerId: "w", creditId: "t" });
+  });
+
+  it("a hard bump pops and briefly stuns the bumped player", () => {
+    const b = new Bench([["v"], ["w"]]);
+    b.place("v", 0, 1.0);
+    b.place("w", 0, 0);
+    Object.assign(b.p("v"), { vz: -12, stunTicks: 20, grounded: true });
+    const bump = b.of("bump", b.tick())[0];
+    expect(bump).toMatchObject({ playerId: "v", targetId: "w" });
+    const w = b.p("w");
+    expect(w.stunTicks).toBe(BUMP_STUN_TICKS);
+    expect(w.vy).toBeGreaterThanOrEqual(BUMP_POP_VY - 1e-9);
+    expect(w.grounded).toBe(false);
+    expect(b.p("v").vz).toBeGreaterThan(-12);
+  });
+
+  it("roll i-frames dodge a tumbling body's bump", () => {
+    const run = (withBody: boolean) => {
+      const b = new Bench(withBody ? [["v"], ["w"]] : [["w"]]);
+      if (withBody) {
+        b.place("v", 0, 1.0);
+        Object.assign(b.p("v"), { vz: -12, stunTicks: 20, grounded: true });
+      }
+      b.place("w", 0, 0);
+      Object.assign(b.p("w"), { rollTicks: ROLL_TICKS, dirX: 0, dirZ: 1, vx: 0, vz: 0 });
+      const evs = b.tick();
+      return { b, evs, w: b.p("w") };
+    };
+    const control = run(false).w;
+    const { b, evs, w } = run(true);
+    expect(b.of("bump", evs)).toHaveLength(0);
+    expect(w.stunTicks).toBe(0);
+    expect(w.rollTicks).toBe(control.rollTicks);
+    expect(w.rollTicks).toBeGreaterThan(0);
+    expect(w.vx).toBeCloseTo(control.vx, 9);
+    expect(w.vz).toBeCloseTo(control.vz, 9);
+    expect(w.vy).toBeCloseTo(control.vy, 9);
+  });
+
+  it("swept catch test closes the gap between two tick samples", () => {
+    const p = { x: 0, y: 0, z: 0, yaw: 0 }; // catch center (0, 1, −0.5)
+    const a = { x: -2.2, y: 1, z: -0.5 };
+    const b = { x: 2.2, y: 1, z: -0.5 };
+    expect(catchDistance(p, a, BALL_RADIUS)).toBe(-1);
+    expect(catchDistance(p, b, BALL_RADIUS)).toBe(-1);
+    expect(catchDistanceSwept(p, a, b, BALL_RADIUS)).toBeCloseTo(0, 9);
+    // Behind the player: still rejected by the front half-space test.
+    expect(catchDistanceSwept(p, { x: -2, y: 1, z: 0.3 }, { x: 2, y: 1, z: 0.3 }, BALL_RADIUS)).toBe(-1);
+  });
+
+  it("keeps the JUMP_HELD level bit through input sanitizing", () => {
+    const clean = sanitizeInput({ seq: 1, moveX: 0, moveZ: 0, yaw: 0, pitch: 0, buttons: BTN.JUMP_HELD | BTN.JUMP | 64 });
+    expect(clean?.buttons).toBe(BTN.JUMP_HELD | BTN.JUMP);
   });
 
   it("eliminates a disconnecting player with a disconnect KO", () => {

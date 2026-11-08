@@ -16,7 +16,11 @@
 //   jaw, sac       0..1 beak opening / frog throat sac
 //   belly          belly puff (fraction of the rest scale)
 //   crouch         squash target (< 0 squash, > 0 stretch)
-//   ears           ear flop (rad)
+//   ears           ear flop (rad); earL / earR add per side on top
+//   legLLift/RLift leg pivot raised from its rest height (m): foot lift while stepping
+//   cheeks         scale delta of the cheek pivots (Mochi)
+//   bulbs          scale-y delta of the eye bulbs (Hopsworth; < 0 squash/blink, > 0 pop)
+//   tailCurl       curl added to rig.extra and each tail segment, weighted toward the tip (rad)
 
 export const POSE_KEYS = [
   "lift",
@@ -52,6 +56,13 @@ export const POSE_KEYS = [
   "belly",
   "crouch",
   "ears",
+  "earL",
+  "earR",
+  "legLLift",
+  "legRLift",
+  "cheeks",
+  "bulbs",
+  "tailCurl",
 ] as const;
 
 export type PoseKey = (typeof POSE_KEYS)[number];
@@ -62,6 +73,8 @@ export type Pose = Record<PoseKey, number>;
  * arc, so a finished 360° move settles back to rest without unwinding.
  */
 const ANGLE_KEYS: ReadonlySet<PoseKey> = new Set<PoseKey>(["turn", "pitch", "roll", "spinY", "armLX", "armRX"]);
+/** ANGLE_KEYS as a flag per POSE_KEYS index (no Set lookups in the per-frame blend). */
+const IS_ANGLE: ReadonlyArray<boolean> = POSE_KEYS.map((key) => ANGLE_KEYS.has(key));
 const TAU = Math.PI * 2;
 
 /** Arms hang slightly away from the body at rest. */
@@ -75,25 +88,31 @@ export function createPose(): Pose {
 
 /** Reset to the rest pose. */
 export function restPose(p: Pose): Pose {
-  for (const key of POSE_KEYS) p[key] = 0;
+  for (let i = 0; i < POSE_KEYS.length; i++) p[POSE_KEYS[i]] = 0;
   p.armLZ = REST_ARM_OUT;
   p.armRZ = REST_ARM_OUT;
   return p;
 }
 
 export function copyPose(dst: Pose, src: Pose): Pose {
-  for (const key of POSE_KEYS) dst[key] = src[key];
+  for (let i = 0; i < POSE_KEYS.length; i++) {
+    const key = POSE_KEYS[i];
+    dst[key] = src[key];
+  }
   return dst;
 }
 
 export function zeroPose(p: Pose): Pose {
-  for (const key of POSE_KEYS) p[key] = 0;
+  for (let i = 0; i < POSE_KEYS.length; i++) p[POSE_KEYS[i]] = 0;
   return p;
 }
 
 /** dst += src · w */
 export function addPose(dst: Pose, src: Pose, w: number): Pose {
-  for (const key of POSE_KEYS) dst[key] += src[key] * w;
+  for (let i = 0; i < POSE_KEYS.length; i++) {
+    const key = POSE_KEYS[i];
+    dst[key] += src[key] * w;
+  }
   return dst;
 }
 
@@ -108,8 +127,9 @@ export function wrapAngle(a: number): number {
  * finished 360° flip (2π) blends back to 0 without unwinding.
  */
 export function lerpPose(dst: Pose, target: Pose, t: number): Pose {
-  for (const key of POSE_KEYS) {
-    if (ANGLE_KEYS.has(key)) {
+  for (let i = 0; i < POSE_KEYS.length; i++) {
+    const key = POSE_KEYS[i];
+    if (IS_ANGLE[i]) {
       const from = wrapAngle(dst[key]);
       dst[key] = from + wrapAngle(target[key] - from) * t;
     } else {
@@ -143,3 +163,11 @@ export function envelope(u: number, a: number, b: number): number {
 }
 /** Frame-rate independent exponential approach factor for a rate in 1/s. */
 export const damp = (rate: number, dt: number): number => 1 - Math.exp(-rate * dt);
+
+/** Clamp to [-max, max]. */
+export const clampAbs = (v: number, max: number): number => (v < -max ? -max : v > max ? max : v);
+export const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v);
+/** Smoothstep of x between edges a and b. */
+export function smoothstep(a: number, b: number, x: number): number {
+  return easeInOut((x - a) / (b - a));
+}

@@ -174,7 +174,8 @@ export class Input {
 
   /**
    * Build the InputCmd for one sim tick: moveX = D - A, moveZ = W - S (normalized if diagonal),
-   * yaw/pitch current look, buttons = THROW (held or pressed since last sample) | latched edges;
+   * yaw/pitch current look, buttons = THROW (held or pressed since last sample) | JUMP_HELD (Space
+   * down now) | latched edges;
    * then clears the latched edges and the THROW press latch.
    */
   sample(seq: number): InputCmd {
@@ -190,6 +191,8 @@ export class Input {
         moveZ /= len;
       }
       if (this.throwDown || this.throwPressed) buttons |= BTN.THROW;
+      // Level bit: Space still down → full-height jump (releasing early cuts it to a short hop).
+      if (this.held.up) buttons |= BTN.JUMP_HELD;
       buttons |= this.latched;
     }
     this.clearLatches();

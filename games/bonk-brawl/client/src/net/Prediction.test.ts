@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { MAX_PENDING_INPUTS, PREDICTION_SMOOTH_MS } from "../../../shared/constants";
+import {
+  MAX_PENDING_INPUTS,
+  PREDICTION_KNOCK_SMOOTH_MS,
+  PREDICTION_KNOCK_SNAP_DIST,
+  PREDICTION_SMOOTH_MS,
+} from "../../../shared/constants";
 import { BTN, type InputCmd } from "../../../shared/protocol";
 import type { SimContext } from "../../../shared/sim/context";
 import { PLAYER_SIM_KEYS, copyPlayerSim, stepPlayer, type PlayerSim } from "../../../shared/sim/player";
@@ -36,6 +41,7 @@ function randomInputs(count: number, seed = 7): InputCmd[] {
     yaw += (rand() - 0.5) * 0.3;
     let buttons = 0;
     if (rand() < 0.08) buttons |= BTN.JUMP;
+    if (rand() < 0.5) buttons |= BTN.JUMP_HELD;
     if (rand() < 0.04) buttons |= BTN.ROLL;
     if (rand() < 0.3) buttons |= BTN.THROW;
     out.push(cmd({ seq: i + 1, moveX: rand() * 2 - 1, moveZ: rand() * 2 - 1, yaw, pitch: rand() - 0.5, buttons }));
@@ -160,6 +166,77 @@ describe("Prediction", () => {
     far.x = 6;
     pred.reconcile(view(far, 0), ctx);
     expect(pred.smoothingOffset).toEqual({ x: 0, y: 0, z: 0 });
+  });
+
+  it("blends (not snaps) a knockback-onset error up to PREDICTION_KNOCK_SNAP_DIST, decaying faster", () => {
+    const ctx = simCtx("quacky");
+    const start = spawnPlayer();
+    const pred = new Prediction();
+    pred.reset(view(start, 0));
+    for (let seq = 1; seq <= 5; seq++) pred.predict(cmd({ seq }), ctx);
+    // The server launched us 4 m away (stunned); our prediction never saw the hit.
+    const hit = copyPlayerSim(start, spawnPlayer());
+    hit.z = 4;
+    hit.vz = 12;
+    hit.vy = 5;
+    hit.grounded = false;
+    hit.stunTicks = 26;
+    pred.reconcile(view(hit, 5), ctx);
+    expect(Math.abs(pred.smoothingOffset.z)).toBeGreaterThan(3.5);
+    const offset = pred.smoothingOffset.z;
+    const out = spawnPlayer();
+    pred.getRenderSim(1, PREDICTION_KNOCK_SMOOTH_MS / 1000, out);
+    expect(pred.smoothingOffset.z).toBeCloseTo(offset * Math.exp(-1), 6);
+    pred.getRenderSim(1, 1, out);
+    expect(Math.abs(pred.smoothingOffset.z)).toBeLessThan(1e-3);
+
+    // Beyond PREDICTION_KNOCK_SNAP_DIST it still snaps; and without a stun onset 4 m snaps too.
+    const far = new Prediction();
+    far.reset(view(start, 0));
+    for (let seq = 1; seq <= 5; seq++) far.predict(cmd({ seq }), ctx);
+    const launched = copyPlayerSim(hit, spawnPlayer());
+    launched.z = PREDICTION_KNOCK_SNAP_DIST + 1;
+    far.reconcile(view(launched, 5), ctx);
+    expect(far.smoothingOffset).toEqual({ x: 0, y: 0, z: 0 });
+    const plain = new Prediction();
+    plain.reset(view(start, 0));
+    for (let seq = 1; seq <= 5; seq++) plain.predict(cmd({ seq }), ctx);
+    const moved = copyPlayerSim(start, spawnPlayer());
+    moved.z = 4;
+    plain.reconcile(view(moved, 5), ctx);
+    expect(plain.smoothingOffset).toEqual({ x: 0, y: 0, z: 0 });
+  });
+
+  it("blends (not snaps) a re-launch of an already stunned player", () => {
+    const ctx = simCtx("quacky");
+    const start = spawnPlayer();
+    start.stunTicks = 20;
+    start.grounded = false;
+    start.y = 1;
+    start.vz = 8;
+    const inputs: InputCmd[] = [];
+    for (let seq = 1; seq <= 5; seq++) inputs.push(cmd({ seq }));
+    const states = straightRun(start, inputs, ctx);
+    const pred = new Prediction();
+    pred.reset(view(start, 0));
+    for (const input of inputs) pred.predict(input, ctx);
+    expect(pred.current.stunTicks).toBeGreaterThan(0);
+    // Mid-tumble the server launched us again (headbutt/shockwave): 5 m off, stun refreshed.
+    const relaunched = copyPlayerSim(states[5], spawnPlayer());
+    relaunched.x += 5;
+    relaunched.vx = 20;
+    relaunched.stunTicks = 26;
+    pred.reconcile(view(relaunched, 5), ctx);
+    expect(Math.abs(pred.smoothingOffset.x)).toBeGreaterThan(4.5);
+
+    // The same tumble re-confirmed by the server (stun not refreshed) uses the normal snap distance.
+    const same = new Prediction();
+    same.reset(view(start, 0));
+    for (const input of inputs) same.predict(input, ctx);
+    const drifted = copyPlayerSim(states[5], spawnPlayer());
+    drifted.x += 5;
+    same.reconcile(view(drifted, 5), ctx);
+    expect(same.smoothingOffset).toEqual({ x: 0, y: 0, z: 0 });
   });
 
   it("stops when the server says the player is not alive", () => {

@@ -129,6 +129,15 @@ export interface PlayerSimFields {
   dirZ: number;
   /** In the current round and not knocked out. Dead players are not stepped. */
   alive: boolean;
+  /**
+   * In a player jump (variable jump height): set by the jump, cleared on landing, on releasing
+   * JUMP_HELD (jump cut), once falling past the apex hang, by a stun and by movement abilities.
+   */
+  jumping: boolean;
+  /** Grounded turn skid this tick (velocity points against the move input). Motion/FX cue. */
+  skid: boolean;
+  /** Wrapping counter ((n + 1) & 255) of tumble bounces on floor or cover; remote clients detect bounces from it. */
+  knockBounces: number;
 }
 
 /** Every ball field the deterministic shared sim (`stepBall`) reads or writes. */

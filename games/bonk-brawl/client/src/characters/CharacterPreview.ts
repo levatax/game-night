@@ -11,8 +11,8 @@ import { createPuppetFrame } from "./puppet";
 import { createBlobShadow, type BlobShadow } from "./shadowBlob";
 
 const FOV = 30;
-const CAMERA_POS = new THREE.Vector3(0, 1.12, 4.35);
-const LOOK_AT = new THREE.Vector3(0, 0.7, 0);
+const CAMERA_POS = new THREE.Vector3(0, 1.14, 4.5);
+const LOOK_AT = new THREE.Vector3(0, 0.72, 0);
 /** Faces the camera (+Z) at turntable angle 0. */
 const FRONT_YAW = Math.PI;
 const HOP_VY = 3.0;
@@ -121,7 +121,7 @@ export class CharacterPreview {
   /* ----------------------------------------------------------- internals */
 
   private createShown(character: CharacterId, slotColor: string, hop: boolean): Shown {
-    const animal = new Animal(character, slotColor);
+    const animal = new Animal(character, slotColor, { detail: "hi" });
     animal.setCastShadows(false);
     const animator = new Animator(animal, character);
     const frame = createPuppetFrame(character, "preview");

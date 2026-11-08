@@ -1,39 +1,68 @@
-// Small accessory builders shared by several animals (bows, bells, sailor hat). Positions are in
-// feet space relative to `at`. Owner: client-characters.
+// Accessory builders shared by animals and KO mementos (sailor hat, bow, bell, nightcap, scarf
+// tails, ribbons). Everything is recorded on the given pivot in feet space; tilts are baked in.
+// Owner: client-characters.
 
 import * as THREE from "three";
-import { type Paint, type PartBuilder, type V3, bellGeometry } from "../parts";
+import type { Paint, PartBuilder, V3 } from "../parts";
+import { add } from "./common";
 
-const add = (a: V3, x: number, y: number, z: number): V3 => [a[0] + x, a[1] + y, a[2] + z];
+const ACC = { accessory: true, flair: true } as const;
+
+/** Rotate a feet-space offset by an Euler XYZ (for points inside a tilted frame). */
+export function rotateOffset(v: V3, rot: V3): V3 {
+  const r = new THREE.Vector3(v[0], v[1], v[2]).applyEuler(new THREE.Euler(rot[0], rot[1], rot[2]));
+  return [r.x, r.y, r.z];
+}
+
+/**
+ * White sailor (Dixie cup) hat with a slot-colored band, base centered at `at`, tilted by `tilt`
+ * around its base. Returns the feet-space point at the back of the rim (ribbon anchor).
+ */
+export function buildSailorHat(b: PartBuilder, pivot: THREE.Object3D, at: V3, scale: number, tilt: V3): V3 {
+  const s = scale;
+  b.frame(at, tilt, () => {
+    b.cylinder(pivot, "#FFFFFF", add(at, 0, 0, 0), add(at, 0, 0.1 * s, 0), 0.115 * s, { ...ACC, topRatio: 0.82, segments: 12 });
+    b.cylinder(pivot, "slot", add(at, 0, 0.012 * s, 0), add(at, 0, 0.048 * s, 0), 0.119 * s, {
+      ...ACC,
+      topRatio: 0.97,
+      segments: 12,
+      outline: false,
+      gradient: 0,
+    });
+    b.torus(pivot, "#FFFFFF", add(at, 0, 0.006 * s, 0), 0.128 * s, 0.034 * s, { ...ACC, tubular: 14, radial: 5 });
+  });
+  const back = rotateOffset([0, 0.01 * s, 0.13 * s], tilt);
+  return add(at, back[0], back[1], back[2]);
+}
 
 /** Bow (tie): two pyramids meeting at a round knot, spread along X. */
-export function buildBow(b: PartBuilder, parent: THREE.Object3D, at: V3, size: number, paint: Paint): THREE.Group {
-  const group = b.group(parent, at, "bow");
+export function buildBow(b: PartBuilder, pivot: THREE.Object3D, at: V3, size: number, paint: Paint, knot: Paint = paint): void {
   for (const side of [-1, 1]) {
-    const wing = b.cone(group, paint, add(at, side * size, 0, 0), add(at, side * size * 0.12, 0, 0), size * 0.62, 4);
-    wing.rotateY(Math.PI / 4);
+    b.cone(pivot, paint, add(at, side * size, 0, 0), add(at, side * size * 0.12, 0, 0), size * 0.62, {
+      ...ACC,
+      segments: 4,
+      rot: [0, Math.PI / 4, 0],
+    });
   }
-  b.sphere(group, paint, at, [size * 0.32, size * 0.36, size * 0.3], "lo");
-  return group;
+  b.sphere(pivot, knot, at, [size * 0.32, size * 0.36, size * 0.3], { ...ACC, detail: "lo" });
 }
 
-/** Hand bell hanging from `at` (its top), mouth down, with a dark clapper. */
-export function buildBell(b: PartBuilder, parent: THREE.Object3D, at: V3, radius: number, paint: Paint): THREE.Group {
-  const group = b.group(parent, at, "bell");
+/** Hand bell hanging from `top`, mouth down, with a dark clapper and a loop. */
+export function buildBell(b: PartBuilder, pivot: THREE.Object3D, top: V3, radius: number, paint: Paint): void {
   const height = radius * 1.4;
-  const bell = b.mesh(group, bellGeometry(), paint, add(at, 0, -height, 0));
-  bell.scale.set(radius, height, radius);
-  b.sphere(group, "ink", add(at, 0, -height - radius * 0.12, 0), radius * 0.28, "lo");
-  b.sphere(group, paint, add(at, 0, radius * 0.08, 0), radius * 0.22, "lo");
-  return group;
+  b.bell(pivot, paint, add(top, 0, -height, 0), radius, height, ACC);
+  b.sphere(pivot, "ink", add(top, 0, -height - radius * 0.12, 0), radius * 0.28, { ...ACC, detail: "xs", outline: false, hiOnly: true });
+  b.sphere(pivot, paint, add(top, 0, radius * 0.08, 0), radius * 0.22, { ...ACC, detail: "xs" });
 }
 
-/** Tiny white sailor (Dixie cup) hat with a slot-colored band, tilted jauntily. */
-export function buildSailorHat(b: PartBuilder, parent: THREE.Object3D, at: V3, scale = 1): THREE.Group {
-  const group = b.group(parent, at, "sailorHat");
-  const s = scale;
-  b.cylinder(group, "#FFFFFF", add(at, 0, 0.0, 0), add(at, 0, 0.1 * s, 0), 0.115 * s, 0.82, 12);
-  b.cylinder(group, "slot", add(at, 0, 0.012 * s, 0), add(at, 0, 0.045 * s, 0), 0.119 * s, 0.97, 12);
-  b.torus(group, "#FFFFFF", add(at, 0, 0.006 * s, 0), 0.128 * s, 0.034 * s);
-  return group;
+/** Little ribbon bow (two loops + knot) facing `normal` — tail bows, hat bows. */
+export function buildRibbonBow(b: PartBuilder, pivot: THREE.Object3D, at: V3, size: number, paint: Paint): void {
+  for (const side of [-1, 1]) {
+    b.sphere(pivot, paint, add(at, side * size * 0.7, size * 0.15, 0), [size * 0.6, size * 0.42, size * 0.22], {
+      ...ACC,
+      detail: "xs",
+      rot: [0, 0, side * 0.35],
+    });
+  }
+  b.sphere(pivot, paint, at, size * 0.3, { ...ACC, detail: "xs" });
 }

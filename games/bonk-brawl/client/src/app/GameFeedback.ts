@@ -11,6 +11,7 @@ import {
   CHEST_HEIGHT,
   FULL_CHARGE_THRESHOLD,
   HIT_STOP_MS,
+  KNOCK_MAX_SPEED,
   PEDESTAL_HEIGHT,
   POWERUP_HOVER_Y,
   POWERUPS,
@@ -19,6 +20,7 @@ import type {
   AbilityEvent,
   BallSpawnEvent,
   BoomerangReturnEvent,
+  BumpEvent,
   CatchEvent,
   DeflectEvent,
   EmoteEvent,
@@ -36,6 +38,7 @@ import type {
   ThrowEvent,
   WhiffEvent,
 } from "../../../shared/protocol";
+import { clamp } from "../../../shared/sim/math";
 import type { ThrowRequest } from "../../../shared/sim/player";
 import type { CharacterId, Vec3Like } from "../../../shared/types";
 import type { NetEventMap } from "../net/types";
@@ -50,6 +53,20 @@ const THROW_VOICE_CHANCE = 0.3;
 const RING_OUT_GHOST_DELAY_SEC = 0.8;
 /** Shockwaves shake the local camera within this distance. */
 const SHOCKWAVE_SHAKE_RANGE = 6;
+/** Impact-scaled hit-stop: HIT_STOP_MS + HIT_STOP_EXTRA_MS × s, s = launch intensity 0..1. */
+const HIT_STOP_EXTRA_MS = 70;
+const HEADBUTT_STOP_MS = 90;
+const BUMP_STOP_MS = 40;
+/** Ring-out credited to me: a short beat to savour it. */
+const RING_OUT_CREDIT_STOP_MS = 80;
+/** Launch speeds (m/s) that map to intensity 0 and 1. */
+const LAUNCH_SOFT = 5;
+const LAUNCH_HARD = 15;
+/** Fall speed that maps to a full landing dip (matches PlayerEffects' HARD_LANDING_VY). */
+const HARD_LANDING_VY = 14;
+const LANDING_DIP = -0.06;
+const BOUNCE_DIP = -0.1;
+
 /** Pop text heights above the event point (m). */
 const POP_ABOVE_HIT = 0.6;
 const POP_ABOVE_HEAD = 1.7;
@@ -70,6 +87,18 @@ function point(x: number, y: number, z: number): Vec3Like {
 
 function above(p: Vec3Like, dy: number): Vec3Like {
   return point(p.x, p.y + dy, p.z);
+}
+
+/** |launch| from the event, falling back to |knockback| for payloads without launchSpeed. */
+function launchSpeedOf(launchSpeed: number | undefined, knockback: Vec3Like): number {
+  return typeof launchSpeed === "number" && Number.isFinite(launchSpeed)
+    ? launchSpeed
+    : Math.hypot(knockback.x, knockback.y, knockback.z);
+}
+
+/** Launch intensity 0..1 (drives hit-stop, shake and the FOV punch). */
+function launchIntensity(speed: number): number {
+  return clamp((speed - LAUNCH_SOFT) / (LAUNCH_HARD - LAUNCH_SOFT), 0, 1);
 }
 
 /** Unit horizontal direction of `v` (the knockback), or undefined when it has no horizontal part. */
@@ -108,6 +137,7 @@ export class GameFeedback {
     this.on("ability", (e) => this.onAbility(e));
     this.on("shockwave", (e) => this.onShockwave(e));
     this.on("headbutt", (e) => this.onHeadbutt(e));
+    this.on("bump", (e) => this.onBump(e));
     this.on("ballSpawn", (e) => this.onBallSpawn(e));
     this.on("boomerangReturn", (e) => this.onBoomerangReturn(e));
     this.on("powerUpWarning", (e) => this.onPowerUpWarning(e));
@@ -155,8 +185,18 @@ export class GameFeedback {
     const sim = this.deps.net.localSim;
     if (!sim) return;
     const pos = point(sim.x, sim.y, sim.z);
-    const { audio, fx } = this.deps;
+    const { audio, camera, fx } = this.deps;
+    const me = this.host.localId;
     if (result.jumped) audio.play("jump", { pos });
+    if (result.landed && result.landSpeed > 0) {
+      camera.kick({ dip: LANDING_DIP * Math.min(1, result.landSpeed / HARD_LANDING_VY) });
+    }
+    if (result.bounced) {
+      camera.kick({ dip: BOUNCE_DIP });
+      camera.shake(0.15, 0.15);
+      this.effects.onBounce(me, result.bounceSpeed);
+    }
+    if (result.skidStarted) this.effects.onSkidStart(me);
     if (result.rollStarted) {
       fx.particles.burst("puff", pos, { scale: 0.7 });
       audio.play("roll", { pos });
@@ -221,16 +261,30 @@ export class GameFeedback {
     const me = this.host.localId;
     const mega = ev.kind === "mega";
     const strong = mega || ev.fullCharge;
-    characters.trigger(ev.targetId, "hit", { dir: horizontalDir(ev.knockback), strength: strong ? 1 : 0.6 });
-    fx.particles.burst("stars", ev.pos, { scale: mega ? 1.6 : strong ? 1.3 : 1 });
+    const launch = launchSpeedOf(ev.launchSpeed, ev.knockback);
+    const s = launchIntensity(launch);
+    // Character reaction scales with the launch; full-charge / mega keep the big (≥ 0.9) reaction.
+    const strength = Math.min(1, Math.max(strong ? 0.9 : 0.4, launch / KNOCK_MAX_SPEED));
+    characters.trigger(ev.targetId, "hit", { dir: horizontalDir(ev.knockback), strength });
+    fx.particles.burst("stars", ev.pos, { scale: (mega ? 1.4 : strong ? 1.15 : 0.9) + 0.4 * s });
+    fx.balls.impactFlash(ev.ballId);
     fx.popText.show("bonk", above(ev.pos, POP_ABOVE_HIT), this.directory.color(ev.throwerId));
-    if (ev.throwerId === me || ev.targetId === me) fx.feel.hitStop(HIT_STOP_MS);
+    if (ev.throwerId === me || ev.targetId === me) fx.feel.hitStop(HIT_STOP_MS + HIT_STOP_EXTRA_MS * s);
     audio.play("bonk", { pos: ev.pos, volume: strong ? 1 : 0.85 });
     if (mega) audio.announce?.("bonk");
     const victim = this.directory.character(ev.targetId);
     if (victim) audio.voice(victim, "hit", { pos: ev.pos });
-    if (ev.throwerId === me) audio.play("ding");
-    if (ev.targetId === me) camera.shake(mega ? 0.6 : 0.35, 0.35);
+    if (ev.throwerId === me) {
+      audio.play("ding");
+      if (ev.targetId !== me) {
+        camera.kick({ fov: -3 });
+        camera.shake(0.12, 0.15);
+      }
+    }
+    if (ev.targetId === me) {
+      camera.shake(0.25 + 0.45 * s, 0.3 + 0.2 * s);
+      camera.kick({ fov: 4 + 6 * s });
+    }
     this.pushFeed("bonk", ev.throwerId, ev.targetId);
   }
 
@@ -241,7 +295,10 @@ export class GameFeedback {
     characters.trigger(ev.catcherId, "catch");
     fx.popText.show("catch", above(ev.pos, POP_ABOVE_HIT), color);
     fx.particles.burst("sparkles", ev.pos, { color, scale: 1.2 });
-    if (ev.catcherId === me) fx.feel.slowMo(CATCH_SLOWMO_SCALE, CATCH_SLOWMO_MS);
+    if (ev.catcherId === me) {
+      fx.feel.slowMo(CATCH_SLOWMO_SCALE, CATCH_SLOWMO_MS);
+      camera.kick({ fov: -5 });
+    }
     // The thrower just lost a heart to the catch: a small nudge so it registers.
     if (ev.throwerId === me) camera.shake(0.2, 0.25);
     audio.play("catch", { pos: ev.pos });
@@ -274,22 +331,58 @@ export class GameFeedback {
   private onShockwave(ev: ShockwaveEvent): void {
     const { audio, camera, characters, fx } = this.deps;
     characters.trigger(ev.playerId, "slam");
-    for (const id of ev.affected) {
+    const knockbacks = Array.isArray(ev.knockbacks) ? ev.knockbacks : null;
+    for (let i = 0; i < ev.affected.length; i++) {
+      const id = ev.affected[i];
+      const kb = knockbacks?.[i];
+      if (kb) {
+        const strength = Math.min(0.85, Math.max(0.5, Math.hypot(kb.x, kb.y, kb.z) / KNOCK_MAX_SPEED));
+        characters.trigger(id, "hit", { dir: horizontalDir(kb), strength });
+        continue;
+      }
       if (!this.host.playerPosition(id, this.scratch)) continue;
       characters.trigger(id, "hit", { dir: horizontalDir({ x: this.scratch.x - ev.pos.x, y: 0, z: this.scratch.z - ev.pos.z }), strength: 0.6 });
     }
     fx.particles.burst("shockwave", ev.pos, { scale: ev.radius });
     fx.particles.burst("dust", ev.pos, { scale: 1.5 });
     audio.play("shockwave", { pos: ev.pos });
-    if (this.localWithin(ev.pos, SHOCKWAVE_SHAKE_RANGE)) camera.shake(0.5, 0.4);
+    const d = this.localDistance(ev.pos);
+    if (d <= SHOCKWAVE_SHAKE_RANGE) camera.shake(0.5 * (1 - d / SHOCKWAVE_SHAKE_RANGE), 0.4);
   }
 
   private onHeadbutt(ev: HeadbuttEvent): void {
     const { audio, camera, characters, fx } = this.deps;
+    const me = this.host.localId;
+    const s = launchIntensity(launchSpeedOf(ev.launchSpeed, ev.knockback));
     characters.trigger(ev.targetId, "hit", { dir: horizontalDir(ev.knockback), strength: 1 });
-    fx.particles.burst("stars", ev.pos, { scale: 1.2 });
+    fx.particles.burst("stars", ev.pos, { scale: 1.1 + 0.4 * s });
     audio.play("headbutt", { pos: ev.pos });
-    if (ev.targetId === this.host.localId) camera.shake(0.5, 0.4);
+    if (ev.attackerId === me || ev.targetId === me) fx.feel.hitStop(HEADBUTT_STOP_MS);
+    if (ev.targetId === me) {
+      camera.shake(Math.max(0.5, 0.25 + 0.45 * s), 0.4);
+      camera.kick({ fov: 4 + 6 * s });
+    } else if (ev.attackerId === me) {
+      camera.kick({ fov: -3 });
+      camera.shake(0.15, 0.15);
+    }
+  }
+
+  /** A tumbling body crashed into someone (server-only momentum transfer, no points). */
+  private onBump(ev: BumpEvent): void {
+    const { audio, camera, characters, fx } = this.deps;
+    const me = this.host.localId;
+    const k = clamp(ev.impulse / 8, 0, 1);
+    if (this.host.playerPosition(ev.targetId, this.scratch)) {
+      const dir = horizontalDir({ x: this.scratch.x - ev.pos.x, y: 0, z: this.scratch.z - ev.pos.z });
+      characters.trigger(ev.targetId, "hit", { dir, strength: 0.4 + 0.4 * k });
+    }
+    fx.particles.burst("stars", ev.pos, { scale: 0.6 + 0.5 * k });
+    fx.popText.show("boing", above(ev.pos, POP_ABOVE_HIT), this.directory.color(ev.targetId));
+    audio.play("bounce", { pos: ev.pos, volume: 0.6 + 0.4 * k });
+    if (ev.playerId === me || ev.targetId === me) {
+      fx.feel.hitStop(BUMP_STOP_MS);
+      camera.shake(0.15 + 0.2 * k, 0.2);
+    }
   }
 
   /* -------------------------------------------------------- eliminations */
@@ -303,6 +396,9 @@ export class GameFeedback {
     const victim = this.directory.character(ev.playerId);
     if (victim) audio.voice(victim, "ko", { pos: ev.pos });
     this.pushFeed(ev.creditId ? "ringOut" : "fell", ev.creditId, ev.playerId);
+    if (ev.creditId && ev.creditId === this.host.localId && ev.playerId !== ev.creditId) {
+      fx.feel.hitStop(RING_OUT_CREDIT_STOP_MS);
+    }
     if (ev.playerId === this.host.localId) this.host.localEliminated("ringOut", ev.pos, RING_OUT_GHOST_DELAY_SEC);
   }
 
@@ -392,9 +488,10 @@ export class GameFeedback {
     return above(fallback, POP_ABOVE_HEAD);
   }
 
-  private localWithin(pos: Vec3Like, range: number): boolean {
-    if (!this.host.playerPosition(this.host.localId, this.scratch)) return false;
-    return Math.hypot(this.scratch.x - pos.x, this.scratch.y - pos.y, this.scratch.z - pos.z) <= range;
+  /** Distance from the local player to `pos` (Infinity when unknown). */
+  private localDistance(pos: Vec3Like): number {
+    if (!this.host.playerPosition(this.host.localId, this.scratch)) return Infinity;
+    return Math.hypot(this.scratch.x - pos.x, this.scratch.y - pos.y, this.scratch.z - pos.z);
   }
 }
 

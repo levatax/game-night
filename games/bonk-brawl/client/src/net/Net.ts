@@ -75,6 +75,7 @@ const SERVER_MESSAGES = [
   MSG.POWERUP_PICKUP,
   MSG.RING_SHAKE,
   MSG.RING_DROP,
+  MSG.BUMP,
 ] as const satisfies ReadonlyArray<ServerMessageType>;
 type MissingServerMessages = Exclude<ServerMessageType, (typeof SERVER_MESSAGES)[number]>;
 const _allServerMessages: [MissingServerMessages] extends [never] ? true : MissingServerMessages = true;

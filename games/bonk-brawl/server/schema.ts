@@ -89,6 +89,9 @@ export class PlayerState extends Schema implements PlayerView {
   @type("float32") dirX = 0;
   @type("float32") dirZ = -1;
   @type("boolean") alive = false;
+  @type("boolean") jumping = false;
+  @type("boolean") skid = false;
+  @type("uint8") knockBounces = 0;
 }
 
 export class BallEntity extends Schema implements BallView {

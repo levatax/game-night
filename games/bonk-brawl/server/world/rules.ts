@@ -10,7 +10,8 @@ import {
   MAX_HELD_BALLS,
   MAX_HELD_BALLS_TRIPLE,
 } from "../../shared/constants.js";
-import { knockbackMultiplier } from "../../shared/sim/throw.js";
+import { vec3 } from "../../shared/sim/math.js";
+import { heartsKnockMultiplier, knockbackMultiplier, launchVelocity } from "../../shared/sim/throw.js";
 import type { BallKind, HeldPowerUp, Vec3Like } from "../../shared/types.js";
 
 /** Shockwave only reaches players whose feet are within this height of the slam. */
@@ -53,6 +54,38 @@ export function catchDistance(p: Facing, ball: Vec3Like, ballRadius: number): nu
   return d <= CATCH_RANGE + ballRadius ? d : -1;
 }
 
+/** Scratch for catchDistanceSwept (written and read within one call). */
+const closest = vec3();
+
+/**
+ * Swept catch test for a ball that moved a → b during one tick: the point of segment ab closest to
+ * the catch center (chest + forward · CATCH_FORWARD_OFFSET) goes through catchDistance (range +
+ * front half-space). Returns that distance or -1; `at` (optional) receives the tested point.
+ * Closes the gaps a 34 m/s ball (1.13 m per tick) leaves between tick samples.
+ */
+export function catchDistanceSwept(p: Facing, a: Vec3Like, b: Vec3Like, ballRadius: number, at?: Vec3Like): number {
+  const fx = -Math.sin(p.yaw);
+  const fz = -Math.cos(p.yaw);
+  const cx = p.x + fx * CATCH_FORWARD_OFFSET;
+  const cy = p.y + CHEST_HEIGHT;
+  const cz = p.z + fz * CATCH_FORWARD_OFFSET;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const dz = b.z - a.z;
+  const len2 = dx * dx + dy * dy + dz * dz;
+  let t = len2 > 1e-12 ? ((cx - a.x) * dx + (cy - a.y) * dy + (cz - a.z) * dz) / len2 : 0;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  closest.x = a.x + dx * t;
+  closest.y = a.y + dy * t;
+  closest.z = a.z + dz * t;
+  if (at) {
+    at.x = closest.x;
+    at.y = closest.y;
+    at.z = closest.z;
+  }
+  return catchDistance(p, closest, ballRadius);
+}
+
 /**
  * Unit horizontal direction of (x, z); falls back to (fx, fz) (normalized) and finally to +Z when
  * both are degenerate. Writes into `out` and returns it.
@@ -75,29 +108,36 @@ export function horizontalDir(x: number, z: number, fx: number, fz: number, out:
 }
 
 /**
- * Knockback velocity of a live-ball hit: the ball's horizontal travel direction × KNOCKBACK_H plus
- * KNOCKBACK_UP, all × knockbackMultiplier(charge, kind). A ball falling straight down pushes the
- * target away from the ball instead.
+ * Knockback velocity of a live-ball hit: launchVelocity(ball's horizontal travel direction,
+ * KNOCKBACK_H, KNOCKBACK_UP, knockbackMultiplier(charge, kind) × heartsKnockMultiplier(heartsAfter)),
+ * i.e. capped at KNOCK_MAX_SPEED. `heartsAfter` = the target's hearts after this hit's damage
+ * (Smash-style tension: the fewer hearts left, the further you fly). A ball falling straight down
+ * pushes the target away from the ball instead.
  */
 export function ballHitKnockback(
   ball: { x: number; z: number; vx: number; vz: number; charge: number; kind: BallKind },
   target: { x: number; z: number },
+  heartsAfter: number,
 ): Vec3Like {
   const dir = horizontalDir(ball.vx, ball.vz, target.x - ball.x, target.z - ball.z, { x: 0, z: 0 });
-  const mult = knockbackMultiplier(ball.charge, ball.kind);
-  return { x: dir.x * KNOCKBACK_H * mult, y: KNOCKBACK_UP * mult, z: dir.z * KNOCKBACK_H * mult };
+  const mult = knockbackMultiplier(ball.charge, ball.kind) * heartsKnockMultiplier(heartsAfter);
+  return launchVelocity(dir.x, dir.z, KNOCKBACK_H, KNOCKBACK_UP, mult, { x: 0, y: 0, z: 0 });
 }
 
-/** Knockback pushing `target` horizontally away from `from` (shockwave), or along `fallback` when stacked. */
+/**
+ * Knockback pushing `target` horizontally away from `from` (shockwave), or along `fallback` when
+ * stacked: launchVelocity(dir, horizontal, up, mult) (capped at KNOCK_MAX_SPEED).
+ */
 export function radialKnockback(
   from: { x: number; z: number },
   target: { x: number; z: number },
   fallback: { x: number; z: number },
   horizontal: number,
   up: number,
+  mult = 1,
 ): Vec3Like {
   const dir = horizontalDir(target.x - from.x, target.z - from.z, fallback.x, fallback.z, { x: 0, z: 0 });
-  return { x: dir.x * horizontal, y: up, z: dir.z * horizontal };
+  return launchVelocity(dir.x, dir.z, horizontal, up, mult, { x: 0, y: 0, z: 0 });
 }
 
 /** Ring-out credit: the last hitter/knocker if the knock happened within `windowTicks`, else "". */

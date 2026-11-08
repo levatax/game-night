@@ -23,7 +23,8 @@ const GHOST_FADE_SEC = 0.5;
 const LOCAL_GHOST_HIDE_DIST = 2.5;
 /** Give up waiting for frame.alive to go false after a KO trigger (missed patch). */
 const REVIVE_TIMEOUT = 4;
-const NAMEPLATE_GAP = 0.42;
+/** topY includes the tallest flair (ears, hats), so the gap above it is smaller. */
+const NAMEPLATE_GAP = 0.36;
 const CROWN_GAP = 0.05;
 const FLASH_HZ = 14;
 

@@ -65,6 +65,7 @@ export const MSG = {
   POWERUP_PICKUP: "powerUpPickup",
   RING_SHAKE: "ringShake",
   RING_DROP: "ringDrop",
+  BUMP: "bump",
 } as const;
 
 export type MessageType = (typeof MSG)[keyof typeof MSG];
@@ -73,8 +74,9 @@ export type MessageType = (typeof MSG)[keyof typeof MSG];
 
 /**
  * InputCmd.buttons bitmask.
- * THROW is a LEVEL bit (set every tick the button is held).
+ * THROW and JUMP_HELD are LEVEL bits (set every tick the button is held).
  * CATCH, JUMP, ROLL, ABILITY are EDGE bits: set only in the input of the tick the key went down.
+ * JUMP_HELD (jump key still down) drives the variable jump height: releasing it early cuts the jump.
  */
 export const BTN = {
   THROW: 1,
@@ -82,6 +84,7 @@ export const BTN = {
   JUMP: 4,
   ROLL: 8,
   ABILITY: 16,
+  JUMP_HELD: 32,
 } as const;
 
 /** All edge-triggered bits (cleared when the server repeats a missing input). */
@@ -297,6 +300,8 @@ export interface HitEvent {
   pos: Vec3Like;
   /** Knockback velocity applied to the target. */
   knockback: Vec3Like;
+  /** |knockback| (m/s, ≤ KNOCK_MAX_SPEED): impact intensity for hit-stop / shake. */
+  launchSpeed: number;
   charge: number;
   kind: BallKind;
   /** Target hearts after the hit (0 → a KoEvent follows on the same tick). */
@@ -383,6 +388,8 @@ export interface ShockwaveEvent {
   radius: number;
   /** Players knocked back. */
   affected: string[];
+  /** Launch velocity of each affected player, aligned with `affected`. */
+  knockbacks: Vec3Like[];
 }
 
 /** Gruff's Headbutt connected. */
@@ -392,6 +399,24 @@ export interface HeadbuttEvent {
   targetId: string;
   pos: Vec3Like;
   knockback: Vec3Like;
+  /** |knockback| (m/s). */
+  launchSpeed: number;
+}
+
+/**
+ * A stunned (tumbling) body crashed into another player and passed on momentum (server only, no
+ * points). Ring-out credit flows to whoever launched the tumbling body.
+ */
+export interface BumpEvent {
+  tick: number;
+  /** The tumbling / faster body. */
+  playerId: string;
+  /** The body it crashed into. */
+  targetId: string;
+  /** Contact midpoint at chest height. */
+  pos: Vec3Like;
+  /** Normal impulse per unit mass exchanged (m/s). */
+  impulse: number;
 }
 
 /** A ball starts dropping from the sky (round start, respawn, sudden-death extra). */
@@ -476,6 +501,7 @@ export interface ServerMessages {
   powerUpPickup: PowerUpPickupEvent;
   ringShake: RingShakeEvent;
   ringDrop: RingDropEvent;
+  bump: BumpEvent;
 }
 
 export type ServerMessageType = keyof ServerMessages;
@@ -499,7 +525,8 @@ export type WorldEventType =
   | "powerUpSpawn"
   | "powerUpPickup"
   | "ringShake"
-  | "ringDrop";
+  | "ringDrop"
+  | "bump";
 
 /* ================================================================ errors */
 

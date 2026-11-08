@@ -246,7 +246,8 @@ charge, heldCount, powerUp, zoomies) + `net.me` (hearts) + `state` (phase, round
 Client sends one `InputCmd` per sim tick while `net.wantsInput` (alive participant in
 countdown/playing/suddenDeath). `seq` is strictly increasing for the page lifetime (never reset;
 §2.16). THROW is level-triggered (held now OR pressed since the previous sample, so a sub-tick
-click is still a 1-tick quick throw), the other buttons edge-triggered (latched by Input until the
+click is still a 1-tick quick throw), JUMP_HELD is level-triggered (Space down now: variable jump
+height), the other buttons edge-triggered (latched by Input until the
 next sample). Server: queue per player, consume 1 per tick (repeat last without edges when empty;
 cap 4 dropping oldest but carrying edge bits forward), `lastSeq` = consumed seq; seqs ≤ the last
 seen one are dropped; `clearInputs(id)` on join/reconnect forgets the last seen seq.
@@ -259,6 +260,12 @@ new position; > 2 m snap, else add to a visual offset decaying with τ = 100 ms.
 lerp(prev, current, alpha) + offset; yaw/pitch from Input. ctx = `{arena, rings, character,
 dt: DT, locked: phase ∉ {playing, suddenDeath}}`. Pickups, hits, knockback and catches are not
 predicted; they arrive via reconciliation (knockback appears ~RTT/2 late, acceptable).
+Knockback onset (server `stunTicks > 0` while the pre-reconcile prediction had `stunTicks === 0`):
+errors up to `PREDICTION_KNOCK_SNAP_DIST` (6 m) blend instead of snapping, with τ =
+`PREDICTION_KNOCK_SMOOTH_MS` (60 ms) until that offset has decayed, so a 15–20 m/s launch does
+not teleport the victim. `BTN.JUMP_HELD` (level bit, Space down) is part of every pending input,
+so the variable jump height replays exactly; `jumping`/`skid`/`knockBounces` reconcile like every
+other sim field.
 Prediction resets when the local player becomes alive at round start / reconnect. When not
 predicting (round-end slow-mo, ghost, spectator, matchEnd) `getLocalPlayer` returns the local
 player interpolated exactly like a remote one (never raw 20 Hz state).
@@ -312,18 +319,20 @@ monotonic; `serverTickAt(now)` used by Interpolation and BallSync.
 | `countdown` n>0 / n=0 | — / — | — / popText `bonk` above me | `countdownTick` / `countdownGo` | HUD countdown n / "BONK!" | — |
 | `suddenDeath` | — | — | `suddenDeath`, music `suddenDeath`, tempo ramps 1→1.35 over 25 s | banner "SUDDEN DEATH!" (danger) | shake 0.15 |
 | `localThrow` / `throw` | `trigger(owner,"throw")` | (ball visuals from BallSync) | stop that player's `charge` loop; `throw` / `throwHeavy` (charge≥full or mega) at origin, 30% `voice(char,"throw")` | — | — |
-| `localStep` | — | `rollStarted` → puff; `abilityStarted` → as `ability` | `jumped` → `jump`; `rollStarted` → `roll`; `abilityStarted` → ability SFX | — | — |
+| `localStep` | — | `rollStarted` → puff; `abilityStarted` → as `ability`; `bounced` → dust + stars (`PlayerEffects.onBounce`); `skidStarted` → skid dust (`onSkidStart`) | `jumped` → `jump`; `rollStarted` → `roll`; `abilityStarted` → ability SFX; `bounced` → `bounce` (0.5 + 0.5·min(1, bounceSpeed/12)); `skidStarted` → `land` 0.35 vol, pitch 1.4 | — | `landed` → `kick({dip: −0.06·min(1, landSpeed/14)})`; `bounced` → `kick({dip: −0.1})` + shake 0.15 |
 | `pickup` | `trigger("pickup")` | — | `pickup` (+`squeak`) at pos | — | — |
-| `hit` | `trigger(target,"hit",{dir})` | stars burst, popText `bonk`; hitStop 60 ms if me is thrower or target | `bonk` at pos, `voice(target,"hit")`; `ding` if me = thrower | kill feed `bonk`; HUD heart pop if me | shake 0.35 (mega 0.6) if me = target |
-| `catch` | `trigger(catcher,"catch")` | popText `catch`, sparkles; slowMo 0.3×150 ms if me = catcher | `catch`, `crowdOoh`, `voice(catcher,"catch")` | kill feed `catch` | — |
+| `hit` | `trigger(target,"hit",{dir, strength})`, strength = max(full/mega ? 0.9 : 0.4, launchSpeed/KNOCK_MAX_SPEED) | stars burst (scaled by s), `balls.impactFlash`, popText `bonk`; hitStop 60 + 70·s ms if me is thrower or target (s = clamp((launchSpeed − 5)/15, 0, 1)) | `bonk` at pos, `voice(target,"hit")`; `ding` if me = thrower | kill feed `bonk`; HUD heart pop if me | me = target: shake 0.25 + 0.45·s, `kick({fov: 4 + 6·s})`; me = thrower: `kick({fov: −3})` + shake 0.12 |
+| `catch` | `trigger(catcher,"catch")` | popText `catch`, sparkles; slowMo 0.3×150 ms if me = catcher | `catch`, `crowdOoh`, `voice(catcher,"catch")` | kill feed `catch` | `kick({fov: −5})` if me = catcher |
 | `whiff` | `trigger("whiff")` | popText `miss` (small) | `whiff` | — | — |
 | `deflect` | Mochi bouncing: `trigger(id,"ability")`; otherwise — | popText `boing` (+ bubbles for Mochi) | `bellyBoing` (Mochi) / `bounce` (others) | — | — |
-| `ringOut` | `trigger(victim,"ringOut",{pos})` (keeps tumbling down, then ghost above `pos`) | popText `out` at pos | `slideWhistle` at pos, `voice(victim,"ko")` | kill feed `ringOut`/`fell`; spectating banner if me | `enterGhost(pos + up)` if me (after 0.8 s) |
+| `ringOut` | `trigger(victim,"ringOut",{pos})` (keeps tumbling down, then ghost above `pos`) | popText `out` at pos; hitStop 80 ms if credited to me | `slideWhistle` at pos, `voice(victim,"ko")` | kill feed `ringOut`/`fell`; spectating banner if me | `enterGhost(pos + up)` if me (after 0.8 s) |
 | `ko` | `trigger(id,"ko",{pos})` (pop, floating hat, ghost) | puff + feathers/fur in animal color, popText `out` | `ko`, `voice(id,"ko")` | kill feed `ko`/`dropped`; spectating banner if me | `enterGhost` if me |
 | `emote` | `trigger(id,"emote",{emote})` | — | `honk` for honk, else `voice(char,"emote")` | — | — |
 | `ability` | `trigger(id,"ability")` | flapDash feathers + speed lines; bellyBounce bubbles; curveball sparkles; bellySlide dust trail | `flapDash` / `groundPoundLeap` / `voice` / `curveArm` / `bellySlide` / `roll`(pitch 0.8) | HUD ability (state-driven) | — |
-| `shockwave` | `trigger(id,"slam")`, affected `trigger("hit")` | `shockwave` ring (radius) + dust | `shockwave` | — | shake 0.5 if within 6 m |
-| `headbutt` | `trigger(target,"hit")` | stars | `headbutt` | — | shake 0.5 if me = target |
+| `shockwave` | `trigger(id,"slam")`, affected `trigger("hit",{dir from knockbacks[i]})` | `shockwave` ring (radius) + dust | `shockwave` | — | shake 0.5·(1 − d/6) if within 6 m |
+| `headbutt` | `trigger(target,"hit",{strength: 1})` | stars; hitStop 90 ms if me is attacker or target | `headbutt` | — | shake 0.5 + FOV punch if me = target |
+| `bump` | bumped player `trigger("hit")` | stars at pos, popText `boing` in the bumped player's color; hitStop 40 ms if me is involved | `bounce` | — | — |
+| (state) remote `knockBounces` change / rising `skid` | — | bounce dust + stars / skid dust; tumble ribbon (`fx.trails`) while stunned airborne > 6 m/s, red + popText `out` once when `predictTumbleLanding` = −1 | `bounce` / `land` 0.35 | — | camera `tumble` follow while my stun && !grounded; ring-out pivot clamp at y −1.2 |
 | `ballSpawn` | — | — | `ballDrop` at pos | — | — |
 | `boomerangReturn` | — | — | `boomerang` (caught → `pickup`) | — | — |
 | `powerUpWarning` | — | (shimmer is state-driven) | `powerUpWarning` | — | — |
@@ -373,7 +382,7 @@ monotonic; `serverTickAt(now)` used by Interpolation and BallSync.
 ## 10. Testing
 
 - sim: `npx vitest run games/bonk-brawl/shared/sim` — determinism (same inputs → identical state
-  after 300 ticks), jump apex ≈ 1.2 m, roll distance ≈ 4 m, throw speeds 16/34, live→dead on first
+  after 300 ticks), jump apex ≈ 1.2 m held / ≈ 0.4 m tapped, roll distance ≈ 4 m, throw speeds 16/34, live→dead on first
   bounce, dead→neutral at rest, ring floor holes, cover push-out, curve/boomerang.
 - server: optional bot tests under `games/bonk-brawl/test/` using `colyseus.js` against
   `npm start` with `BONK_TEST=1` and create option `fast: true`.
@@ -439,9 +448,12 @@ export function ringIndexAt(arena: ArenaDef, x: number, z: number): number;
 export function isFloorAt(q: FloorQuery, x: number, z: number): boolean;
 export function coverTopAt(arena: ArenaDef, x: number, z: number, radius: number): number;
 export function groundHeightAt(q: FloorQuery, x: number, z: number, radius: number, feetY: number): number;
-export function resolveCoverCollision(arena: ArenaDef, pos: Vec3, radius: number, height: number, vel?: Vec3): boolean;
+export interface CoverHit { impact: number }
+export function resolveCoverCollision(arena: ArenaDef, pos: Vec3, radius: number, height: number, vel?: Vec3, restitution = 0, impact?: CoverHit): boolean;
 export function sphereCoverContact(arena: ArenaDef, center: Vec3, radius: number): Contact | null;
 export function sphereCapsuleOverlap(center: Vec3, sphereRadius: number, capFeet: Vec3, capRadius: number, capHeight: number): boolean;
+/** Swept version (ball path a→b during one tick); used by the server's hit test. */
+export function segmentCapsuleOverlap(a: Vec3, b: Vec3, sphereRadius: number, capFeet: Vec3, capRadius: number, capHeight: number): boolean;
 export function raycastWorld(q: FloorQuery, origin: Vec3, dir: Vec3, maxDist: number): number;
 export function pointInCover(c: CoverDef, x: number, z: number, radius: number): boolean;
 ```
@@ -487,8 +499,21 @@ export function ballKindForPowerUp(powerUp: HeldPowerUp): BallKind;
 export function computeThrowVelocity(charge: number, aim: Vec3, powerUp: HeldPowerUp, out: Vec3 = vec3()): Vec3;
 export function computeThrowVelocities(charge: number, yaw: number, pitch: number, powerUp: HeldPowerUp): Vec3[];
 export function knockbackMultiplier(charge: number, kind: BallKind): number;
+export function heartsKnockMultiplier(heartsAfter: number): number;
+export function launchVelocity(dirX: number, dirZ: number, h: number, up: number, mult: number, out: Vec3): Vec3; // |v| ≤ KNOCK_MAX_SPEED
+export function knockStunTicks(launch: Vec3Like): number; // whole tumble flight + KNOCK_GETUP_TICKS, clamped
 export interface TrajectoryOptions …
 export function sampleTrajectory(q: FloorQuery, origin: Vec3, velocity: Vec3, opts: TrajectoryOptions): Vec3[];
+```
+
+#### `shared/sim/landing.ts`, `shared/sim/motion.ts`
+
+```ts
+/** Ticks until a tumbling copy of p (neutral input) lands or bounces, −1 if it falls out, maxTicks otherwise. Allocation-free. */
+export function predictTumbleLanding(p: PlayerSimFields, ctx: SimContext, maxTicks: number, out: Vec3): number;
+export interface MotionCues { tumbling; knockSliding; skidding; jumpRising; apexHang; fastFalling: boolean; speed: number }
+export function createMotionCues(): MotionCues;
+export function readMotionCues(p: PlayerSimFields, out: MotionCues): MotionCues;
 ```
 
 #### `shared/sim/actions.ts`
@@ -824,8 +849,9 @@ export class CameraRig {
   setFloorQuery(q: FloorQuery | null): void;
   setBaseFov(deg: number): void;
   enterGhost(from: Vec3Like, yaw: number): void;
-  update(realDt: number, u: CameraUpdate): void;
+  update(realDt: number, u: CameraUpdate): void;   // u.tumble?: boolean (tumble follow mode)
   shake(intensity: number, durationSec: number): void;
+  kick(k: CameraKick): void;   // { fov?, back?, dip? } damped springs (ω 18, ζ 0.5)
   koCut(pos: Vec3Like, durationSec: number): void;
   get cutting(): boolean;
 }
@@ -875,9 +901,12 @@ export interface AnimalRig …
 export class Animal {
   readonly character: CharacterId;
   readonly rig: AnimalRig;
-  constructor(character: CharacterId, slotColor: string);
+  readonly parts: AnimalParts;   // + springs, earR/earL, tail, headwear, cheeks, eyeBulbs (rigTypes.ts)
+  constructor(character: CharacterId, slotColor: string, opts?: { detail?: "hi" | "mid" });
   setSlotColor(color: string): void;
-  setExpression(expression: FaceExpression): void;
+  setExpression(expression: FaceExpression): void;   // = setFaceParts(e, e)
+  setFaceParts(eyes: FaceExpression, mouth: FaceExpression): void;
+  get mouthExpression(): FaceExpression;
   setGhost(ghost: boolean): void;
   setFlash(on: boolean): void;
   dispose(): void ;
@@ -888,21 +917,25 @@ export class Animal {
 
 ```ts
 export class Animator {
-  constructor(animal: Animal, character: CharacterId);
+  constructor(animal: Animal, character: CharacterId, opts?: { seed?: number });
   update(frame: PlayerFrame, dt: number): void;
   trigger(anim: AnimTrigger, opts?: TriggerOptions): void;
-  get expression(): FaceExpression;
+  get expression(): FaceExpression;        // eyes
+  get mouthExpression(): FaceExpression;
+  get springRig(): SpringRig;              // characters/springs.ts (dev harness)
 }
 ```
 
 #### `client/src/characters/faces.ts`
 
 ```ts
-export const FACE_SHEET_SIZE = 512;
+export const FACE_SHEET_SIZE = 1024;   // sheet WIDTH
+export const FACE_SHEET_HEIGHT = 512;
 export const FACE_COLUMNS = 4;
 export const FACE_ROWS = 2;
 export function getFaceSheet(character: CharacterId): THREE.CanvasTexture;
 export function faceOffset(expression: FaceExpression): { u: number; v: number };
+export function setFaceOffset(texture: THREE.Texture, expression: FaceExpression): void;
 ```
 
 #### `client/src/characters/Nameplate.ts`

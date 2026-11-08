@@ -9,6 +9,7 @@ import { ArcPreview } from "./ArcPreview";
 import { BallVisuals } from "./Balls";
 import { Feel } from "./Feel";
 import { Particles } from "./Particles";
+import { PlayerTrails } from "./PlayerTrails";
 import { PopText } from "./PopText";
 import { PowerUpVisuals } from "./PowerUps";
 import { BlobShadows } from "./Shadows";
@@ -26,6 +27,8 @@ export class Fx {
   readonly powerUps: PowerUpVisuals;
   readonly arc: ArcPreview;
   readonly shadows: BlobShadows;
+  /** Ribbon trails behind tumbling players (fed by PlayerEffects). */
+  readonly trails: PlayerTrails;
   readonly feel = new Feel();
   private arena: ArenaDef | null = null;
   private readonly point = { x: 0, y: 0, z: 0 };
@@ -37,6 +40,14 @@ export class Fx {
     this.powerUps = new PowerUpVisuals(scene);
     this.arc = new ArcPreview(scene);
     this.shadows = new BlobShadows(scene);
+    this.trails = new PlayerTrails(scene);
+    // A live ball's killing bounce lands with a little "thud" of dust.
+    this.balls.onDeathBounce = (x, y, z) => {
+      this.point.x = x;
+      this.point.y = y;
+      this.point.z = z;
+      this.particles.burst("dust", this.point, { scale: 0.5 });
+    };
   }
 
   /** New arena loaded: pedestals + shadow ground query. */
@@ -51,10 +62,11 @@ export class Fx {
     this.particles.setQualityScale(QUALITY_PARTICLES[quality]);
   }
 
-  /** Per frame (cosmetic dt): particles + pop text. Balls/power-ups/shadows are synced separately. */
+  /** Per frame (cosmetic dt): particles + pop text + player trails. Balls/power-ups/shadows are synced separately. */
   update(dt: number): void {
     this.particles.update(dt);
     this.popText.update(dt);
+    this.trails.update(dt);
   }
 
   /** KO pop (event table `ko`): white puff + feathers (birds) or fur tufts in the animal's colors + "OUT!". */
@@ -105,6 +117,7 @@ export class Fx {
     this.powerUps.clear();
     this.arc.update(null, "#FFFFFF");
     this.shadows.clear();
+    this.trails.clear();
     this.feel.reset();
   }
 
@@ -115,5 +128,6 @@ export class Fx {
     this.powerUps.dispose();
     this.arc.dispose();
     this.shadows.dispose();
+    this.trails.dispose();
   }
 }

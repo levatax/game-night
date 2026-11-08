@@ -9,8 +9,10 @@ import {
   raycastWorld,
   resolveCoverCollision,
   ringIndexAt,
+  segmentCapsuleOverlap,
   sphereCapsuleOverlap,
   sphereCoverContact,
+  type CoverHit,
 } from "./geometry.js";
 import { vec3 } from "./math.js";
 import { solidRings } from "./testkit.js";
@@ -91,6 +93,22 @@ describe("capsule vs cover", () => {
     expect(vel.z).toBe(2);
   });
 
+  it("reflects the velocity with restitution and reports the impact", () => {
+    const pos = vec3(basket.x + 0.9, 0, basket.z);
+    const vel = vec3(-5, 0, 2);
+    const hit: CoverHit = { impact: 0 };
+    expect(resolveCoverCollision(picnic, pos, PLAYER_RADIUS, PLAYER_HEIGHT, vel, 0.5, hit)).toBe(true);
+    expect(vel.x).toBeCloseTo(2.5, 9); // −5 reflected × 0.5
+    expect(vel.z).toBe(2);
+    expect(hit.impact).toBeCloseTo(5, 9);
+    // Already moving away: untouched, no impact.
+    const away = vec3(5, 0, 0);
+    const none: CoverHit = { impact: 0 };
+    resolveCoverCollision(picnic, vec3(basket.x + 0.9, 0, basket.z), PLAYER_RADIUS, PLAYER_HEIGHT, away, 0.5, none);
+    expect(away.x).toBe(5);
+    expect(none.impact).toBe(0);
+  });
+
   it("pushes a capsule out of a rotated box", () => {
     const pos = vec3(table.x + 0.3, 0, table.z - 0.2);
     expect(resolveCoverCollision(picnic, pos, PLAYER_RADIUS, PLAYER_HEIGHT)).toBe(true);
@@ -159,6 +177,41 @@ describe("sphereCapsuleOverlap", () => {
     const raised = vec3(3, 0.85, -2);
     expect(sphereCapsuleOverlap(vec3(3, 1.85, -2.3), BALL_RADIUS, raised, PLAYER_RADIUS, PLAYER_HEIGHT)).toBe(true);
     expect(sphereCapsuleOverlap(vec3(3, 0.3, -2), BALL_RADIUS, raised, PLAYER_RADIUS, PLAYER_HEIGHT)).toBe(false);
+  });
+});
+
+describe("segmentCapsuleOverlap", () => {
+  const feet = vec3(0, 0, 0);
+
+  it("catches a fast grazing pass that both tick samples miss", () => {
+    // 34 m/s ball: 1.13 m per tick, passing 0.6 m beside the capsule axis at chest height.
+    const a = vec3(-0.6, 1, 0.57);
+    const b = vec3(-0.6, 1, -0.56);
+    const r = BALL_RADIUS;
+    expect(sphereCapsuleOverlap(a, r, feet, PLAYER_RADIUS, PLAYER_HEIGHT)).toBe(false);
+    expect(sphereCapsuleOverlap(b, r, feet, PLAYER_RADIUS, PLAYER_HEIGHT)).toBe(false);
+    expect(segmentCapsuleOverlap(a, b, r, feet, PLAYER_RADIUS, PLAYER_HEIGHT)).toBe(true);
+  });
+
+  it("misses a pass outside the reach and matches the point test for a zero-length segment", () => {
+    const a = vec3(-0.75, 1, 1);
+    const b = vec3(-0.75, 1, -1);
+    expect(segmentCapsuleOverlap(a, b, BALL_RADIUS, feet, PLAYER_RADIUS, PLAYER_HEIGHT)).toBe(false);
+    for (const p of [vec3(0.5, 0.2, 0), vec3(0, 1.7, 0.1), vec3(0.69, 1, 0), vec3(0.71, 1, 0), vec3(0, -0.3, 0)]) {
+      expect(segmentCapsuleOverlap(p, p, BALL_RADIUS, feet, PLAYER_RADIUS, PLAYER_HEIGHT)).toBe(
+        sphereCapsuleOverlap(p, BALL_RADIUS, feet, PLAYER_RADIUS, PLAYER_HEIGHT),
+      );
+    }
+  });
+
+  it("respects the capsule ends (over the head, under a belly slide)", () => {
+    const over = [vec3(-1, 2.0, 0), vec3(1, 2.0, 0)];
+    expect(segmentCapsuleOverlap(over[0], over[1], BALL_RADIUS, feet, PLAYER_RADIUS, PLAYER_HEIGHT)).toBe(false);
+    const head = [vec3(-1, 1.0, 0), vec3(1, 1.0, 0)];
+    expect(segmentCapsuleOverlap(head[0], head[1], BALL_RADIUS, feet, PLAYER_RADIUS, SLIDE_HEIGHT)).toBe(false);
+    expect(segmentCapsuleOverlap(head[0], head[1], BALL_RADIUS, feet, PLAYER_RADIUS, PLAYER_HEIGHT)).toBe(true);
+    // Diving steeply through the capsule top.
+    expect(segmentCapsuleOverlap(vec3(0.2, 2.5, 0), vec3(0.2, 1.2, 0), BALL_RADIUS, feet, PLAYER_RADIUS, PLAYER_HEIGHT)).toBe(true);
   });
 });
 

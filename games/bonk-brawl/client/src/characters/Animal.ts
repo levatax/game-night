@@ -3,10 +3,10 @@
 import * as THREE from "three";
 import { CHARACTERS } from "../../../shared/constants";
 import type { CharacterId } from "../../../shared/types";
-import { addOutline } from "../render/Toon";
-import { faceOffset, getFaceSheet } from "./faces";
+import { getFaceSheet, setFaceOffset } from "./faces";
 import { buildAnimalModel } from "./models";
-import { AnimalMaterials, OUTLINE_THICKNESS, PartBuilder } from "./parts";
+import { AnimalMaterials, type Detail, PartBuilder } from "./parts";
+import type { SpringBone } from "./rigTypes";
 import type { FaceExpression } from "./types";
 
 /** Named parts the Animator drives. Every part is a Group pivoted at its joint. */
@@ -45,15 +45,33 @@ export interface AnimalParts {
   tailTip: THREE.Object3D | null;
   ghostTail: THREE.Group;
   accessory: THREE.Object3D | null;
+  /** Every spring bone, parents first ([] if none). */
+  springs: ReadonlyArray<SpringBone>;
+  /** Same objects as ears[0] / ears[1] (ears stays [right, left]); null if the animal has no ears. */
+  earR: THREE.Object3D | null;
+  earL: THREE.Object3D | null;
+  /** Tail segments AFTER rig.extra (extra = segment 0). tailTip === tail[tail.length − 1] ?? null. */
+  tail: ReadonlyArray<THREE.Object3D>;
+  /** Hat / nightcap root / headband / scarf (may equal accessory). */
+  headwear: THREE.Object3D | null;
+  /** Scale pivots (Mochi cheeks [R, L]). */
+  cheeks: ReadonlyArray<THREE.Object3D>;
+  /** Hopsworth eye bulbs [R, L] (scale-y blink / pop). */
+  eyeBulbs: ReadonlyArray<THREE.Object3D>;
+}
+
+export interface AnimalOptions {
+  /** Geometry detail: "hi" (players, lobby) or "mid" (menu crowd). */
+  detail?: "hi" | "mid";
 }
 
 /**
- * Built only from Three.js primitives (spheres/capsules/cones/boxes, low segment counts) with
- * createToonMaterial colors from CHARACTERS[id].colors and addOutline (≈0.025). Big head
- * (~1:1.5 head-to-body), oversized hands/feet/wings, accessories from CharacterDef.look (sailor
- * hat, bow tie, pink cheeks, bell collar, red scarf, curly horns + bell). The player slot color
- * tints a small accessory band + the outline of the feet ring so players are identifiable.
- * Body meshes castShadow = true. Total < ~1.5k triangles per animal.
+ * Built only from Three.js primitives merged per pivot (one vertex-colored toon mesh + one
+ * inverted-hull outline per joint, ≤ ~28 draw calls and ≤ 2.4k body triangles per animal at "hi").
+ * Chibi "gumdrop" proportions (big head fused into the torso), per-animal silhouette hooks on top,
+ * behind and at the side, a slot-colored element visible from behind (+ wrist bands + tinted
+ * outline), spring-bone pivots for ears / tails / hats (parts.springs), independent eyes and mouth
+ * face sheets. Only the torso, head, legs and one big accessory cast shadows.
  */
 export class Animal {
   readonly character: CharacterId;
@@ -65,25 +83,37 @@ export class Animal {
   readonly sacScale = new THREE.Vector3(1, 1, 1);
   readonly bellyScale = new THREE.Vector3(1, 1, 1);
   private readonly materials: AnimalMaterials;
-  private readonly faceTexture: THREE.Texture;
-  private readonly casters: THREE.Mesh[] = [];
+  private readonly eyesTexture: THREE.Texture;
+  private readonly mouthTexture: THREE.Texture;
+  private readonly casters: THREE.Mesh[];
   private currentExpression: FaceExpression = "idle";
+  private currentMouth: FaceExpression = "idle";
   private isGhost = false;
   private shadows = true;
 
-  constructor(character: CharacterId, slotColor: string) {
+  constructor(character: CharacterId, slotColor: string, opts: AnimalOptions = {}) {
     this.character = character;
-    this.materials = new AnimalMaterials(CHARACTERS[character].colors, slotColor);
-    this.faceTexture = getFaceSheet(character).clone();
-    const { root, skeleton: s, extras, spec } = buildAnimalModel(character, new PartBuilder(this.materials), this.faceTexture);
-    root.name = `animal:${character}`;
-    this.topY = spec.topY;
-
-    for (const outline of addOutline(s.model, OUTLINE_THICKNESS)) outline.material = this.materials.outline;
-    root.traverse((o) => {
-      if (o instanceof THREE.Mesh && o.castShadow) this.casters.push(o);
+    const detail: Detail = opts.detail ?? "hi";
+    const sheet = getFaceSheet(character);
+    this.eyesTexture = sheet.clone();
+    this.mouthTexture = sheet.clone();
+    this.materials = new AnimalMaterials(CHARACTERS[character].colors, slotColor, {
+      eyes: this.eyesTexture,
+      mouth: this.mouthTexture,
     });
+    const builder = new PartBuilder(this.materials, { detail, cacheKey: `${character}:${detail}` });
+    const { root, skeleton: s, extras, spec, springs, finished } = buildAnimalModel(character, builder);
+    root.name = `animal:${character}`;
+    // Debug hook (dev harness spring-tip overlay).
+    root.userData.springs = springs;
+    this.topY = spec.topY;
+    this.materials.setRimStrength(spec.rim ?? 0.28);
+    this.casters = finished.casters;
 
+    const face = finished.faces.get(extras.facePivot ?? "head") ?? finished.faces.values().next().value;
+    if (!face) throw new Error(`Animal ${character}: no face mesh`);
+
+    const tail = extras.tail;
     this.rig = {
       root,
       body: s.body,
@@ -95,7 +125,7 @@ export class Animal {
       extra: s.extra,
       hand: s.hand,
       headTop: s.headTop,
-      face: extras.face,
+      face,
     };
     this.parts = {
       offset: s.offset,
@@ -105,9 +135,16 @@ export class Animal {
       sac: extras.sac,
       belly: s.belly,
       ears: extras.ears,
-      tailTip: extras.tailTip,
+      tailTip: tail[tail.length - 1] ?? null,
       ghostTail: s.ghostTail,
       accessory: extras.accessory,
+      springs,
+      earR: extras.ears[0] ?? null,
+      earL: extras.ears[1] ?? null,
+      tail,
+      headwear: extras.headwear,
+      cheeks: extras.cheeks,
+      eyeBulbs: extras.eyeBulbs,
     };
     if (extras.sac) {
       this.sacScale.copy(extras.sac.scale);
@@ -115,26 +152,38 @@ export class Animal {
       extras.sac.visible = false;
     }
     if (s.belly) this.bellyScale.copy(s.belly.scale);
-    this.setExpression("idle");
+    if (isDev()) checkRestPose(this);
+    this.applyFace();
   }
 
   get expression(): FaceExpression {
     return this.currentExpression;
   }
 
+  /** Current mouth expression (independent of the eyes). */
+  get mouthExpression(): FaceExpression {
+    return this.currentMouth;
+  }
+
   get ghost(): boolean {
     return this.isGhost;
   }
 
-  /** Change the slot tint (player color). */
+  /** Change the slot tint (player color): a uniform write. */
   setSlotColor(color: string): void {
     this.materials.setSlotColor(color);
   }
 
   setExpression(expression: FaceExpression): void {
-    this.currentExpression = expression;
-    const { u, v } = faceOffset(expression);
-    this.faceTexture.offset.set(u, v);
+    this.setFaceParts(expression, expression);
+  }
+
+  /** Eyes and mouth expressions independently (blinks never touch the mouth). Allocation-free. */
+  setFaceParts(eyes: FaceExpression, mouth: FaceExpression): void {
+    if (eyes === this.currentExpression && mouth === this.currentMouth) return;
+    this.currentExpression = eyes;
+    this.currentMouth = mouth;
+    this.applyFace();
   }
 
   /** Ghost form: translucent, pale, no shadow, floating bob, ghost tail instead of legs. */
@@ -172,12 +221,36 @@ export class Animal {
   dispose(): void {
     this.rig.root.removeFromParent();
     this.materials.dispose();
-    this.faceTexture.dispose();
+    this.eyesTexture.dispose();
+    this.mouthTexture.dispose();
+  }
+
+  private applyFace(): void {
+    setFaceOffset(this.eyesTexture, this.currentExpression);
+    setFaceOffset(this.mouthTexture, this.currentMouth);
   }
 
   private applyShadows(): void {
     const cast = this.shadows && !this.isGhost;
     for (const mesh of this.casters) mesh.castShadow = cast;
+  }
+}
+
+function isDev(): boolean {
+  const env = (import.meta as unknown as { env?: { DEV?: boolean } }).env;
+  return env?.DEV === true;
+}
+
+/** Dev-only: every pivot the animator / springs drive must rest at identity rotation and scale 1. */
+function checkRestPose(animal: Animal): void {
+  const p = animal.parts;
+  const pivots: THREE.Object3D[] = [...p.springs.map((s) => s.pivot), ...p.cheeks, ...p.eyeBulbs, ...p.tail, ...p.ears];
+  if (p.jaw) pivots.push(p.jaw);
+  for (const o of pivots) {
+    const q = o.quaternion;
+    const s = o.scale;
+    const identity = Math.abs(q.w) > 0.99999 && Math.abs(s.x - 1) < 1e-6 && Math.abs(s.y - 1) < 1e-6 && Math.abs(s.z - 1) < 1e-6;
+    if (!identity) console.warn(`[Animal ${animal.character}] pivot "${o.name}" is not at identity rest pose`);
   }
 }
 
@@ -190,4 +263,37 @@ export function countTriangles(root: THREE.Object3D): number {
     count += (g.index ? g.index.count : g.getAttribute("position").count) / 3;
   });
   return Math.round(count);
+}
+
+export interface AnimalBudget {
+  meshes: number;
+  drawCalls: number;
+  triangles: number;
+  outlineTriangles: number;
+  casters: number;
+}
+
+/** Visible meshes / draw calls (multi-material groups count per group) / triangles / casters. */
+export function measureBudget(root: THREE.Object3D): AnimalBudget {
+  const out: AnimalBudget = { meshes: 0, drawCalls: 0, triangles: 0, outlineTriangles: 0, casters: 0 };
+  const visit = (o: THREE.Object3D): void => {
+    if (!o.visible) return;
+    if (o instanceof THREE.Mesh) {
+      const g = o.geometry as THREE.BufferGeometry;
+      const tris = (g.index ? g.index.count : g.getAttribute("position").count) / 3;
+      const calls = Array.isArray(o.material) ? Math.max(1, g.groups.length) : 1;
+      if (o.userData.isOutline) {
+        out.outlineTriangles += tris;
+        out.drawCalls += calls;
+      } else {
+        out.meshes++;
+        out.triangles += tris;
+        out.drawCalls += calls;
+        if (o.castShadow) out.casters++;
+      }
+    }
+    for (const c of o.children) visit(c);
+  };
+  visit(root);
+  return out;
 }

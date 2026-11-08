@@ -102,7 +102,8 @@ describe("Input.sample", () => {
     expect(rmb.defaultPrevented).toBe(true);
     const buttons = input.sample(1).buttons;
     expect(buttons & (BTN.JUMP | BTN.ROLL | BTN.ABILITY | BTN.CATCH)).toBe(BTN.JUMP | BTN.ROLL | BTN.ABILITY | BTN.CATCH);
-    expect(input.sample(2).buttons).toBe(0);
+    // Space is still down: only the JUMP_HELD level bit remains (variable jump height).
+    expect(input.sample(2).buttons).toBe(BTN.JUMP_HELD);
     // Key auto-repeat never re-latches.
     key("keydown", "Space", true);
     expect(input.sample(3).buttons & BTN.JUMP).toBe(0);

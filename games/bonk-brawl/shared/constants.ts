@@ -71,17 +71,32 @@ export const MOVE_SPEED = 6;
 export const CHARGE_MOVE_MULT = 0.6;
 /** Move speed multiplier during whiff recovery. */
 export const WHIFF_MOVE_MULT = 0.35;
-/** Default ground acceleration toward wish velocity (m/s²); arenas may override via FrictionProfile. */
-export const GROUND_ACCEL = 60;
-/** Default ground deceleration with no input (m/s²). */
-export const GROUND_DECEL = 45;
-/** Fraction of ground accel available in the air. */
-export const AIR_CONTROL = 0.45;
-/** Deceleration while stunned and grounded (sliding to a stop after knockback). */
-export const STUN_GROUND_DECEL = 18;
+/** Default ground acceleration toward wish velocity (m/s²); arenas override via FrictionProfile.groundAccel. */
+export const GROUND_ACCEL = 48;
+/** Default ground deceleration with no input (m/s²); arenas override via FrictionProfile.groundDecel. */
+export const GROUND_DECEL = 40;
+/** Horizontal acceleration toward the wish velocity in the air (m/s², map independent). */
+export const AIR_ACCEL = 18;
+/** Horizontal deceleration in the air with no input (m/s²): a jump keeps most of its momentum. */
+export const AIR_DECEL = 4;
+/** Grounded velocity component AGAINST the wish direction above this counts as a turn skid (m/s). */
+export const SKID_MIN_SPEED = 2.5;
 export const JUMP_HEIGHT = 1.2;
-/** sqrt(2·g·h) ≈ 6.93 m/s. */
-export const JUMP_VELOCITY = Math.sqrt(2 * -GRAVITY * JUMP_HEIGHT);
+/**
+ * Jump launch speed. Discrete-calibrated with the variable-jump gravity below so a full-hold jump
+ * (JUMP | JUMP_HELD) peaks at ≈ JUMP_HEIGHT (1.199 m) at 30 Hz.
+ */
+export const JUMP_VELOCITY = 7.48;
+/** Gravity multiplier while rising with jump held (above JUMP_APEX_HANG_VY): −24 m/s². */
+export const PLAYER_RISE_GRAVITY_MULT = 1.2;
+/** |vy| at or below this while jump is held = apex hang. */
+export const JUMP_APEX_HANG_VY = 1.5;
+/** Gravity multiplier during the apex hang: −10 m/s². */
+export const JUMP_APEX_GRAVITY_MULT = 0.5;
+/** Gravity multiplier for any non-stunned fall (vy ≤ 0 outside the hang): −29 m/s². */
+export const PLAYER_FALL_GRAVITY_MULT = 1.45;
+/** Releasing jump while rising faster than this caps vy here (short hop). */
+export const JUMP_CUT_VY = 4;
 /** A jump still works this many ticks after walking off a ledge. */
 export const COYOTE_TICKS = secToTicks(0.1);
 /** Pitch clamp (±). */
@@ -118,15 +133,47 @@ export const ARC_PREVIEW_MAX_POINTS = 24;
 
 export const MAX_HEARTS = 3;
 export const HIT_DAMAGE = 1;
-/** Knockback on a live-ball hit: 6 m/s horizontal (along ball travel) + 4 m/s up. */
-export const KNOCKBACK_H = 6;
-export const KNOCKBACK_UP = 4;
+/**
+ * Base knockback of a live-ball hit (before charge / mega / hearts multipliers): 5.6 m/s horizontal
+ * (along ball travel) + 3.6 m/s up. See launchVelocity() / heartsKnockMultiplier() in shared/sim/throw.ts.
+ */
+export const KNOCKBACK_H = 5.6;
+export const KNOCKBACK_UP = 3.6;
 /** Knockback multiplier lerps 1 → 1.5 with charge fraction. */
 export const KNOCKBACK_FULL_CHARGE_MULT = 1.5;
 /** Mega Ball multiplies knockback by 2 (stacks with charge multiplier). */
 export const KNOCKBACK_MEGA_MULT = 2;
-/** Control lock after any knockback (ball hit, shockwave, headbutt). */
+/** Minimum control lock after any knockback; the real stun is knockStunTicks(launch) (covers the flight). */
 export const KNOCKBACK_STUN_TICKS = secToTicks(0.45);
+/** Hearts tension: knockback × KNOCK_HEARTS_MULT[MAX_HEARTS − hearts after this hit's damage] (clamped). */
+export const KNOCK_HEARTS_MULT: ReadonlyArray<number> = [1.0, 1.12, 1.3, 1.3];
+/** |launch velocity| cap (m/s); stays below the interpolation teleport limit (36 m/s). */
+export const KNOCK_MAX_SPEED = 20;
+/** Stun = launch flight time + this short get-up, clamped to [KNOCK_STUN_MIN_TICKS, KNOCK_STUN_MAX_TICKS]. */
+export const KNOCK_GETUP_TICKS = 5;
+export const KNOCK_STUN_MIN_TICKS = 12;
+export const KNOCK_STUN_MAX_TICKS = 36;
+/** Gravity multiplier while stunned (−18 m/s²): floaty, readable launch arcs. */
+export const TUMBLE_GRAVITY_MULT = 0.9;
+/** Horizontal air drag while stunned in the air (1/s). */
+export const TUMBLE_AIR_DRAG = 0.35;
+/** Directional influence while tumbling: input steering perpendicular to / along the flight (m/s²). DI never adds speed. */
+export const DI_ACCEL_PERP = 7;
+export const DI_ACCEL_ALONG = 4;
+/** A stunned body landing faster than this (m/s down) bounces instead of landing. */
+export const TUMBLE_BOUNCE_MIN_VY = 5;
+/** Vertical restitution of a tumble floor bounce, and the horizontal speed it keeps. */
+export const TUMBLE_RESTITUTION = 0.42;
+export const TUMBLE_BOUNCE_KEEP = 0.75;
+/** Normal restitution of a stunned body against a cover side, and the inward speed that counts as a bounce event. */
+export const TUMBLE_COVER_RESTITUTION = 0.5;
+export const TUMBLE_COVER_BOUNCE_MIN = 3;
+/** Body bumps (server only): a stunned body hitting another player transfers momentum. */
+export const BUMP_MIN_SPEED = 4;
+export const BUMP_RESTITUTION = 0.3;
+export const BUMP_POP_VY = 2.5;
+export const BUMP_STUN_MIN_IMPULSE = 3;
+export const BUMP_STUN_TICKS = 10;
 /** Mercy invulnerability after taking a hit (prevents Triple Shot multi-hits). */
 export const HURT_INVULN_TICKS = secToTicks(0.5);
 /** A live ball never damages its own thrower (boomerang returns are auto-caught instead). */
@@ -172,13 +219,19 @@ export function rewindTicksForRtt(rttMs: number): number {
 
 export const BALL_RADIUS = 0.25;
 export const MEGA_BALL_RADIUS = 0.5;
-/** Normal-velocity restitution on floor / cover bounces. */
+/** Normal-velocity restitution on floor (default; arenas override via FrictionProfile.ballRestitution) / cover bounces. */
 export const BALL_RESTITUTION_FLOOR = 0.55;
 export const BALL_RESTITUTION_COVER = 0.6;
 /** Tangential velocity kept on a bounce (default; arenas may override). */
-export const BALL_BOUNCE_FRICTION = 0.85;
+export const BALL_BOUNCE_FRICTION = 0.75;
 /** Rolling deceleration on the floor (m/s², default; arenas may override). */
-export const BALL_ROLL_DECEL = 4;
+export const BALL_ROLL_DECEL = 3;
+/** Linear rolling drag (1/s) on top of the arena's ballRollDecel: decel = ballRollDecel + BALL_ROLL_DRAG · speed. */
+export const BALL_ROLL_DRAG = 1.1;
+/** The bounce that kills a live (non-boomerang) ball keeps this much tangential speed... */
+export const BALL_DEATH_KEEP = 0.35;
+/** ...and reflects the normal speed with this restitution (floor and cover), so misses stay on the island. */
+export const BALL_DEATH_RESTITUTION = 0.4;
 /** Below this speed while touching a surface counts as resting. */
 export const BALL_REST_SPEED = 0.6;
 /** Resting this many consecutive ticks turns a dead ball neutral. */
@@ -254,8 +307,8 @@ export const GROUND_POUND_SLAM_VY = -26;
 /** Safety cap on the whole ability. */
 export const GROUND_POUND_MAX_TICKS = secToTicks(2);
 export const SHOCKWAVE_RADIUS = 3;
-export const SHOCKWAVE_KNOCK_H = 9;
-export const SHOCKWAVE_KNOCK_UP = 5;
+export const SHOCKWAVE_KNOCK_H = 7.5;
+export const SHOCKWAVE_KNOCK_UP = 4.5;
 
 // Mochi: Belly Bounce (1.5 s; live balls that hit Mochi bounce off harmlessly and become dead).
 export const BELLY_BOUNCE_TICKS = secToTicks(1.5);
@@ -279,8 +332,8 @@ export const HEADBUTT_TICKS = secToTicks(0.25);
 export const HEADBUTT_SPEED = HEADBUTT_DISTANCE / (HEADBUTT_TICKS * DT);
 /** Hit check: target capsule within this distance in front of Gruff's chest. */
 export const HEADBUTT_HIT_RANGE = 1.1;
-export const HEADBUTT_KNOCK_H = 14;
-export const HEADBUTT_KNOCK_UP = 6;
+export const HEADBUTT_KNOCK_H = 10.5;
+export const HEADBUTT_KNOCK_UP = 5.5;
 
 /* ========================================================== round flow */
 
@@ -367,6 +420,9 @@ export const MAX_EXTRAPOLATION_MS = 100;
 /** Prediction error smoothing time constant and snap threshold. */
 export const PREDICTION_SMOOTH_MS = 100;
 export const PREDICTION_SNAP_DIST = 2;
+/** Knockback onset (server stunned, prediction wasn't): larger errors blend instead of snapping, faster. */
+export const PREDICTION_KNOCK_SNAP_DIST = 6;
+export const PREDICTION_KNOCK_SMOOTH_MS = 60;
 /** Ball snapshot blending and snap threshold. */
 export const BALL_SMOOTH_MS = 100;
 export const BALL_SNAP_DIST = 3;
